@@ -18,7 +18,13 @@ classifiers = [
     "Typing :: Typed",
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "fastapi>=0.100",
+    "pydantic>2",
+    "pydantic-settings",
+    "safir>=5",
+    "uvicorn[standard]",
+]
 dynamic = ["version"]
 
 [project.urls]
@@ -28,6 +34,31 @@ Source = "https://github.com/lsst-sqre/qserv-kafka"
 [build-system]
 requires = ["setuptools>=61", "wheel", "setuptools_scm[toml]>=6.2"]
 build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "asgi-lifespan",
+    "coverage[toml]",
+    "httpx",
+    "mypy",
+    "pydantic",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "scriv",
+]
+lint = [
+    "pre-commit",
+    "pre-commit-uv",
+    "ruff>=0.9",
+]
+tox = [
+    "tox>=4.24",
+    "tox-uv>=1.25",
+]
+typing = [
+    "mypy>=1.15",
+]
 
 [tool.coverage.run]
 parallel = true
