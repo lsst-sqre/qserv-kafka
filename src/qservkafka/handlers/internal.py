@@ -1,22 +1,18 @@
-"""Internal HTTP handlers that serve relative to the root path, ``/``.
+"""Internal HTTP endpoints.
 
-These handlers aren't externally visible since the app is available at a path,
-``/qserv-kafka``. See `qservkafka.handlers.external` for
-the external endpoint handlers.
-
-These handlers should be used for monitoring, health checks, internal status,
-or other information that should not be visible outside the Kubernetes cluster.
+These handlers aren't externally visible. They should be used for monitoring,
+health checks, internal status, or other information that should not be
+visible outside the Kubernetes cluster.
 """
 
 from fastapi import APIRouter
 from safir.metadata import Metadata, get_metadata
-from safir.slack.webhook import SlackRouteErrorHandler
 
 from ..config import config
 
 __all__ = ["internal_router"]
 
-internal_router = APIRouter(route_class=SlackRouteErrorHandler)
+internal_router = APIRouter()
 """FastAPI router for all internal handlers."""
 
 
