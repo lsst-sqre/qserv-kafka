@@ -19,10 +19,12 @@ classifiers = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "aiokafka>=0.12",
     "fastapi>=0.100",
+    "faststream[kafka]>=0.5",
     "pydantic>=2.11",
     "pydantic-settings",
-    "safir>=5",
+    "safir>=9.1.1",
     "uvicorn[standard]",
     "vo-models>=0.4",
 ]

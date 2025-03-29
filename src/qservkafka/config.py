@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import AnyUrl, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from safir.kafka import KafkaConnectionSettings
 from safir.logging import LogLevel, Profile
 
 __all__ = ["Config", "config"]
@@ -14,6 +15,27 @@ class Config(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="QSERV_KAFKA_", case_sensitive=False
+    )
+
+    consumer_group_id: str = Field("qserv", title="Kafka consumer group ID")
+
+    database_url: AnyUrl = Field(..., title="qserv connection URL")
+
+    database_password: SecretStr | None = Field(
+        None, title="qserv connection password"
+    )
+
+    kafka: KafkaConnectionSettings = Field(
+        default_factory=KafkaConnectionSettings,
+        title="Kafka connection settings",
+    )
+
+    job_run_topic: str = Field(
+        "lsst.tap.job-run", title="Topic for job requests"
+    )
+
+    job_status_topic: str = Field(
+        "lsst.tap.job-status", title="Topic for job status messages"
     )
 
     log_level: LogLevel = Field(
