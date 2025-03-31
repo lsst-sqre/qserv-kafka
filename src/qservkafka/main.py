@@ -16,6 +16,7 @@ from safir.logging import configure_logging, configure_uvicorn_logging
 from structlog import get_logger
 
 from .config import config
+from .dependencies.context import context_dependency
 from .handlers.internal import internal_router
 from .handlers.kafka import kafka_router
 
@@ -25,9 +26,11 @@ __all__ = ["app"]
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Set up and tear down the application."""
+    await context_dependency.initialize()
     logger = get_logger("qservkafka")
     logger.info("Qserv Kafka bridge started")
     yield
+    await context_dependency.aclose()
 
 
 configure_logging(

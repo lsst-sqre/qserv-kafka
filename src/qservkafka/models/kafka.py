@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Self
 
 from pydantic import (
     BaseModel,
@@ -16,6 +16,8 @@ from pydantic import (
 )
 from safir.pydantic import SecondsTimedelta
 from vo_models.uws.types import ExecutionPhase
+
+from .qserv import AsyncQueryPhase, AsyncQueryStatus
 
 type DatetimeMillis = Annotated[
     datetime,
@@ -116,6 +118,28 @@ class JobResultFormat(BaseModel):
     ]
 
 
+class JobMetadata(BaseModel):
+    """Metadata about a query."""
+
+    model_config = ConfigDict(serialize_by_alias=True)
+
+    query: Annotated[
+        str,
+        Field(
+            title="Query to run",
+            description="TAP query converted to MySQL-compatible SQL",
+        ),
+    ]
+
+    database: Annotated[
+        str | None,
+        Field(
+            title="Database to query",
+            description="Database to query if not specified in the query",
+        ),
+    ] = None
+
+
 class JobRun(BaseModel):
     """Kafka message requesting execution of a TAP query."""
 
@@ -181,6 +205,10 @@ class JobRun(BaseModel):
         ),
     ] = None
 
+    def to_job_metadata(self) -> JobMetadata:
+        """Convert to the job metadata used in status responses."""
+        return JobMetadata(query=self.query, database=self.database)
+
 
 class JobQueryInfo(BaseModel):
     """Information about the status of an executing query."""
@@ -223,6 +251,53 @@ class JobQueryInfo(BaseModel):
         ),
     ]
 
+    @classmethod
+    def from_query_status(cls, status: AsyncQueryStatus) -> Self:
+        """Create a new object from the query status returned by Qserv.
+
+        Parameters
+        ----------
+        status
+            Query status to convert.
+
+        Returns
+        -------
+        JobQueryInfo
+            Corresponding query information.
+        """
+        result = cls(
+            start_time=status.query_begin,
+            total_chunks=status.total_chunks,
+            completed_chunks=status.completed_chunks,
+        )
+        if status.status == AsyncQueryPhase.COMPLETED:
+            result.end_time = status.last_update
+        return result
+
+    @classmethod
+    def for_error(cls, start: datetime) -> Self:
+        """Return a minimal query status used when reporting an error.
+
+        This is used when there's some failure at the API level that
+        interferes with getting the full status of the job.
+
+        Parameters
+        ----------
+        start
+            When the query was started.
+
+        Returns
+        -------
+        JobQueryInfo
+            Minimal query information suitable for an error status message.
+        """
+        return cls(
+            start_time=start,
+            end_time=datetime.now(tz=UTC),
+            total_chunks=0,
+            completed_chunks=0,
+        )
+
 
 class JobResultInfo(BaseModel):
     """Result of a query."""
@@ -255,6 +330,8 @@ class JobErrorCode(StrEnum):
     """Possible error codes for failures."""
 
     backend_error = "backend_error"
+    backend_internal_error = "backend_internal_error"
+    backend_request_error = "backend_request_error"
 
 
 class JobError(BaseModel):
@@ -277,28 +354,6 @@ class JobError(BaseModel):
     ]
 
 
-class JobMetadata(BaseModel):
-    """Metadata about a query."""
-
-    model_config = ConfigDict(serialize_by_alias=True)
-
-    query: Annotated[
-        str,
-        Field(
-            title="Query to run",
-            description="TAP query converted to MySQL-compatible SQL",
-        ),
-    ]
-
-    database: Annotated[
-        str | None,
-        Field(
-            title="Database to query",
-            description="Database to query if not specified in the query",
-        ),
-    ] = None
-
-
 class JobStatus(BaseModel):
     """Status of a TAP query."""
 
@@ -314,7 +369,7 @@ class JobStatus(BaseModel):
     ]
 
     execution_id: Annotated[
-        str,
+        str | None,
         Field(
             title="Backend execution ID",
             description="Identifier of the running query in the backend",

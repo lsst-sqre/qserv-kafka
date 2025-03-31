@@ -47,6 +47,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
+    "respx",
     "scriv",
 ]
 lint = [
