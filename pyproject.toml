@@ -19,10 +19,11 @@ classifiers = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "fastapi>=0.100",
+    "fastapi>=0.112.2",
+    "faststream[kafka]>=0.5",
     "pydantic>=2.11",
     "pydantic-settings",
-    "safir>=5",
+    "safir>=9.1.1",
     "uvicorn[standard]",
     "vo-models>=0.4",
 ]
@@ -105,6 +106,12 @@ warn_untyped_fields = true
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "strict"
+filterwarnings = [
+    # Appears to be some sort of bug in faststream, since nowhere in this code
+    # do we specify lifespan_context. Perhaps with TestKafkaBroker and the
+    # fixture setup?
+    "ignore:Specifying 'lifespan_context' manually.*:UserWarning:contextlib",
+]
 # The python_files setting is not for test detection (pytest will pick up any
 # test files named *_test.py without this setting) but to enable special
 # assert processing in any non-test supporting files under tests.  We

@@ -1,4 +1,4 @@
-"""The main application factory for the qserv-kafka service.
+"""The main application factory for the Qserv Kafka bridge.
 
 Notes
 -----
@@ -17,6 +17,7 @@ from structlog import get_logger
 
 from .config import config
 from .handlers.internal import internal_router
+from .handlers.kafka import kafka_router
 
 __all__ = ["app"]
 
@@ -26,7 +27,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Set up and tear down the application."""
     logger = get_logger("qservkafka")
     logger.info("Qserv Kafka bridge started")
-
     yield
 
 
@@ -47,3 +47,4 @@ app = FastAPI(
 
 # Attach the routers.
 app.include_router(internal_router)
+app.include_router(kafka_router)
