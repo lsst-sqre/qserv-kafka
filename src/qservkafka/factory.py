@@ -10,6 +10,7 @@ from structlog.stdlib import BoundLogger
 
 from .services.query import QueryService
 from .storage.rest import QservRestClient
+from .storage.state import QueryStateStore
 
 __all__ = ["Factory", "ProcessContext"]
 
@@ -75,7 +76,8 @@ class Factory:
             New service to start queries.
         """
         rest_store = QservRestClient(self._context.http_client)
-        return QueryService(rest_store, self._logger)
+        state_store = QueryStateStore(self._logger)
+        return QueryService(rest_store, state_store, self._logger)
 
     def set_logger(self, logger: BoundLogger) -> None:
         """Replace the internal logger.

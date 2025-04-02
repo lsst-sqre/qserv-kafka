@@ -17,6 +17,7 @@ from ..models.kafka import (
 )
 from ..models.qserv import AsyncQueryPhase
 from ..storage.rest import QservRestClient
+from ..storage.state import QueryStateStore
 
 __all__ = ["QueryService"]
 
@@ -28,14 +29,20 @@ class QueryService:
     ----------
     qserv_rest_client
         Client to talk to the Qserv REST API.
+    state_store
+        Storage for query state.
     logger
         Logger to use.
     """
 
     def __init__(
-        self, qserv_rest_client: QservRestClient, logger: BoundLogger
+        self,
+        qserv_rest_client: QservRestClient,
+        state_store: QueryStateStore,
+        logger: BoundLogger,
     ) -> None:
         self._rest = qserv_rest_client
+        self._state = state_store
         self._logger = logger
 
     async def start_query(self, job: JobRun) -> JobStatus:
@@ -55,6 +62,7 @@ class QueryService:
         query_id = None
         status = None
 
+        # Start the query.
         self._logger.info(
             "Starting query",
             query=metadata.model_dump(mode="json", exclude_none=True),
@@ -73,6 +81,8 @@ class QueryService:
                 metadata=metadata,
             )
 
+        # Analyze the initial status and store the query if it successfully
+        # went into executing.
         error = None
         if status.status == AsyncQueryPhase.FAILED:
             self._logger.warning(
@@ -83,6 +93,10 @@ class QueryService:
                 code=JobErrorCode.backend_error,
                 message="Query failed in backend",
             )
+        elif status.status == AsyncQueryPhase.EXECUTING:
+            self._state.add_query(query_id, job)
+
+        # Return the status message to send to Kafka.
         return JobStatus(
             job_id=job.job_id,
             execution_id=str(query_id),
