@@ -11,12 +11,14 @@ from qservkafka.models.kafka import (
     JobErrorCode,
     JobMetadata,
     JobQueryInfo,
+    JobResultFormat,
     JobResultInfo,
     JobResultSerialization,
     JobResultType,
     JobRun,
     JobStatus,
 )
+from qservkafka.models.votable import VOTableSize
 
 
 def test_job_run() -> None:
@@ -29,9 +31,9 @@ def test_job_run() -> None:
             "resultDestination": (
                 "https://bucket/results_uws123.xml?X-Goog-Signature=a82c76..."
             ),
+            "resultLocation": "https://results.example.com/",
             "resultFormat": {
-                "type": "votable",
-                "serialization": "BINARY2",
+                "format": {"type": "votable", "serialization": "BINARY2"},
                 "envelope": {
                     "header": (
                         '<VOTable xmlns="http://www.ivoa.net/xml/VOTable'
@@ -41,12 +43,21 @@ def test_job_run() -> None:
                     ),
                     "footer": "</TABLE></RESOURCE></VOTable>",
                 },
+                "columnTypes": [
+                    {"name": "col_0", "datatype": "char", "arraysize": "*"}
+                ],
             },
         }
     )
     assert job.owner == "me"
-    assert job.result_format.serialization == JobResultSerialization.BINARY2
+    assert (
+        job.result_format.format.serialization
+        == JobResultSerialization.BINARY2
+    )
     assert job.result_format.envelope.footer == "</TABLE></RESOURCE></VOTable>"
+    assert job.result_format.column_types[0].arraysize == VOTableSize(
+        limit=None, variable=True
+    )
 
 
 def test_job_status() -> None:
@@ -68,8 +79,10 @@ def test_job_status() -> None:
         ),
         result_info=JobResultInfo(
             total_rows=1000,
-            format=JobResultType.votable,
-            serialization=JobResultSerialization.BINARY2,
+            format=JobResultFormat(
+                type=JobResultType.votable,
+                serialization=JobResultSerialization.BINARY2,
+            ),
         ),
         metadata=JobMetadata(
             query="SELECT TOP 10 * FROM table", database="dp1"
@@ -88,8 +101,7 @@ def test_job_status() -> None:
         },
         "resultInfo": {
             "totalRows": 1000,
-            "format": "votable",
-            "serialization": "BINARY2",
+            "format": {"type": "votable", "serialization": "BINARY2"},
         },
         "metadata": {"query": "SELECT TOP 10 * FROM table", "database": "dp1"},
     }
