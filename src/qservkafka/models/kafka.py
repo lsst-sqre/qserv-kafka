@@ -274,30 +274,6 @@ class JobQueryInfo(BaseModel):
             result.end_time = status.last_update
         return result
 
-    @classmethod
-    def for_error(cls, start: datetime) -> Self:
-        """Return a minimal query status used when reporting an error.
-
-        This is used when there's some failure at the API level that
-        interferes with getting the full status of the job.
-
-        Parameters
-        ----------
-        start
-            When the query was started.
-
-        Returns
-        -------
-        JobQueryInfo
-            Minimal query information suitable for an error status message.
-        """
-        return cls(
-            start_time=start,
-            end_time=datetime.now(tz=UTC),
-            total_chunks=0,
-            completed_chunks=0,
-        )
-
 
 class JobResultInfo(BaseModel):
     """Result of a query."""
@@ -394,9 +370,9 @@ class JobStatus(BaseModel):
     ]
 
     query_info: Annotated[
-        JobQueryInfo,
+        JobQueryInfo | None,
         Field(title="Query information", serialization_alias="queryInfo"),
-    ]
+    ] = None
 
     result_info: Annotated[
         JobResultInfo | None,

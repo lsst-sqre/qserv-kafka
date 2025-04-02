@@ -77,7 +77,8 @@ def read_test_job_status(
     result = JobStatus.model_validate(read_test_json(filename))
     if mock_timestamps:
         result.timestamp = ANY
-        result.query_info.start_time = ANY
-        if result.query_info.end_time:
-            result.query_info.end_time = ANY
+        if result.query_info:
+            result.query_info.start_time = ANY
+            if result.query_info.end_time:
+                result.query_info.end_time = ANY
     return result

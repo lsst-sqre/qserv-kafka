@@ -37,6 +37,7 @@ async def test_start(factory: Factory) -> None:
     status = await query_service.start_query(job)
     assert status == expected_status
     assert_approximately_now(status.timestamp)
+    assert status.query_info
     assert_approximately_now(status.query_info.start_time)
 
 
@@ -45,11 +46,6 @@ async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     job = read_test_job_run("jobs/simple")
     query_service = factory.create_query_service()
     now = datetime.now(tz=UTC)
-    error_query_info = JobQueryInfo(
-        start_time=now, end_time=now, total_chunks=0, completed_chunks=0
-    )
-    error_query_info.start_time = ANY
-    error_query_info.end_time = ANY
 
     # HTTP failure starting the job.
     mock_qserv.set_submit_response(Response(500))
@@ -59,7 +55,6 @@ async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
         execution_id=None,
         timestamp=now,
         status=ExecutionPhase.ERROR,
-        query_info=error_query_info,
         error=JobError(code=JobErrorCode.backend_request_error, message=""),
         metadata=job.to_job_metadata(),
     )
@@ -70,9 +65,6 @@ async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     assert status.error
     assert "Status 500 from POST" in status.error.message
     assert_approximately_now(status.timestamp)
-    assert_approximately_now(status.query_info.start_time)
-    assert status.query_info.end_time
-    assert_approximately_now(status.query_info.end_time)
 
     # Invalid response from job creation endpoint.
     mock_qserv.set_submit_response(Response(200, json={"success": 1}))
@@ -97,11 +89,6 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     job = read_test_job_run("jobs/simple")
     query_service = factory.create_query_service()
     now = datetime.now(tz=UTC)
-    error_query_info = JobQueryInfo(
-        start_time=now, end_time=now, total_chunks=0, completed_chunks=0
-    )
-    error_query_info.start_time = ANY
-    error_query_info.end_time = ANY
 
     # HTTP failure getting the job status.
     mock_qserv.set_status_response(Response(500))
@@ -111,7 +98,6 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
         execution_id="1",
         timestamp=now,
         status=ExecutionPhase.ERROR,
-        query_info=error_query_info,
         error=JobError(code=JobErrorCode.backend_request_error, message=""),
         metadata=job.to_job_metadata(),
     )
@@ -122,9 +108,6 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     assert status.error
     assert "Status 500 from GET" in status.error.message
     assert_approximately_now(status.timestamp)
-    assert_approximately_now(status.query_info.start_time)
-    assert status.query_info.end_time
-    assert_approximately_now(status.query_info.end_time)
 
     # Invalid response from the status endpoint.
     mock_qserv.set_status_response(
@@ -179,7 +162,13 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     )
     status = await query_service.start_query(job)
     expected.execution_id = "4"
-    expected.query_info.total_chunks = 10
-    expected.query_info.completed_chunks = 4
+    expected.query_info = JobQueryInfo(
+        start_time=now, end_time=now, total_chunks=10, completed_chunks=4
+    )
+    expected.query_info.start_time = ANY
+    expected.query_info.end_time = ANY
     expected.error.code = JobErrorCode.backend_error
     expected.error.message = "Query failed in backend"
+    assert status == expected
+    assert status.query_info
+    assert_approximately_now(status.query_info.start_time)
