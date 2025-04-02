@@ -52,7 +52,6 @@ class QueryService:
             Initial status of the job.
         """
         metadata = job.to_job_metadata()
-        start = datetime.now(tz=UTC)
         query_id = None
         status = None
 
@@ -70,7 +69,6 @@ class QueryService:
                 execution_id=str(query_id) if query_id else None,
                 timestamp=datetime.now(tz=UTC),
                 status=ExecutionPhase.ERROR,
-                query_info=JobQueryInfo.for_error(start),
                 error=e.to_job_error(),
                 metadata=metadata,
             )

@@ -100,12 +100,6 @@ def test_job_status() -> None:
         execution_id="123",
         timestamp=now,
         status=ExecutionPhase.ERROR,
-        query_info=JobQueryInfo(
-            start_time=start,
-            end_time=end,
-            total_chunks=3,
-            completed_chunks=1,
-        ),
         error=JobError(
             code=JobErrorCode.backend_error, message="Syntax Error at line 1"
         ),
@@ -118,12 +112,6 @@ def test_job_status() -> None:
         "executionID": "123",
         "timestamp": int(now.timestamp() * 1000),
         "status": "ERROR",
-        "queryInfo": {
-            "startTime": int(start.timestamp() * 1000),
-            "endTime": int(end.timestamp() * 1000),
-            "totalChunks": 3,
-            "completedChunks": 1,
-        },
         "errorInfo": {
             "errorCode": "backend_error",
             "errorMessage": "Syntax Error at line 1",
