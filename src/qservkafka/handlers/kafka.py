@@ -8,25 +8,27 @@ from structlog import get_logger
 
 from ..config import config
 from ..dependencies.context import ConsumerContext, context_dependency
-from ..models.kafka import JobRun
+from ..models.kafka import JobRun, JobStatus
 
 kafka_router = KafkaRouter(
     **config.kafka.to_faststream_params(), logger=get_logger("qservkafka")
 )
 """Faststream router for incoming Kafka requests."""
 
-__all__ = ["kafka_router"]
+publisher = kafka_router.publisher(config.job_status_topic)
+"""Publisher for status messages, defined separately for testing."""
+
+__all__ = ["kafka_router", "publisher"]
 
 
 @kafka_router.subscriber(
     config.job_run_topic, group_id=config.consumer_group_id
 )
+@publisher
 async def job_run(
     message: JobRun,
     context: Annotated[ConsumerContext, Depends(context_dependency)],
-) -> None:
+) -> JobStatus:
     context.rebind_logger(job_id=message.job_id, username=message.owner)
-    context.logger.debug(
-        "Received job run request",
-        job=message.model_dump(mode="json", exclude_none=True),
-    )
+    query_service = context.factory.create_query_service()
+    return await query_service.start_query(message)

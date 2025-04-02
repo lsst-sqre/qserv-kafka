@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from safir.kafka import KafkaConnectionSettings
 from safir.logging import LogLevel, Profile
@@ -30,6 +30,10 @@ class Config(BaseSettings):
         "lsst.tap.job-run", title="Topic for job requests"
     )
 
+    job_status_topic: str = Field(
+        "lsst.tap.job-status", title="Topic for job status"
+    )
+
     log_level: LogLevel = Field(
         LogLevel.INFO, title="Log level of the application's logger"
     )
@@ -39,6 +43,8 @@ class Config(BaseSettings):
     profile: Profile = Field(
         Profile.production, title="Application logging profile"
     )
+
+    qserv_rest_url: HttpUrl = Field(title="Qserv REST API URL")
 
 
 config = Config()
