@@ -18,6 +18,7 @@ from safir.pydantic import SecondsTimedelta
 from vo_models.uws.types import ExecutionPhase
 
 from .qserv import AsyncQueryPhase, AsyncQueryStatus
+from .votable import VOTableArraySize, VOTablePrimitive
 
 type DatetimeMillis = Annotated[
     datetime,
@@ -81,9 +82,7 @@ class JobResultSerialization(StrEnum):
 
 
 class JobResultFormat(BaseModel):
-    """Result format for job results."""
-
-    model_config = ConfigDict(validate_by_name=True)
+    """Format of the result of a query."""
 
     type: Annotated[
         JobResultType,
@@ -94,12 +93,60 @@ class JobResultFormat(BaseModel):
     ]
 
     serialization: Annotated[
-        JobResultSerialization | None,
+        JobResultSerialization,
         Field(
             title="Serialization of result",
             description="Serialization format of the result",
         ),
-    ] = None
+    ]
+
+
+class JobResultColumnType(BaseModel):
+    """Type information for a single output column."""
+
+    model_config = ConfigDict(validate_by_name=True)
+
+    name: Annotated[str, Field(title="Column name")]
+
+    datatype: Annotated[VOTablePrimitive, Field(title="Primitive type")]
+
+    arraysize: Annotated[VOTableArraySize, Field(title="Array size")]
+
+    requires_url_rewrite: Annotated[
+        bool,
+        Field(
+            title="Whether to rewrite value",
+            description=(
+                "If true, this column contains a URL that needs to be"
+                " rewritten using base URL information"
+            ),
+            validation_alias="requiresUrlRewrite",
+        ),
+    ] = False
+
+
+class JobResultConfig(BaseModel):
+    """Configuration for job result."""
+
+    model_config = ConfigDict(validate_by_name=True)
+
+    format: Annotated[JobResultFormat, Field(title="Output format for result")]
+
+    envelope: Annotated[
+        JobResultEnvelope,
+        Field(
+            title="XML envelope", description="XML envelope for the results"
+        ),
+    ]
+
+    column_types: Annotated[
+        list[JobResultColumnType],
+        Field(
+            title="Type information",
+            description="Types of output columns, in column order",
+            validation_alias="columnTypes",
+        ),
+    ]
 
     base_url: Annotated[
         str | None,
@@ -109,13 +156,6 @@ class JobResultFormat(BaseModel):
             validation_alias="baseUrl",
         ),
     ] = None
-
-    envelope: Annotated[
-        JobResultEnvelope,
-        Field(
-            title="XML envelope", description="XML envelope for the results"
-        ),
-    ]
 
 
 class JobMetadata(BaseModel):
@@ -188,8 +228,20 @@ class JobRun(BaseModel):
         ),
     ]
 
+    result_location: Annotated[
+        str | None,
+        Field(
+            title="User-facing location of results",
+            description=(
+                "Not used by the bridge, just copied into the status message"
+                " sent when the job is complete"
+            ),
+            validation_alias="resultLocation",
+        ),
+    ] = None
+
     result_format: Annotated[
-        JobResultFormat,
+        JobResultConfig,
         Field(
             title="Format of result",
             description="Formatting instructions for writing the result",
@@ -289,9 +341,7 @@ class JobResultInfo(BaseModel):
         ),
     ]
 
-    format: Annotated[JobResultType, Field(title="Format of result")] = (
-        JobResultType.votable
-    )
+    format: Annotated[JobResultFormat, Field(title="Format of result")]
 
     serialization: Annotated[
         JobResultSerialization | None,

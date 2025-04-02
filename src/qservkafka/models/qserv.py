@@ -55,7 +55,7 @@ class AsyncQueryPhase(StrEnum):
                 return ExecutionPhase.ERROR
             case "ABORTED":
                 return ExecutionPhase.ABORTED
-            case _:
+            case _:  # pragma: no cover
                 raise ValueError(f"Unknown phase {self.value}")
 
 
