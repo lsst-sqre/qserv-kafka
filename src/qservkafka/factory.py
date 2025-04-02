@@ -75,7 +75,7 @@ class Factory:
         QueryService
             New service to start queries.
         """
-        rest_store = QservRestClient(self._context.http_client)
+        rest_store = QservRestClient(self._context.http_client, self._logger)
         state_store = QueryStateStore(self._logger)
         return QueryService(rest_store, state_store, self._logger)
 

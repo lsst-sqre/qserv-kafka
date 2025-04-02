@@ -6,6 +6,7 @@ import copy
 
 from httpx import AsyncClient, HTTPError, Response
 from pydantic import BaseModel, ValidationError
+from structlog.stdlib import BoundLogger
 
 from ..config import config
 from ..exceptions import (
@@ -37,10 +38,13 @@ class QservRestClient:
     ----------
     http_client
         HTTP client to use.
+    logger
+        Logger to use.
     """
 
-    def __init__(self, http_client: AsyncClient) -> None:
+    def __init__(self, http_client: AsyncClient, logger: BoundLogger) -> None:
         self._client = http_client
+        self._logger = logger
 
     async def get_query_status(self, query_id: int) -> AsyncQueryStatus:
         """Query for the status of an async job.
@@ -106,6 +110,9 @@ class QservRestClient:
         try:
             r = await self._client.get(url, params=params_with_version)
             r.raise_for_status()
+            self._logger.debug(
+                "Qserv API reply", method="GET", url=url, result=r.json()
+            )
             return self._parse_response(url, r, result_type)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
@@ -163,6 +170,9 @@ class QservRestClient:
         try:
             r = await self._client.post(url, json=body_dict)
             r.raise_for_status()
+            self._logger.debug(
+                "Qserv API reply", method="POST", url=url, result=r.json()
+            )
             return self._parse_response(url, r, result_type)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
