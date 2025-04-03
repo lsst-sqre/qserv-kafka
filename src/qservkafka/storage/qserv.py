@@ -6,6 +6,9 @@ import copy
 
 from httpx import AsyncClient, HTTPError, Response
 from pydantic import BaseModel, ValidationError
+from safir.database import datetime_from_db
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_scoped_session
 from structlog.stdlib import BoundLogger
 
 from ..config import config
@@ -16,6 +19,7 @@ from ..exceptions import (
 )
 from ..models.kafka import JobRun
 from ..models.qserv import (
+    AsyncQueryPhase,
     AsyncQueryStatus,
     AsyncStatusResponse,
     AsyncSubmitRequest,
@@ -26,23 +30,47 @@ from ..models.qserv import (
 API_VERSION = 39
 """Version of the REST API that this client requests."""
 
-__all__ = ["API_VERSION", "QservRestClient"]
+_QUERY_LIST_SQL = """
+    SELECT
+      id,
+      submitted,
+      updated,
+      chunks,
+      chunks_comp
+    FROM information_schema.processlist
+"""
+"""SQL query to get a list of running queries.
+
+This is overridden by the test suite since it queries an internal MySQL
+namespace when talking to actual Qserv that's difficult to mock.
+"""
+
+__all__ = ["API_VERSION", "QservClient"]
 
 
-class QservRestClient:
-    """Client for the Qserv REST API.
+class QservClient:
+    """Client for the Qserv API.
 
-    Only the routes needed by the Qserv Kafka bridge are implemented.
+    Only the routes and queries needed by the Qserv Kafka bridge are
+    implemented.
 
     Parameters
     ----------
+    session
+        Database session.
     http_client
         HTTP client to use.
     logger
         Logger to use.
     """
 
-    def __init__(self, http_client: AsyncClient, logger: BoundLogger) -> None:
+    def __init__(
+        self,
+        session: async_scoped_session,
+        http_client: AsyncClient,
+        logger: BoundLogger,
+    ) -> None:
+        self._session = session
         self._client = http_client
         self._logger = logger
 
@@ -62,6 +90,29 @@ class QservRestClient:
         url = f"/query-async/status/{query_id}"
         result = await self._get(url, {}, AsyncStatusResponse)
         return result.status
+
+    async def list_running_queries(self) -> dict[int, AsyncQueryStatus]:
+        """Return information about all running queries.
+
+        Returns
+        -------
+        dict of AsyncQueryStatus
+            Mapping from query ID to information about a running query.
+        """
+        async with self._session.begin():
+            result = await self._session.stream(text(_QUERY_LIST_SQL))
+            processes = {}
+            async for row in result:
+                self._logger.debug("Saw running query", query=row._asdict())
+                processes[row.id] = AsyncQueryStatus(
+                    query_id=row.id,
+                    status=AsyncQueryPhase.EXECUTING,
+                    total_chunks=row.chunks,
+                    completed_chunks=row.chunks_comp,
+                    query_begin=datetime_from_db(row.submitted),
+                    last_update=datetime_from_db(row.updated),
+                )
+        return processes
 
     async def submit_query(self, job: JobRun) -> int:
         """Submit an async query to Qserv.

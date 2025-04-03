@@ -322,7 +322,7 @@ class JobQueryInfo(BaseModel):
             total_chunks=status.total_chunks,
             completed_chunks=status.completed_chunks,
         )
-        if status.status == AsyncQueryPhase.COMPLETED:
+        if status.status != AsyncQueryPhase.EXECUTING:
             result.end_time = status.last_update
         return result
 

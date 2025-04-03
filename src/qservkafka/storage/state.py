@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from copy import copy
+
 from structlog.stdlib import BoundLogger
 
 from ..models.kafka import JobRun
+from ..models.qserv import AsyncQueryStatus
 from ..models.state import Query
 
 __all__ = ["QueryStateStore"]
@@ -24,7 +27,9 @@ class QueryStateStore:
         # Map from Qserv query ID to query metadata.
         self._queries: dict[int, Query] = {}
 
-    def add_query(self, query_id: int, job: JobRun) -> None:
+    async def add_query(
+        self, query_id: int, job: JobRun, status: AsyncQueryStatus
+    ) -> None:
         """Add a record for a newly-created query.
 
         Parameters
@@ -33,13 +38,17 @@ class QueryStateStore:
             Qserv query ID.
         job
             Original job request.
+        status
+            Initial query status.
         """
         if query_id in self._queries:
             msg = "Duplicate query ID, replacing old query record"
             self._logger.error(msg, query_id=query_id)
-        self._queries[query_id] = Query(query_id=query_id, job=job)
+        self._queries[query_id] = Query(
+            query_id=query_id, job=job, status=status
+        )
 
-    def delete_query(self, query_id: int) -> None:
+    async def delete_query(self, query_id: int) -> None:
         """Delete a query from storage.
 
         Should be called after the query results have been stored (if
@@ -54,7 +63,7 @@ class QueryStateStore:
         if query_id in self._queries:
             del self._queries[query_id]
 
-    def get_active_queries(self) -> set[int]:
+    async def get_active_queries(self) -> dict[int, Query]:
         """Get the IDs of all active queries.
 
         Returns
@@ -62,9 +71,9 @@ class QueryStateStore:
         set of int
             All queries we believe are currently active.
         """
-        return set(self._queries.keys())
+        return copy(self._queries)
 
-    def get_query(self, query_id: int) -> Query | None:
+    async def get_query(self, query_id: int) -> Query | None:
         """Get the original job request for a given query.
 
         Parameters
@@ -78,3 +87,25 @@ class QueryStateStore:
             Original job request, or `None` if no such job was found.
         """
         return self._queries.get(query_id)
+
+    async def update_status(
+        self, query_id: int, job: JobRun, status: AsyncQueryStatus
+    ) -> None:
+        """Add a record for a newly-created query.
+
+        Parameters
+        ----------
+        query_id
+            Qserv query ID.
+        job
+            Original job request.
+        status
+            Initial query status.
+        """
+        if query_id in self._queries:
+            self._queries[query_id].status = status
+        else:
+            # This case shouldn't happen but we may as well handle it.
+            self._queries[query_id] = Query(
+                query_id=query_id, job=job, status=status
+            )

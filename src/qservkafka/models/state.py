@@ -7,6 +7,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 
 from .kafka import JobRun
+from .qserv import AsyncQueryStatus
 
 __all__ = ["Query"]
 
@@ -17,3 +18,5 @@ class Query(BaseModel):
     query_id: Annotated[int, Field(title="Qserv ID of query")]
 
     job: Annotated[JobRun, Field(title="Full job request")]
+
+    status: Annotated[AsyncQueryStatus, Field(title="Last known status")]
