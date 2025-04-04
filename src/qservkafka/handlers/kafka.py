@@ -3,17 +3,11 @@
 from typing import Annotated
 
 from fastapi import Depends
-from faststream.kafka.fastapi import KafkaRouter
-from structlog import get_logger
 
 from ..config import config
 from ..dependencies.context import ConsumerContext, context_dependency
+from ..factory import kafka_router
 from ..models.kafka import JobRun, JobStatus
-
-kafka_router = KafkaRouter(
-    **config.kafka.to_faststream_params(), logger=get_logger("qservkafka")
-)
-"""Faststream router for incoming Kafka requests."""
 
 publisher = kafka_router.publisher(config.job_status_topic)
 """Publisher for status messages, defined separately for testing."""

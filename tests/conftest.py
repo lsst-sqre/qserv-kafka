@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 from contextlib import aclosing
 
 import pytest
@@ -12,7 +12,11 @@ from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 from faststream.kafka import KafkaBroker, TestKafkaBroker
 from httpx import ASGITransport, AsyncClient
+from pydantic import MySQLDsn, SecretStr
+from safir.database import create_async_session, create_database_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 from structlog import get_logger
+from testcontainers.mysql import MySqlContainer
 
 from qservkafka import main
 from qservkafka.config import config
@@ -45,11 +49,31 @@ async def client(app: FastAPI) -> AsyncGenerator[AsyncClient]:
 
 
 @pytest_asyncio.fixture
-async def factory(mock_qserv: MockQserv) -> AsyncGenerator[Factory]:
+async def engine(
+    mysql: MySqlContainer, monkeypatch: pytest.MonkeyPatch
+) -> AsyncGenerator[AsyncEngine]:
+    """Construct a SQLAlchemy engine for the test database."""
+    url = MySQLDsn(mysql.get_connection_url())
+    password = SecretStr("INSECURE-PASSWORD")
+    monkeypatch.setattr(config, "qserv_database_password", password)
+    monkeypatch.setattr(config, "qserv_database_url", url)
+    engine = create_database_engine(str(url), config.qserv_database_password)
+    logger = get_logger("qservkafka")
+    await MockQserv.initialize(engine, logger)
+    yield engine
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def factory(
+    mock_qserv: MockQserv, engine: AsyncEngine
+) -> AsyncGenerator[Factory]:
     """Provide a component factory for tests that don't require the app."""
     context = await ProcessContext.from_config()
     async with aclosing(context):
-        yield Factory(context, get_logger("qservkafka"))
+        logger = get_logger("qservkafka")
+        session = await create_async_session(engine, logger)
+        yield Factory(context, session, logger)
 
 
 @pytest_asyncio.fixture
@@ -59,7 +83,20 @@ async def kafka_broker() -> AsyncGenerator[KafkaBroker]:
         yield broker
 
 
-@pytest.fixture
-def mock_qserv(respx_mock: respx.Router) -> MockQserv:
+@pytest_asyncio.fixture
+async def mock_qserv(
+    respx_mock: respx.Router, engine: AsyncEngine
+) -> AsyncGenerator[MockQserv]:
     """Mock the Qserv REST API."""
-    return register_mock_qserv(respx_mock, str(config.qserv_rest_url))
+    url = str(config.qserv_rest_url)
+    async with register_mock_qserv(respx_mock, url, engine) as mock_qserv:
+        yield mock_qserv
+
+
+@pytest.fixture(scope="session")
+def mysql() -> Generator[MySqlContainer]:
+    """Start a MySQL database container for testing."""
+    with MySqlContainer(
+        dialect="asyncmy", username="qserv", password="INSECURE-PASSWORD"
+    ) as mysql:
+        yield mysql
