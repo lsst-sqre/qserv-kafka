@@ -1,0 +1,24 @@
+[
+  {
+    "id": 1,
+    "a": null,
+    "b": "c",
+    "c": null,
+    "d": "something",
+    "e": null,
+    "f": -123.12,
+    "g": null,
+    "h": 5294967296
+  },
+  {
+    "id": 2,
+    "a": true,
+    "b": null,
+    "c": "abcdefghi",
+    "d": null,
+    "e": 1.13173E+98,
+    "f": null,
+    "g": 47,
+    "h": null
+  }
+]

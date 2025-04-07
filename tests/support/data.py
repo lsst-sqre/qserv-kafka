@@ -10,10 +10,30 @@ from unittest.mock import ANY
 from qservkafka.models.kafka import JobRun, JobStatus
 
 __all__ = [
+    "read_test_data",
     "read_test_job_run",
     "read_test_job_status",
     "read_test_json",
 ]
+
+
+def read_test_data(filename: str) -> str:
+    """Read an input data file and return its contents.
+
+    Parameters
+    ----------
+    config
+        Configuration from which to read data (the name of one of the
+        directories under :file:`tests/data`).
+    filename
+        File to read.
+
+    Returns
+    -------
+    str
+        Contents of the file.
+    """
+    return (Path(__file__).parent.parent / "data" / filename).read_text()
 
 
 def read_test_json(filename: str) -> Any:

@@ -18,6 +18,7 @@ from .services.monitor import QueryMonitor
 from .services.query import QueryService
 from .storage.qserv import QservClient
 from .storage.state import QueryStateStore
+from .storage.votable import VOTableWriter
 
 kafka_router = KafkaRouter(
     **config.kafka.to_faststream_params(), logger=get_logger("qservkafka")
@@ -77,6 +78,7 @@ class ProcessContext:
         monitor = QueryMonitor(
             qserv_client=QservClient(session, http_client, logger),
             state_store=state_store,
+            votable_writer=VOTableWriter(http_client, logger),
             kafka_broker=kafka_router.broker,
             logger=logger,
         )
@@ -145,10 +147,16 @@ class Factory:
         QueryService
             New service to start queries.
         """
-        qserv = QservClient(
-            self._session, self._context.http_client, self._logger
+        return QueryService(
+            qserv_client=QservClient(
+                self._session, self._context.http_client, self._logger
+            ),
+            votable_writer=VOTableWriter(
+                self._context.http_client, self._logger
+            ),
+            state_store=self._context.state,
+            logger=self._logger,
         )
-        return QueryService(qserv, self._context.state, self._logger)
 
     def set_logger(self, logger: BoundLogger) -> None:
         """Replace the internal logger.

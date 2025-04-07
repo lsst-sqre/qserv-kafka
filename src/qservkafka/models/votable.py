@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
-from typing import Annotated, Any
+from enum import Enum
+from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, Field, PlainValidator
 
@@ -42,12 +42,29 @@ type VOTableArraySize = Annotated[
 ]
 
 
-class VOTablePrimitive(StrEnum):
-    """VOTable primitive types supported by the Qserv Kafka bridge."""
+class VOTablePrimitive(Enum):
+    """VOTable primitive types supported by the Qserv Kafka bridge.
 
-    boolean = "boolean"
-    char = "char"
-    double = "double"
-    float = "float"
-    int = "int"
-    long = "long"
+    Each enum value is also associated with the `struct.pack` format that is
+    used when encoding that type into BINARY2, assuming that no ``arraysize``
+    is set for that type.
+    """
+
+    boolean = ("boolean", "?")
+    char = ("char", "1s")
+    double = ("double", ">d")
+    float = ("float", ">f")
+    int = ("int", ">l")
+    long = ("long", ">q")
+
+    def __new__(cls, *args: Any) -> Self:
+        obj = object.__new__(cls)
+        obj._value_ = args[0]
+        return obj
+
+    def __init__(self, _: str, pack: str) -> None:
+        self._pack = pack
+
+    @property
+    def pack(self) -> str:
+        return self._pack

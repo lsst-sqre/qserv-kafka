@@ -110,7 +110,9 @@ class JobResultColumnType(BaseModel):
 
     datatype: Annotated[VOTablePrimitive, Field(title="Primitive type")]
 
-    arraysize: Annotated[VOTableArraySize, Field(title="Array size")]
+    arraysize: Annotated[
+        VOTableArraySize | None, Field(title="Array size")
+    ] = None
 
     requires_url_rewrite: Annotated[
         bool,
@@ -341,15 +343,16 @@ class JobResultInfo(BaseModel):
         ),
     ]
 
-    format: Annotated[JobResultFormat, Field(title="Format of result")]
-
-    serialization: Annotated[
-        JobResultSerialization | None,
+    result_location: Annotated[
+        str | None,
         Field(
-            title="Serialization of result",
-            description="Serialization format of the result",
+            title="User-facing URL of results",
+            description="Copied from the job request, not used by the bridge",
+            serialization_alias="resultLocation",
         ),
     ] = None
+
+    format: Annotated[JobResultFormat, Field(title="Format of result")]
 
 
 class JobErrorCode(StrEnum):
@@ -358,6 +361,7 @@ class JobErrorCode(StrEnum):
     backend_error = "backend_error"
     backend_internal_error = "backend_internal_error"
     backend_request_error = "backend_request_error"
+    upload_failed = "upload_failed"
 
 
 class JobError(BaseModel):

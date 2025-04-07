@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import copy
+from collections.abc import AsyncGenerator
+from copy import copy
+from typing import Any
 
 from httpx import AsyncClient, HTTPError, Response
 from pydantic import BaseModel, ValidationError
 from safir.database import datetime_from_db
-from sqlalchemy import text
+from sqlalchemy import Row, text
 from sqlalchemy.ext.asyncio import async_scoped_session
 from structlog.stdlib import BoundLogger
 
@@ -45,6 +47,12 @@ This is overridden by the test suite since it queries an internal MySQL
 namespace when talking to actual Qserv that's difficult to mock.
 """
 
+_QUERY_RESULTS_SQL_FORMAT = "SELECT * FROM qserv_result({})"
+"""Format used to generate the SQL query to get Qserv query results.
+
+This format takes one parameter, the Qserv query ID.
+"""
+
 __all__ = ["API_VERSION", "QservClient"]
 
 
@@ -73,6 +81,34 @@ class QservClient:
         self._session = session
         self._client = http_client
         self._logger = logger
+
+    async def get_query_results_gen(
+        self, query_id: int
+    ) -> AsyncGenerator[Row[Any]]:
+        """Get an async iterator for the results of a query.
+
+        Qserv discards the results after they're retrieved, so be aware that
+        the results may not be available once this method has been called once
+        for a given query.
+
+        Parameters
+        ----------
+        query_id
+            Identifier of the query.
+
+        Returns
+        -------
+        collections.abc.AsyncIterator
+            Iterator over the rows of the query results.
+        """
+        stmt = text(_QUERY_RESULTS_SQL_FORMAT.format(query_id))
+        async with self._session.begin():
+            results = await self._session.stream(stmt)
+            try:
+                async for result in results:
+                    yield result
+            finally:
+                await results.close()
 
     async def get_query_status(self, query_id: int) -> AsyncQueryStatus:
         """Query for the status of an async job.
@@ -155,7 +191,7 @@ class QservClient:
         QservApiError
             Raised if something failed when attempting to submit the job.
         """
-        params_with_version = copy.copy(params)
+        params_with_version = copy(params)
         params_with_version["version"] = str(API_VERSION)
         url = str(config.qserv_rest_url).rstrip("/") + route
         try:

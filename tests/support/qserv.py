@@ -18,12 +18,13 @@ from safir.database import (
     initialize_database,
 )
 from safir.datetime import current_datetime
-from sqlalchemy import delete, select
+from sqlalchemy import BigInteger, Double, String, delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from structlog import get_logger
 from structlog.stdlib import BoundLogger
 
+from qservkafka.models.kafka import JobRun
 from qservkafka.models.qserv import (
     AsyncQueryPhase,
     AsyncQueryStatus,
@@ -32,6 +33,8 @@ from qservkafka.models.qserv import (
 )
 from qservkafka.storage import qserv
 from qservkafka.storage.qserv import API_VERSION
+
+from .data import read_test_data, read_test_json
 
 __all__ = ["MockQserv", "register_mock_qserv"]
 
@@ -45,6 +48,9 @@ _QUERY_LIST_SQL = """
     FROM processlist
 """
 """SQL query to get a list of running queries."""
+
+_QUERY_RESULT_SQL = "SELECT * FROM results"
+"""SQL query to get results."""
 
 
 class _SchemaBase(DeclarativeBase):
@@ -63,15 +69,35 @@ class _Process(_SchemaBase):
     chunks_comp: Mapped[int]
 
 
+class _Result(_SchemaBase):
+    """Simulation of the results table."""
+
+    __tablename__ = "results"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    a: Mapped[bool | None]
+    b: Mapped[str | None] = mapped_column(String(1))
+    c: Mapped[str | None] = mapped_column(String(10))
+    d: Mapped[str | None] = mapped_column(String(256))
+    e: Mapped[float | None] = mapped_column(Double)
+    f: Mapped[float | None]
+    g: Mapped[int | None]
+    h: Mapped[int | None] = mapped_column(BigInteger)
+
+
 class MockQserv:
     """Mock Qserv that simulates the REST API."""
 
-    def __init__(self, session: async_scoped_session) -> None:
+    def __init__(
+        self, session: async_scoped_session, respx_mock: respx.Router
+    ) -> None:
         self._session = session
+        self._respx_mock = respx_mock
         self._next_query_id = 1
         self._queries: dict[int, AsyncQueryStatus] = {}
         self._override_status: Response | None = None
         self._override_submit: Response | None = None
+        self._expected_job: JobRun
 
     @classmethod
     async def initialize(
@@ -155,6 +181,27 @@ class MockQserv:
             request=request,
         )
 
+    async def store_results(self, job: JobRun) -> None:
+        """Store mock results in the database and mock the upload.
+
+        After this is called, an attempt to retrieve results and upload them
+        should work and the uploaded VOTable will be checked against the
+        properties of the job.
+
+        Parameters
+        ----------
+        job
+            Query request.
+        """
+        url = str(job.result_url)
+        self._respx_mock.put(url).mock(side_effect=self.upload)
+        data = read_test_json("results/data")
+        async with self._session.begin():
+            for row in data:
+                result = _Result(**row)
+                self._session.add(result)
+        self._expected_job = job
+
     async def submit(self, request: Request) -> Response:
         """Mock a request to submit an async job.
 
@@ -223,6 +270,26 @@ class MockQserv:
                 await self._session.execute(dstmt)
         self._queries[query_id] = status
 
+    async def upload(self, request: Request) -> Response:
+        """Mock a request to upload the VOTable of results.
+
+        Parameters
+        ----------
+        request
+            Incoming request.
+
+        Returns
+        -------
+        httpx.Response
+            Returns 200 with the details of the query.
+        """
+        expected = read_test_data("results/data.binary2")
+        assert self._expected_job
+        header = self._expected_job.result_format.envelope.header
+        footer = self._expected_job.result_format.envelope.footer
+        assert request.content.decode() == header + expected + footer
+        return Response(201)
+
 
 @asynccontextmanager
 async def register_mock_qserv(
@@ -243,11 +310,14 @@ async def register_mock_qserv(
         Mock Qserv API object.
     """
     session = await create_async_session(engine, get_logger("qservkafka"))
-    mock = MockQserv(session)
+    mock = MockQserv(session, respx_mock)
     base_url = str(base_url).rstrip("/")
     respx_mock.post(f"{base_url}/query-async").mock(side_effect=mock.submit)
     base_escaped = re.escape(base_url)
     url_regex = rf"{base_escaped}/query-async/status/(?P<query_id>[0-9]+)\?"
     respx_mock.get(url__regex=url_regex).mock(side_effect=mock.status)
     with patch.object(qserv, "_QUERY_LIST_SQL", new=_QUERY_LIST_SQL):
-        yield mock
+        with patch.object(
+            qserv, "_QUERY_RESULTS_SQL_FORMAT", new=_QUERY_RESULT_SQL
+        ):
+            yield mock
