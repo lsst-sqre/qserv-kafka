@@ -34,11 +34,11 @@ API_VERSION = 39
 
 _QUERY_LIST_SQL = """
     SELECT
-      id,
-      submitted,
-      updated,
-      chunks,
-      chunks_comp
+      ID AS id,
+      SUBMITTED AS submitted,
+      UPDATED AS updated,
+      CHUNKS AS chunks,
+      CHUNKS_COMP as chunks_comp
     FROM information_schema.processlist
 """
 """SQL query to get a list of running queries.
