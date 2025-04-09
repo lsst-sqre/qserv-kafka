@@ -148,6 +148,7 @@ class QservClient:
                     query_begin=datetime_from_db(row.submitted),
                     last_update=datetime_from_db(row.updated),
                 )
+        self._logger.debug("Listed running queries", count=len(processes))
         return processes
 
     async def submit_query(self, job: JobRun) -> int:
