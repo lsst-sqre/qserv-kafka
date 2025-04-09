@@ -20,11 +20,13 @@ __all__ = [
     "QservApiFailedError",
     "QservApiProtocolError",
     "QservApiWebError",
+    "QueryError",
+    "UploadWebError",
 ]
 
 
-class QservApiError(SlackException):
-    """Base class for failures talking to the Qserv API."""
+class QueryError(SlackException):
+    """Base class for reportable query errors."""
 
     error: ClassVar[JobErrorCode] = JobErrorCode.backend_error
 
@@ -37,6 +39,10 @@ class QservApiError(SlackException):
             Corresponding job error.
         """
         return JobError(code=self.error, message=str(self))
+
+
+class QservApiError(QueryError):
+    """Base class for failures talking to the Qserv API."""
 
 
 class QservApiFailedError(QservApiError):
@@ -116,3 +122,9 @@ class QservApiWebError(SlackWebException, QservApiError):
     """A web request to Qserv failed at the HTTP protocol level."""
 
     error = JobErrorCode.backend_request_error
+
+
+class UploadWebError(SlackWebException, QueryError):
+    """Upload of the query results failed."""
+
+    error = JobErrorCode.upload_failed

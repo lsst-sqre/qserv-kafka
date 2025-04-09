@@ -9,17 +9,19 @@ from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
 from ..config import config
-from ..exceptions import QservApiError
+from ..exceptions import QservApiError, UploadWebError
 from ..models.kafka import (
     JobError,
     JobErrorCode,
     JobQueryInfo,
+    JobResultInfo,
     JobRun,
     JobStatus,
 )
 from ..models.qserv import AsyncQueryPhase, AsyncQueryStatus
 from ..storage.qserv import QservClient
 from ..storage.state import QueryStateStore
+from ..storage.votable import VOTableWriter
 
 __all__ = ["QueryMonitor"]
 
@@ -33,6 +35,8 @@ class QueryMonitor:
         Client to talk to the Qserv REST API.
     state_store
         Storage for query state.
+    votable_writer
+        Writer for VOTable output.
     kafka_broker
         Broker to use to publish status messages.
     logger
@@ -44,11 +48,13 @@ class QueryMonitor:
         *,
         qserv_client: QservClient,
         state_store: QueryStateStore,
+        votable_writer: VOTableWriter,
         kafka_broker: KafkaBroker,
         logger: BoundLogger,
     ) -> None:
         self._qserv = qserv_client
         self._state = state_store
+        self._votable = votable_writer
         self._kafka = kafka_broker
         self._logger = logger
 
@@ -102,7 +108,7 @@ class QueryMonitor:
                 # Do nothing and hope that the job either finishes or shows up
                 # in the process list the next time through.
             case AsyncQueryPhase.COMPLETED:
-                await self._send_completed(job, status)
+                await self._send_completed(query_id, job, status)
                 await self._state.delete_query(query_id)
             case AsyncQueryPhase.FAILED:
                 await self._send_failed(job, status)
@@ -151,29 +157,54 @@ class QueryMonitor:
         await self._publish_status(update)
 
     async def _send_completed(
-        self, job: JobRun, status: AsyncQueryStatus
+        self, query_id: int, job: JobRun, status: AsyncQueryStatus
     ) -> None:
         """Send a status update for a completed job.
 
         Parameters
         ----------
+        query_id
+            Qserv query ID.
         job
             Original query request.
         status
             Status of the job.
         """
-        self._logger.info(
-            "Job completed", job_id=job.job_id, username=job.owner
-        )
+        logger = self._logger.bind(job_id=job.job_id, username=job.owner)
+        logger.info("Job completed")
 
-        # This needs to retrieve the results and store them and then include
-        # result information.
+        # Retrieve and upload the results.
+        results = self._qserv.get_query_results_gen(query_id)
+        try:
+            total_rows = await self._votable.store(
+                job.result_url, job.result_format, results
+            )
+        except UploadWebError as e:
+            self._logger.exception("Unable to upload results", error=str(e))
+            update = JobStatus(
+                job_id=job.job_id,
+                execution_id=str(query_id),
+                timestamp=datetime.now(tz=UTC),
+                status=ExecutionPhase.ERROR,
+                error=e.to_job_error(),
+                metadata=job.to_job_metadata(),
+            )
+            await self._publish_status(update)
+            return
+        self._logger.debug("Results uploaded")
+
+        # Send the Kafka message indicating job completion.
         update = JobStatus(
             job_id=job.job_id,
             execution_id=str(status.query_id),
             timestamp=status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.COMPLETED,
             query_info=JobQueryInfo.from_query_status(status),
+            result_info=JobResultInfo(
+                total_rows=total_rows,
+                result_location=job.result_location,
+                format=job.result_format.format,
+            ),
             metadata=job.to_job_metadata(),
         )
         await self._publish_status(update)
