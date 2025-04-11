@@ -45,14 +45,11 @@ build-backend = "setuptools.build_meta"
 dev = [
     "asgi-lifespan",
     "coverage[toml]",
-    "httpx",
-    "mypy",
-    "pydantic",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
     "respx",
-    "scriv",
+    "scriv[toml]",
     "testcontainers[mysql]",
 ]
 lint = [
