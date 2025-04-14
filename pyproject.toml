@@ -149,3 +149,6 @@ new_fragment_template = "file:changelog.d/_template.md.jinja"
 skip_fragments = "_template.md.jinja"
 
 [tool.setuptools_scm]
+
+[tool.uv.sources]
+safir = { git = "https://github.com/lsst-sqre/safir", branch = "tickets/DM-50095", subdirectory = "safir" }
