@@ -18,6 +18,7 @@ from ..models.kafka import (
     JobStatus,
 )
 from ..models.qserv import AsyncQueryPhase, AsyncQueryStatus
+from ..models.votable import VOTablePrimitive
 from ..storage.qserv import QservClient
 from ..storage.state import QueryStateStore
 from ..storage.votable import VOTableWriter
@@ -71,16 +72,13 @@ class QueryService:
         # Check that the job request is supported.
         serialization = job.result_format.format.serialization
         if serialization != JobResultSerialization.BINARY2:
-            return JobStatus(
-                job_id=job.job_id,
-                timestamp=datetime.now(tz=UTC),
-                status=ExecutionPhase.ERROR,
-                error=JobError(
-                    code=JobErrorCode.invalid_request,
-                    message=f"{serialization} serialization not supported",
-                ),
-                metadata=metadata,
-            )
+            msg = f"{serialization} serialization not supported"
+            return self._build_invalid_request_error(job, msg)
+        for column in job.result_format.column_types:
+            is_char = column.datatype == VOTablePrimitive.char
+            if not is_char and column.arraysize is not None:
+                msg = "arraysize only supported for char fields"
+                return self._build_invalid_request_error(job, msg)
 
         # Start the query.
         self._logger.info(
@@ -177,5 +175,34 @@ class QueryService:
             query_info=JobQueryInfo.from_query_status(status),
             result_info=result_info,
             error=error,
+            metadata=metadata,
+        )
+
+    def _build_invalid_request_error(
+        self, job: JobRun, error: str
+    ) -> JobStatus:
+        """Build a status reply for an invalid request.
+
+        Parameters
+        ----------
+        job
+            Initial query request.
+        error
+            Error message.
+
+        Returns
+        -------
+        JobStatus
+            Job status to report to Kafka.
+        """
+        metadata = job.to_job_metadata()
+        self._logger.warning(
+            error, query=metadata.model_dump(mode="json", exclude_none=True)
+        )
+        return JobStatus(
+            job_id=job.job_id,
+            timestamp=datetime.now(tz=UTC),
+            status=ExecutionPhase.ERROR,
+            error=JobError(code=JobErrorCode.invalid_request, message=error),
             metadata=metadata,
         )

@@ -195,3 +195,20 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
     expected.timestamp = ANY
     assert expected.error
     assert status == expected
+
+    job = read_test_job_run("jobs/arraysize")
+    status = await query_service.start_query(job)
+    expected = JobStatus(
+        job_id=job.job_id,
+        execution_id=None,
+        timestamp=now,
+        status=ExecutionPhase.ERROR,
+        error=JobError(
+            code=JobErrorCode.invalid_request,
+            message="arraysize only supported for char fields",
+        ),
+        metadata=job.to_job_metadata(),
+    )
+    expected.timestamp = ANY
+    assert expected.error
+    assert status == expected
