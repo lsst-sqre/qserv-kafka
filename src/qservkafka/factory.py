@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ssl
 from dataclasses import dataclass
 from typing import Self
 
@@ -70,9 +71,17 @@ class ProcessContext:
         # Qserv currently uses a self-signed certificate.
         http_client = AsyncClient(verify=False)  # noqa: S501
 
+        # Qserv uses a self-signed certificate with no known certificate
+        # chain. We do not use TLS to validate the identity of the server.
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+
         state_store = QueryStateStore(logger)
         engine = create_database_engine(
-            str(config.qserv_database_url), config.qserv_database_password
+            str(config.qserv_database_url),
+            config.qserv_database_password,
+            connect_args={"ssl": ssl_context},
         )
         session = await create_async_session(engine)
         monitor = QueryMonitor(

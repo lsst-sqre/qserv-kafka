@@ -65,8 +65,9 @@ class Config(BaseSettings):
     @classmethod
     def _validate_qserv_database_url(cls, v: MySQLDsn) -> MySQLDsn:
         """Ensure that the Qserv DSN uses a compatible dialect."""
-        if v.scheme != "mysql+asyncmy":
-            raise ValueError("Only mysql+asyncmy DSN schemes are supported")
+        if v.scheme not in ("mysql", "mysql+asyncmy"):
+            msg = "Only mysql or mysql+asyncmy DSN schemes are supported"
+            raise ValueError(msg)
         return v
 
 
