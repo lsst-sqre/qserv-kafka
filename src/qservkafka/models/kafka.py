@@ -361,6 +361,7 @@ class JobErrorCode(StrEnum):
     backend_error = "backend_error"
     backend_internal_error = "backend_internal_error"
     backend_request_error = "backend_request_error"
+    invalid_request = "invalid_request"
     upload_failed = "upload_failed"
 
 
@@ -405,7 +406,7 @@ class JobStatus(BaseModel):
             description="Identifier of the running query in the backend",
             serialization_alias="executionID",
         ),
-    ]
+    ] = None
 
     timestamp: Annotated[
         DatetimeMillis,

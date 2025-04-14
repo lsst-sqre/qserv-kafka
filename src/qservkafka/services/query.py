@@ -13,10 +13,11 @@ from ..models.kafka import (
     JobErrorCode,
     JobQueryInfo,
     JobResultInfo,
+    JobResultSerialization,
     JobRun,
     JobStatus,
 )
-from ..models.qserv import AsyncQueryPhase
+from ..models.qserv import AsyncQueryPhase, AsyncQueryStatus
 from ..storage.qserv import QservClient
 from ..storage.state import QueryStateStore
 from ..storage.votable import VOTableWriter
@@ -66,13 +67,27 @@ class QueryService:
             Initial status of the job.
         """
         metadata = job.to_job_metadata()
-        query_id = None
+
+        # Check that the job request is supported.
+        serialization = job.result_format.format.serialization
+        if serialization != JobResultSerialization.BINARY2:
+            return JobStatus(
+                job_id=job.job_id,
+                timestamp=datetime.now(tz=UTC),
+                status=ExecutionPhase.ERROR,
+                error=JobError(
+                    code=JobErrorCode.invalid_request,
+                    message=f"{serialization} serialization not supported",
+                ),
+                metadata=metadata,
+            )
 
         # Start the query.
         self._logger.info(
             "Starting query",
             query=metadata.model_dump(mode="json", exclude_none=True),
         )
+        query_id = None
         try:
             query_id = await self._qserv.submit_query(job)
             status = await self._qserv.get_query_status(query_id)
@@ -89,8 +104,36 @@ class QueryService:
 
         # Analyze the initial status and store the query if it successfully
         # went into executing.
+        return await self._build_initial_status(query_id, job, status)
+
+    async def _build_initial_status(
+        self, query_id: int, job: JobRun, status: AsyncQueryStatus
+    ) -> JobStatus:
+        """Build the initial status response for a just-created query.
+
+        If the query has already completed, retrieve the results if successful
+        and return an appropriate final status. Otherwise, return a status
+        message indicating that the job has started executing.
+
+        Parameters
+        ----------
+        query_id
+            Qserv query ID.
+        job
+            Initial query request.
+        status
+            Initial status response from Qserv.
+
+        Returns
+        -------
+        JobStatus
+            Initial job status to report to Kafka.
+        """
+        metadata = job.to_job_metadata()
         error = None
         result_info = None
+
+        # Check the status of the job according to Qserv.
         if status.status == AsyncQueryPhase.FAILED:
             self._logger.warning(
                 "Backend reported query failure",
@@ -125,7 +168,7 @@ class QueryService:
                 format=job.result_format.format,
             )
 
-        # Return the status message to send to Kafka.
+        # Return the job status message for Kafka.
         return JobStatus(
             job_id=job.job_id,
             execution_id=str(query_id),
