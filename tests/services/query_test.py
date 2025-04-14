@@ -172,3 +172,26 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     assert status == expected
     assert status.query_info
     assert_approximately_now(status.query_info.start_time)
+
+
+@pytest.mark.asyncio
+async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
+    query_service = factory.create_query_service()
+    now = datetime.now(tz=UTC)
+
+    job = read_test_job_run("jobs/tabledata")
+    status = await query_service.start_query(job)
+    expected = JobStatus(
+        job_id=job.job_id,
+        execution_id=None,
+        timestamp=now,
+        status=ExecutionPhase.ERROR,
+        error=JobError(
+            code=JobErrorCode.invalid_request,
+            message="TABLEDATA serialization not supported",
+        ),
+        metadata=job.to_job_metadata(),
+    )
+    expected.timestamp = ANY
+    assert expected.error
+    assert status == expected
