@@ -35,7 +35,8 @@
       {
         "name": "d",
         "datatype": "char",
-        "arraysize": "*"
+        "arraysize": "*",
+        "requiresUrlRewrite": true
       },
       {
         "name": "e",
