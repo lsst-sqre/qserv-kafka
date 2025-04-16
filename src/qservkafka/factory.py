@@ -6,7 +6,6 @@ import ssl
 from dataclasses import dataclass
 from typing import Self
 
-from faststream.kafka.fastapi import KafkaRouter
 from httpx import AsyncClient
 from safir.database import create_async_session, create_database_engine
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
@@ -15,18 +14,14 @@ from structlog.stdlib import BoundLogger
 
 from .background import BackgroundTaskManager
 from .config import config
+from .kafkarouters import kafka_router
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
 from .storage.qserv import QservClient
 from .storage.state import QueryStateStore
 from .storage.votable import VOTableWriter
 
-kafka_router = KafkaRouter(
-    **config.kafka.to_faststream_params(), logger=get_logger("qservkafka")
-)
-"""Faststream router for incoming Kafka requests."""
-
-__all__ = ["Factory", "ProcessContext", "kafka_router"]
+__all__ = ["Factory", "ProcessContext"]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
