@@ -64,7 +64,10 @@ class QueryMonitor:
         if not known_queries:
             return
         running = await self._qserv.list_running_queries()
-        for query_id, query in known_queries.items():
+        for query_id in known_queries:
+            query = await self._state.get_query(query_id)
+            if not query:
+                continue
             job = query.job
             if query_id in running:
                 status = running[query_id]
