@@ -12,7 +12,7 @@
     "total_rows": 2,
     "result_location": "https://gcs.example.com/upload",
     "format": {
-      "type": "votable",
+      "type": "VOTable",
       "serialization": "BINARY2"
     }
   },

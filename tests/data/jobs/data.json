@@ -7,7 +7,7 @@
   "resultLocation": "https://gcs.example.com/upload",
   "resultFormat": {
     "format": {
-      "type": "votable",
+      "type": "VOTable",
       "serialization": "BINARY2"
     },
     "envelope": {
