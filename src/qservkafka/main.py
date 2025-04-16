@@ -17,8 +17,8 @@ from structlog import get_logger
 
 from .config import config
 from .dependencies.context import context_dependency
-from .factory import kafka_router
 from .handlers.internal import internal_router
+from .handlers.kafka import kafka_router
 
 __all__ = ["app"]
 
