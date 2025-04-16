@@ -4,7 +4,7 @@
     "a": null,
     "b": "c",
     "c": null,
-    "d": "something",
+    "d": "https://foo.example.com/datalink/1",
     "e": null,
     "f": -123.12,
     "g": null,

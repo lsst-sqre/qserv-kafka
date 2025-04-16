@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy import Row
+from structlog import get_logger
 
 from qservkafka.models.kafka import (
     JobResultColumnType,
@@ -51,7 +52,8 @@ async def assert_encoded_value(
         envelope=JobResultEnvelope(header="", footer=""),
     )
     rows = [(data,)]
-    encoder = VOTableEncoder(config)
+    logger = get_logger(__name__)
+    encoder = VOTableEncoder(config, logger)
     encoded = b""
     async for blob in encoder.encode(data_generator(rows)):
         encoded += blob

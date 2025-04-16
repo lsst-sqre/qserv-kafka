@@ -61,6 +61,16 @@ class Config(BaseSettings):
 
     qserv_rest_url: HttpUrl = Field(..., title="Qserv REST API URL")
 
+    rewrite_base_url: HttpUrl = Field(
+        ...,
+        title="Base URL for rewrites",
+        description=(
+            "URLs in columns flagged for rewriting will have their netloc"
+            " portion replaced with the netloc from this base URL. The rest"
+            " of the URL will be left untouched."
+        ),
+    )
+
     @field_validator("qserv_database_url")
     @classmethod
     def _validate_qserv_database_url(cls, v: MySQLDsn) -> MySQLDsn:

@@ -7,6 +7,7 @@ import struct
 from binascii import b2a_base64
 from collections.abc import AsyncGenerator
 from typing import Any, assert_never
+from urllib.parse import urlparse
 
 from bitstring import BitArray
 from httpx import AsyncClient, HTTPError
@@ -14,6 +15,7 @@ from pydantic import HttpUrl
 from sqlalchemy import Row
 from structlog.stdlib import BoundLogger
 
+from ..config import config
 from ..exceptions import UploadWebError
 from ..models.kafka import JobResultColumnType, JobResultConfig
 from ..models.votable import VOTablePrimitive
@@ -36,10 +38,13 @@ class VOTableEncoder:
         Configuration for the output format. Includes the header, footer, and
         type information. The type information must exactly match the columns
         of the results. This is not checked.
+    logger
+        Logger to use.
     """
 
-    def __init__(self, config: JobResultConfig) -> None:
+    def __init__(self, config: JobResultConfig, logger: BoundLogger) -> None:
         self._config = config
+        self._logger = logger
         self._total_rows: int = 0
 
     @property
@@ -102,6 +107,47 @@ class VOTableEncoder:
         finally:
             await data.aclose()
 
+    def _encode_char_column(
+        self, column: JobResultColumnType, value_raw: Any
+    ) -> bytes:
+        """Encode a column of type ``char``.
+
+        Most of the complex encoding handling applies to char columns.
+
+        Parameters
+        ----------
+        column
+            Column type definition.
+        value_raw
+            Value for that column.
+
+        Returns
+        -------
+        bytes
+            Serialized representation of the column.
+        """
+        value_str = "" if value_raw is None else str(value_raw)
+        if value_str and column.requires_url_rewrite:
+            try:
+                base_url = urlparse(str(config.rewrite_base_url))
+                url = urlparse(value_str)
+                value_str = url._replace(netloc=base_url.netloc).geturl()
+            except Exception as e:
+                self._logger.warning(
+                    "Unable to rewrite URL", column=column.name, error=str(e)
+                )
+        value = value_str.encode()
+        if column.arraysize and column.arraysize.variable:
+            if column.arraysize.limit:
+                value = value[: column.arraysize.limit]
+            rule = ">I" + str(len(value)) + "s"
+            return struct.pack(rule, len(value), value)
+        elif column.arraysize and column.arraysize.limit:
+            rule = str(column.arraysize.limit) + "s"
+            return struct.pack(rule, value)
+        else:
+            return struct.pack(column.datatype.pack, value)
+
     def _encode_row(
         self, types: list[JobResultColumnType], row: Row[Any] | tuple[Any]
     ) -> bytes:
@@ -122,7 +168,6 @@ class VOTableEncoder:
         nulls = BitArray(length=len(types))
         output = bytearray()
         for i, column in enumerate(types):
-            arraysize = column.arraysize
             datatype = column.datatype
             value = row[i]
             if value is None:
@@ -132,17 +177,7 @@ class VOTableEncoder:
                     value = False if value is None else bool(value)
                     output += struct.pack(datatype.pack, value)
                 case VOTablePrimitive.char:
-                    value = ("" if value is None else str(value)).encode()
-                    if arraysize and arraysize.variable:
-                        if arraysize.limit:
-                            value = value[: arraysize.limit]
-                        rule = ">I" + str(len(value)) + "s"
-                        output += struct.pack(rule, len(value), value)
-                    elif arraysize and arraysize.limit:
-                        rule = str(arraysize.limit) + "s"
-                        output += struct.pack(rule, value)
-                    else:
-                        output += struct.pack(datatype.pack, value)
+                    output += self._encode_char_column(column, value)
                 case VOTablePrimitive.double | VOTablePrimitive.float:
                     value = math.nan if value is None else float(value)
                     output += struct.pack(datatype.pack, value)
@@ -235,7 +270,7 @@ class VOTableWriter:
         UploadWebError
             Raised if there was a failure to upload the results.
         """
-        encoder = VOTableEncoder(config)
+        encoder = VOTableEncoder(config, self._logger)
         generator = encoder.encode(results)
         try:
             mime_type = "application/x-votable+xml; serialization=binary2"
