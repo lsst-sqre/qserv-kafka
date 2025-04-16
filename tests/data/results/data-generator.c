@@ -64,7 +64,7 @@ main(void)
     /* Data for second line. */
     i = htonl(2);
     fwrite(&i, sizeof(i), 1, stdout);       /* id */
-    c = 1;
+    c = 'T';
     fwrite(&c, sizeof(c), 1, stdout);       /* a */
     fwrite("\0", sizeof(char), 1, stdout);  /* b */
     memcpy(&s, "abcdefghi", sizeof(s));

@@ -50,7 +50,7 @@ class VOTablePrimitive(Enum):
     is set for that type.
     """
 
-    boolean = ("boolean", "?")
+    boolean = ("boolean", "1s")
     char = ("char", "1s")
     double = ("double", ">d")
     float = ("float", ">f")
