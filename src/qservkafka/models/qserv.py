@@ -110,4 +110,13 @@ class AsyncSubmitRequest(BaseModel):
 class AsyncSubmitResponse(BaseResponse):
     """Response from creating an async job."""
 
-    query_id: Annotated[int, Field(title="Query ID")]
+    model_config = ConfigDict(validate_by_name=True)
+
+    query_id: Annotated[
+        int,
+        Field(
+            title="Query ID",
+            serialization_alias="queryId",
+            validation_alias="queryId",
+        ),
+    ]
