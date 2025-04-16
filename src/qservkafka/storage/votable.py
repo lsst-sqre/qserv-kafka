@@ -174,7 +174,12 @@ class VOTableEncoder:
                 nulls.set(True, i)
             match datatype:
                 case VOTablePrimitive.boolean:
-                    value = False if value is None else bool(value)
+                    if value is None:
+                        value = b"\0"
+                    elif value:
+                        value = b"T"
+                    else:
+                        value = b"F"
                     output += struct.pack(datatype.pack, value)
                 case VOTablePrimitive.char:
                     output += self._encode_char_column(column, value)
