@@ -22,7 +22,9 @@ __all__ = ["kafka_router", "publisher"]
 
 
 @kafka_router.subscriber(
-    config.job_run_topic, group_id=config.consumer_group_id
+    config.job_run_topic,
+    auto_offset_reset="earliest",
+    group_id=config.consumer_group_id,
 )
 @publisher
 async def job_run(
