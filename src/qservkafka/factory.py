@@ -64,7 +64,7 @@ class ProcessContext:
         logger = get_logger("qservkafka")
 
         # Qserv currently uses a self-signed certificate.
-        http_client = AsyncClient(verify=False)  # noqa: S501
+        http_client = AsyncClient(timeout=30, verify=False)  # noqa: S501
 
         # Qserv uses a self-signed certificate with no known certificate
         # chain. We do not use TLS to validate the identity of the server.
