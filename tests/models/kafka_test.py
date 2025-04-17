@@ -33,7 +33,7 @@ def test_job_run() -> None:
             ),
             "resultLocation": "https://results.example.com/",
             "resultFormat": {
-                "format": {"type": "votable", "serialization": "BINARY2"},
+                "format": {"type": "VOTable", "serialization": "BINARY2"},
                 "envelope": {
                     "header": (
                         '<VOTable xmlns="http://www.ivoa.net/xml/VOTable'
@@ -81,7 +81,7 @@ def test_job_status() -> None:
             total_rows=1000,
             result_location="https://results.example.com/1",
             format=JobResultFormat(
-                type=JobResultType.votable,
+                type=JobResultType.VOTable,
                 serialization=JobResultSerialization.BINARY2,
             ),
         ),
@@ -103,7 +103,7 @@ def test_job_status() -> None:
         "resultInfo": {
             "totalRows": 1000,
             "resultLocation": "https://results.example.com/1",
-            "format": {"type": "votable", "serialization": "BINARY2"},
+            "format": {"type": "VOTable", "serialization": "BINARY2"},
         },
         "metadata": {"query": "SELECT TOP 10 * FROM table", "database": "dp1"},
     }

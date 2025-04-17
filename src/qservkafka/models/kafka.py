@@ -71,7 +71,7 @@ class JobResultEnvelope(BaseModel):
 class JobResultType(StrEnum):
     """Possible types for the output format of results."""
 
-    votable = "votable"
+    VOTable = "VOTable"
 
 
 class JobResultSerialization(StrEnum):

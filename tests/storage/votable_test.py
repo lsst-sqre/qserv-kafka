@@ -45,7 +45,7 @@ async def assert_encoded_value(
     """
     config = JobResultConfig(
         format=JobResultFormat(
-            type=JobResultType.votable,
+            type=JobResultType.VOTable,
             serialization=JobResultSerialization.BINARY2,
         ),
         column_types=[JobResultColumnType.model_validate(column)],
