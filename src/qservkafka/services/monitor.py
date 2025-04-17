@@ -99,6 +99,7 @@ class QueryMonitor:
             )
             await self._publish_status(update)
             await self._state.delete_query(query_id)
+            return
 
         match status.status:
             case AsyncQueryPhase.EXECUTING:
