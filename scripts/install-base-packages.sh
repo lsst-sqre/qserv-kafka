@@ -26,5 +26,7 @@ apt-get update
 # Install security updates:
 apt-get -y upgrade
 
-# Example of installing a new package, without unnecessary packages:
-apt-get -y install --no-install-recommends git
+# Install some additional debugging tools that are useful for diagnosing
+# issues talking to Qserv.
+apt-get -y install --no-install-recommends curl default-mysql-client \
+    netcat-traditional
