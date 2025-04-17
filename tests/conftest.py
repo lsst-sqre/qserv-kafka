@@ -12,11 +12,12 @@ from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 from faststream.kafka import KafkaBroker, TestKafkaBroker
 from httpx import ASGITransport, AsyncClient
-from pydantic import MySQLDsn, SecretStr
+from pydantic import MySQLDsn, RedisDsn, SecretStr
 from safir.database import create_async_session, create_database_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 from structlog import get_logger
 from testcontainers.mysql import MySqlContainer
+from testcontainers.redis import RedisContainer
 
 from qservkafka import main
 from qservkafka.config import config
@@ -28,13 +29,21 @@ from .support.qserv import MockQserv, register_mock_qserv
 
 @pytest_asyncio.fixture
 async def app(
-    kafka_broker: KafkaBroker, mock_qserv: MockQserv
+    *,
+    kafka_broker: KafkaBroker,
+    mock_qserv: MockQserv,
+    redis: RedisContainer,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncGenerator[FastAPI]:
     """Return a configured test application.
 
     Wraps the application in a lifespan manager so that startup and shutdown
     events are sent during test execution.
     """
+    redis_host = redis.get_container_host_ip()
+    redis_port = redis.get_exposed_port(6379)
+    redis_url = RedisDsn(f"redis://{redis_host}:{redis_port}/0")
+    monkeypatch.setattr(config, "redis_url", redis_url)
     async with LifespanManager(main.app):
         yield main.app
 
@@ -66,9 +75,17 @@ async def engine(
 
 @pytest_asyncio.fixture
 async def factory(
-    mock_qserv: MockQserv, engine: AsyncEngine
+    *,
+    mock_qserv: MockQserv,
+    engine: AsyncEngine,
+    redis: RedisContainer,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncGenerator[Factory]:
     """Provide a component factory for tests that don't require the app."""
+    redis_host = redis.get_container_host_ip()
+    redis_port = redis.get_exposed_port(6379)
+    redis_url = RedisDsn(f"redis://{redis_host}:{redis_port}/0")
+    monkeypatch.setattr(config, "redis_url", redis_url)
     context = await ProcessContext.from_config()
     async with aclosing(context):
         logger = get_logger("qservkafka")
@@ -96,7 +113,18 @@ async def mock_qserv(
 @pytest.fixture(scope="session")
 def mysql() -> Generator[MySqlContainer]:
     """Start a MySQL database container for testing."""
+    assert config.qserv_database_password
+    password = config.qserv_database_password.get_secret_value()
     with MySqlContainer(
-        dialect="asyncmy", username="qserv", password="INSECURE-PASSWORD"
+        dialect="asyncmy", username="qserv", password=password
     ) as mysql:
         yield mysql
+
+
+@pytest.fixture(scope="session")
+def redis() -> Generator[RedisContainer]:
+    """Start a Redis container for testing."""
+    assert config.redis_password
+    password = config.redis_password.get_secret_value()
+    with RedisContainer(password=password) as redis:
+        yield redis

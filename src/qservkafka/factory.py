@@ -7,14 +7,27 @@ from dataclasses import dataclass
 from typing import Self
 
 from httpx import AsyncClient
+from redis.asyncio import BlockingConnectionPool, Redis
+from redis.asyncio.retry import Retry
+from redis.backoff import ExponentialBackoff
 from safir.database import create_async_session, create_database_engine
+from safir.redis import PydanticRedisStorage
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
 from structlog import get_logger
 from structlog.stdlib import BoundLogger
 
 from .background import BackgroundTaskManager
 from .config import config
+from .constants import (
+    REDIS_BACKOFF_MAX,
+    REDIS_BACKOFF_START,
+    REDIS_POOL_SIZE,
+    REDIS_POOL_TIMEOUT,
+    REDIS_RETRIES,
+    REDIS_TIMEOUT,
+)
 from .kafkarouters import kafka_router
+from .models.state import Query
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
 from .storage.qserv import QservClient
@@ -41,6 +54,9 @@ class ProcessContext:
 
     session: async_scoped_session
     """Session used by background jobs."""
+
+    redis: Redis
+    """Connection pool for state-tracking Redis."""
 
     state: QueryStateStore
     """Storage for running query state.
@@ -72,7 +88,29 @@ class ProcessContext:
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
 
-        state_store = QueryStateStore(logger)
+        # Create a Redis client pool with exponential backoff.
+        redis_password = None
+        if config.redis_password:
+            redis_password = config.redis_password.get_secret_value()
+        backoff = ExponentialBackoff(
+            base=REDIS_BACKOFF_START, cap=REDIS_BACKOFF_MAX
+        )
+        redis_pool = BlockingConnectionPool.from_url(
+            str(config.redis_url),
+            password=redis_password,
+            max_connections=REDIS_POOL_SIZE,
+            retry=Retry(backoff, REDIS_RETRIES),
+            retry_on_timeout=True,
+            socket_keepalive=True,
+            socket_timeout=REDIS_TIMEOUT,
+            timeout=REDIS_POOL_TIMEOUT,
+        )
+        redis_client = Redis.from_pool(redis_pool)
+        redis_storage = PydanticRedisStorage(
+            datatype=Query, redis=redis_client, key_prefix="query:"
+        )
+
+        state_store = QueryStateStore(redis_storage, logger)
         engine = create_database_engine(
             str(config.qserv_database_url),
             config.qserv_database_password,
@@ -92,6 +130,7 @@ class ProcessContext:
             http_client=http_client,
             engine=engine,
             session=session,
+            redis=redis_client,
             state=state_store,
             background=background,
         )
@@ -104,6 +143,7 @@ class ProcessContext:
         """
         await self.background.stop()
         await self.session.remove()
+        await self.redis.aclose()
         await self.engine.dispose()
         await self.http_client.aclose()
 

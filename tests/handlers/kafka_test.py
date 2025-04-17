@@ -9,14 +9,20 @@ from unittest.mock import ANY
 import pytest
 from fastapi import FastAPI
 from faststream.kafka import KafkaBroker
+from httpx import Response
 from safir.datetime import current_datetime
+from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.config import config
 from qservkafka.handlers.kafka import publisher
-from qservkafka.models.kafka import JobRun
+from qservkafka.models.kafka import JobError, JobErrorCode, JobRun, JobStatus
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 
-from ..support.data import read_test_job_status, read_test_json
+from ..support.data import (
+    read_test_job_run,
+    read_test_job_status,
+    read_test_json,
+)
 from ..support.qserv import MockQserv
 
 
@@ -112,10 +118,63 @@ async def test_job_results(
         ),
     )
 
-    await asyncio.sleep(2)
+    await asyncio.sleep(1.1)
     expected["queryInfo"]["startTime"] = int(
         async_status.query_begin.timestamp() * 1000
     )
     expected["queryInfo"]["endTime"] = int(now.timestamp() * 1000)
     expected["timestamp"] = int(now.timestamp() * 1000)
+    publisher.mock.assert_called_once_with(expected)
+
+
+@pytest.mark.asyncio
+async def test_job_result_error(
+    app: FastAPI, kafka_broker: KafkaBroker, mock_qserv: MockQserv
+) -> None:
+    """Test proper handling of an API error getting completed job status.
+
+    An earlier version of the Qserv Kafka bridge erroneously didn't stop
+    processing when the API request failed.
+    """
+    job = read_test_job_run("jobs/data")
+    job_json = read_test_json("jobs/data")
+    assert publisher.mock
+
+    await kafka_broker.publish(job_json, config.job_run_topic)
+    await asyncio.sleep(0.1)
+
+    publisher.mock.reset_mock()
+    mock_qserv.set_status_response(
+        Response(
+            200,
+            json={"success": 0, "error": "Some error"},
+        )
+    )
+    async_status = mock_qserv.get_status(1)
+    now = datetime.now(tz=UTC)
+    await mock_qserv.update_status(
+        1,
+        AsyncQueryStatus(
+            query_id=1,
+            status=AsyncQueryPhase.COMPLETED,
+            total_chunks=10,
+            completed_chunks=10,
+            query_begin=async_status.query_begin,
+            last_update=now,
+        ),
+    )
+
+    await asyncio.sleep(1)
+    expected = JobStatus(
+        job_id=job.job_id,
+        execution_id="1",
+        timestamp=now,
+        status=ExecutionPhase.ERROR,
+        error=JobError(
+            code=JobErrorCode.backend_error,
+            message="Qserv request failed: Some error",
+        ),
+        metadata=job.to_job_metadata(),
+    ).model_dump(mode="json")
+    expected["timestamp"] = ANY
     publisher.mock.assert_called_once_with(expected)

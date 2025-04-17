@@ -67,6 +67,7 @@ class QueryService:
         JobStatus
             Initial status of the job.
         """
+        logger = self._logger.bind(job_id=job.job_id, username=job.owner)
         metadata = job.to_job_metadata()
 
         # Check that the job request is supported.
@@ -81,7 +82,7 @@ class QueryService:
                 return self._build_invalid_request_error(job, msg)
 
         # Start the query.
-        self._logger.info(
+        logger.info(
             "Starting query",
             query=metadata.model_dump(mode="json", exclude_none=True),
         )
@@ -90,7 +91,7 @@ class QueryService:
             query_id = await self._qserv.submit_query(job)
             status = await self._qserv.get_query_status(query_id)
         except QservApiError as e:
-            self._logger.exception("Unable to start job", error=str(e))
+            logger.exception("Unable to start job", error=str(e))
             return JobStatus(
                 job_id=job.job_id,
                 execution_id=str(query_id) if query_id else None,
@@ -127,13 +128,16 @@ class QueryService:
         JobStatus
             Initial job status to report to Kafka.
         """
+        logger = self._logger.bind(
+            job_id=job.job_id, qserv_id=query_id, username=job.owner
+        )
         metadata = job.to_job_metadata()
         error = None
         result_info = None
 
         # Check the status of the job according to Qserv.
         if status.status == AsyncQueryPhase.FAILED:
-            self._logger.warning(
+            logger.warning(
                 "Backend reported query failure",
                 query=metadata.model_dump(mode="json", exclude_none=True),
             )
@@ -151,7 +155,7 @@ class QueryService:
                 )
             except UploadWebError as e:
                 msg = "Unable to upload results"
-                self._logger.exception(msg, error=str(e))
+                logger.exception(msg, error=str(e))
                 return JobStatus(
                     job_id=job.job_id,
                     execution_id=str(query_id),
@@ -197,7 +201,10 @@ class QueryService:
         """
         metadata = job.to_job_metadata()
         self._logger.warning(
-            error, query=metadata.model_dump(mode="json", exclude_none=True)
+            error,
+            job_id=job.job_id,
+            username=job.owner,
+            query=metadata.model_dump(mode="json", exclude_none=True),
         )
         return JobStatus(
             job_id=job.job_id,

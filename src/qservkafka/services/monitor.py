@@ -64,7 +64,10 @@ class QueryMonitor:
         if not known_queries:
             return
         running = await self._qserv.list_running_queries()
-        for query_id, query in known_queries.items():
+        for query_id in known_queries:
+            query = await self._state.get_query(query_id)
+            if not query:
+                continue
             job = query.job
             if query_id in running:
                 status = running[query_id]
@@ -82,10 +85,13 @@ class QueryMonitor:
         query_id
            Qserv ID of completed query.
         """
+        logger = self._logger.bind(
+            job_id=job.job_id, qserv_id=query_id, username=job.owner
+        )
         try:
             status = await self._qserv.get_query_status(query_id)
         except QservApiError as e:
-            self._logger.exception("Unable to get job status", error=str(e))
+            logger.exception("Unable to get job status", error=str(e))
             update = JobStatus(
                 job_id=job.job_id,
                 execution_id=str(query_id),
@@ -96,10 +102,11 @@ class QueryMonitor:
             )
             await self._publish_status(update)
             await self._state.delete_query(query_id)
+            return
 
         match status.status:
             case AsyncQueryPhase.EXECUTING:
-                self._logger.error(
+                logger.error(
                     "Job executing but not in process list",
                     job_id=job.job_id,
                     username=job.owner,
@@ -145,7 +152,12 @@ class QueryMonitor:
         status
             Status of the job.
         """
-        self._logger.info("Job aborted", job_id=job.job_id, username=job.owner)
+        self._logger.info(
+            "Job aborted",
+            job_id=job.job_id,
+            qserv_id=status.query_id,
+            username=job.owner,
+        )
         update = JobStatus(
             job_id=job.job_id,
             execution_id=str(status.query_id),
@@ -170,8 +182,10 @@ class QueryMonitor:
         status
             Status of the job.
         """
-        logger = self._logger.bind(job_id=job.job_id, username=job.owner)
-        logger.info("Job completed")
+        logger = self._logger.bind(
+            job_id=job.job_id, qserv_id=query_id, username=job.owner
+        )
+        logger.debug("Processing job completion")
 
         # Retrieve and upload the results.
         results = self._qserv.get_query_results_gen(query_id)
@@ -191,7 +205,7 @@ class QueryMonitor:
             )
             await self._publish_status(update)
             return
-        self._logger.debug("Results uploaded")
+        logger.info("Job complete and results uploaded")
 
         # Send the Kafka message indicating job completion.
         update = JobStatus(
@@ -227,6 +241,7 @@ class QueryMonitor:
         metadata = job.to_job_metadata()
         self._logger.warning(
             "Backend reported query failure",
+            job_id=job.job_id,
             query=metadata.model_dump(mode="json", exclude_none=True),
             status=status.model_dump(mode="json", exclude_none=True),
         )
@@ -257,7 +272,10 @@ class QueryMonitor:
             Status of the job.
         """
         self._logger.debug(
-            "Sending job status update", job_id=job.job_id, username=job.owner
+            "Sending job status update",
+            job_id=job.job_id,
+            qserv_id=status.query_id,
+            username=job.owner,
         )
         update = JobStatus(
             job_id=job.job_id,

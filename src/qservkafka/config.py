@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from pydantic import Field, HttpUrl, MySQLDsn, SecretStr, field_validator
+from pydantic import (
+    Field,
+    HttpUrl,
+    MySQLDsn,
+    RedisDsn,
+    SecretStr,
+    field_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from safir.kafka import KafkaConnectionSettings
 from safir.logging import LogLevel, Profile
@@ -45,6 +52,16 @@ class Config(BaseSettings):
 
     profile: Profile = Field(
         Profile.production, title="Application logging profile"
+    )
+
+    redis_password: SecretStr | None = Field(
+        None, title="Redis password", description="Password for Redis server"
+    )
+
+    redis_url: RedisDsn = Field(
+        ...,
+        title="Redis DSN",
+        description="DSN for the Redis server storing query state",
     )
 
     qserv_database_password: SecretStr | None = Field(
