@@ -153,8 +153,11 @@ class QueryService:
                 total_rows = await self._votable.store(
                     job.result_url, job.result_format, results
                 )
-            except UploadWebError as e:
-                msg = "Unable to upload results"
+            except (QservApiError, UploadWebError) as e:
+                if isinstance(e, UploadWebError):
+                    msg = "Unable to upload results"
+                else:
+                    msg = "Unable to retrieve results"
                 logger.exception(msg, error=str(e))
                 return JobStatus(
                     job_id=job.job_id,
@@ -169,6 +172,7 @@ class QueryService:
                 result_location=job.result_location,
                 format=job.result_format.format,
             )
+            logger.info("Job complete and results uploaded")
 
         # Return the job status message for Kafka.
         return JobStatus(
