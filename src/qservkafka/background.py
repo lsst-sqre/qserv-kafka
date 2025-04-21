@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 from aiojobs import Scheduler
 from structlog.stdlib import BoundLogger
@@ -38,6 +39,7 @@ class BackgroundTaskManager:
     def __init__(self, monitor: QueryMonitor, logger: BoundLogger) -> None:
         self._monitor = monitor
         self._logger = logger
+        self._closing = False
         self._scheduler: Scheduler | None = None
 
     async def start(self) -> None:
@@ -52,7 +54,7 @@ class BackgroundTaskManager:
         self._scheduler = Scheduler()
         coros = [
             self._loop(
-                self._monitor.check_status,
+                partial(self._monitor.check_status, self._scheduler),
                 config.qserv_poll_interval,
                 "polling query status",
             )
@@ -71,7 +73,10 @@ class BackgroundTaskManager:
             self._logger.warning(msg)
             return
         self._logger.info("Stopping background tasks")
-        await self._scheduler.close()
+        self._closing = True
+        timeout = config.shutdown_timeout.total_seconds()
+        await self._scheduler.wait_and_close(timeout=timeout)
+        self._closing = False
         self._scheduler = None
 
     async def _loop(
@@ -96,8 +101,8 @@ class BackgroundTaskManager:
         description
             Description of the background task for error reporting.
         """
-        await asyncio.sleep(interval.total_seconds())
-        while True:
+        while not self._closing:
+            await asyncio.sleep(interval.total_seconds())
             start = datetime.now(tz=UTC)
             try:
                 await call()
@@ -108,4 +113,3 @@ class BackgroundTaskManager:
                 elapsed = datetime.now(tz=UTC) - start
                 msg = f"Uncaught exception {description}"
                 self._logger.exception(msg, delay=elapsed.total_seconds)
-            await asyncio.sleep(interval.total_seconds())

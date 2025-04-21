@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from aiojobs import Scheduler
 from faststream.kafka import KafkaBroker
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
@@ -58,8 +59,16 @@ class QueryMonitor:
         self._kafka = kafka_broker
         self._logger = logger
 
-    async def check_status(self) -> None:
-        """Check the status of running queries and report updates to Kafka."""
+    async def check_status(self, scheduler: Scheduler) -> None:
+        """Check the status of running queries and report updates to Kafka.
+
+        Parameters
+        ----------
+        scheduler
+            Job scheduler to handle background tasks that process completed
+            queries. This allows multiple completed queries to be processed
+            simultaneously using the MySQL client connection pool.
+        """
         known_queries = await self._state.get_active_queries()
         if not known_queries:
             return
@@ -75,7 +84,8 @@ class QueryMonitor:
                     await self._send_status(job, status)
                     await self._state.update_status(query_id, job, status)
             else:
-                await self._handle_finished_query(query_id, job)
+                coro = self._handle_finished_query(query_id, job)
+                await scheduler.spawn(coro)
 
     async def _handle_finished_query(self, query_id: int, job: JobRun) -> None:
         """Sent event for a completed query.
