@@ -59,6 +59,10 @@ class QueryMonitor:
         self._kafka = kafka_broker
         self._logger = logger
 
+        # Completed jobs that are currently being processed, so that we don't
+        # process them twice.
+        self._in_progress: set[int] = set()
+
     async def check_status(self, scheduler: Scheduler) -> None:
         """Check the status of running queries and report updates to Kafka.
 
@@ -83,7 +87,8 @@ class QueryMonitor:
                 if query.status != status:
                     await self._send_status(job, status)
                     await self._state.update_status(query_id, job, status)
-            else:
+            elif query_id not in self._in_progress:
+                self._in_progress.add(query_id)
                 coro = self._handle_finished_query(query_id, job)
                 await scheduler.spawn(coro)
 
@@ -112,6 +117,7 @@ class QueryMonitor:
             )
             await self._publish_status(update)
             await self._state.delete_query(query_id)
+            self._in_progress.remove(query_id)
             return
 
         match status.status:
@@ -124,17 +130,19 @@ class QueryMonitor:
                 )
                 # Do nothing and hope that the job either finishes or shows up
                 # in the process list the next time through.
+                return
             case AsyncQueryPhase.COMPLETED:
                 await self._send_completed(query_id, job, status)
-                await self._state.delete_query(query_id)
             case AsyncQueryPhase.FAILED:
                 await self._send_failed(job, status)
-                await self._state.delete_query(query_id)
             case AsyncQueryPhase.ABORTED:
                 await self._send_aborted(job, status)
-                await self._state.delete_query(query_id)
             case _:  # pragma: no cover
                 raise ValueError(f"Unknown phase {status.status}")
+
+        # Clean up the handled query.
+        await self._state.delete_query(query_id)
+        self._in_progress.remove(query_id)
 
     async def _publish_status(self, status: JobStatus) -> None:
         """Publish a status update to Kafka.
