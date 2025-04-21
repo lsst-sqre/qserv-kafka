@@ -361,6 +361,7 @@ class JobErrorCode(StrEnum):
     backend_error = "backend_error"
     backend_internal_error = "backend_internal_error"
     backend_request_error = "backend_request_error"
+    backend_sql_error = "backend_sql_error"
     invalid_request = "invalid_request"
     upload_failed = "upload_failed"
 

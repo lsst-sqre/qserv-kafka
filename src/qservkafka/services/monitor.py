@@ -203,8 +203,12 @@ class QueryMonitor:
             total_rows = await self._votable.store(
                 job.result_url, job.result_format, results
             )
-        except UploadWebError as e:
-            self._logger.exception("Unable to upload results", error=str(e))
+        except (QservApiError, UploadWebError) as e:
+            if isinstance(e, UploadWebError):
+                msg = "Unable to upload results"
+            else:
+                msg = "Unable to retrieve results"
+            self._logger.exception(msg, error=str(e))
             update = JobStatus(
                 job_id=job.job_id,
                 execution_id=str(query_id),
