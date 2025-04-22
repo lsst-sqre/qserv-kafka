@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Any, Self
 
-from pydantic import BaseModel, Field, PlainValidator
+from pydantic import BaseModel, Field, PlainSerializer, PlainValidator
 
 __all__ = [
     "VOTableArraySize",
@@ -20,6 +20,13 @@ class VOTableSize(BaseModel):
     limit: Annotated[int | None, Field(title="Maximum length")]
 
     variable: Annotated[bool, Field(title="Whether length can vary")]
+
+    def to_string(self) -> str:
+        """Convert to string form as seen in VOTables."""
+        result = str(self.limit) if self.limit is not None else ""
+        if self.variable:
+            result += "*"
+        return result
 
 
 def _validate_array_size(arraysize: Any) -> VOTableSize:
@@ -40,7 +47,9 @@ def _validate_array_size(arraysize: Any) -> VOTableSize:
 
 
 type VOTableArraySize = Annotated[
-    VOTableSize, PlainValidator(_validate_array_size)
+    VOTableSize,
+    PlainSerializer(lambda v: v.to_string(), return_type=str),
+    PlainValidator(_validate_array_size),
 ]
 
 
