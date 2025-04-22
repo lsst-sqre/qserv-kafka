@@ -68,15 +68,15 @@ class QueryStateStore:
         """
         await self._storage.delete(str(query_id))
 
-    async def get_active_queries(self) -> list[int]:
+    async def get_active_queries(self) -> set[int]:
         """Get the IDs of all active queries.
 
         Returns
         -------
-        list of int
+        set of int
             All queries we believe are currently active.
         """
-        return [int(k) async for k in self._storage.scan("*")]
+        return {int(k) async for k in self._storage.scan("*")}
 
     async def get_query(self, query_id: int) -> Query | None:
         """Get the original job request for a given query.

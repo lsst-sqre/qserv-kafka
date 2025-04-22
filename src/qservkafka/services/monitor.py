@@ -74,11 +74,12 @@ class QueryMonitor:
             queries. This allows multiple completed queries to be processed
             simultaneously using the MySQL client connection pool.
         """
-        known_queries = await self._state.get_active_queries()
-        if not known_queries:
+        active_queries = await self._state.get_active_queries()
+        queries_to_process = active_queries - self._in_progress
+        if not queries_to_process:
             return
         running = await self._qserv.list_running_queries()
-        for query_id in known_queries:
+        for query_id in queries_to_process:
             query = await self._state.get_query(query_id)
             if not query:
                 continue
