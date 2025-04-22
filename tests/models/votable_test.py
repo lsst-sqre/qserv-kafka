@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import struct
+
 import pytest
 from pydantic import BaseModel, ValidationError
 
@@ -34,9 +36,9 @@ def test_votable_primitive() -> None:
 
     model = TestModel.model_validate({"type": "char"})
     assert model.type == VOTablePrimitive.char
-    assert model.type.pack == "1s"
+    assert model.type.pack("foo") == b"f"
     assert model.model_dump(mode="json") == {"type": "char"}
     model = TestModel.model_validate({"type": "double"})
     assert model.type == VOTablePrimitive.double
-    assert model.type.pack == ">d"
+    assert model.type.pack(13.71) == struct.pack(">d", 13.71)
     assert model.model_dump(mode="json") == {"type": "double"}

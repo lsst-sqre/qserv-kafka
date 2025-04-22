@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import struct
 from enum import Enum
 from typing import Annotated, Any, Self
 
@@ -62,7 +64,7 @@ class VOTablePrimitive(Enum):
     """
 
     boolean = ("boolean", "1s")
-    char = ("char", "1s")
+    char = ("char", "s")
     double = ("double", ">d")
     float = ("float", ">f")
     int = ("int", ">l")
@@ -73,9 +75,35 @@ class VOTablePrimitive(Enum):
         obj._value_ = args[0]
         return obj
 
-    def __init__(self, _: str, pack: str) -> None:
-        self._pack = pack
+    def __init__(self, _: str, pack_format: str) -> None:
+        self._pack_format = pack_format
 
-    @property
-    def pack(self) -> str:
-        return self._pack
+    def pack(self, value: Any) -> bytes:
+        """Serialize a value of the corresponding data type to BINARY2.
+
+        Parameters
+        ----------
+        value
+            Value to serialize.
+
+        Returns
+        -------
+        bytes
+            Binary (non-base64) serialized form of the data.
+        """
+        match self.value:
+            case "boolean":
+                value = b"\0" if value is None else b"T" if value else b"F"
+                return struct.pack(self._pack_format, value)
+            case "char":
+                if not isinstance(value, bytes):
+                    value = str(value).encode()
+                return struct.pack(self._pack_format, value)
+            case "double" | "float":
+                value = math.nan if value is None else float(value)
+                return struct.pack(self._pack_format, value)
+            case "int" | "long":
+                value = 0 if value is None else int(value)
+                return struct.pack(self._pack_format, value)
+            case _:  # pragma: no cover
+                raise ValueError(f"Unknown type {self.value}")
