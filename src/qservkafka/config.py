@@ -36,6 +36,10 @@ class Config(BaseSettings):
         title="Kafka connection settings",
     )
 
+    job_cancel_topic: str = Field(
+        "lsst.tap.job-delete", title="Topic for job cancellation requests"
+    )
+
     job_run_topic: str = Field(
         "lsst.tap.job-run", title="Topic for job requests"
     )

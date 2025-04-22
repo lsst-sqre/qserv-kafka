@@ -32,6 +32,7 @@ type DatetimeMillis = Annotated[
 """Type for timestamps, which are represented in Kafka in milliseconds."""
 
 __all__ = [
+    "JobCancel",
     "JobError",
     "JobErrorCode",
     "JobMetadata",
@@ -44,6 +45,39 @@ __all__ = [
     "JobRun",
     "JobStatus",
 ]
+
+
+class JobCancel(BaseModel):
+    """Request to cancel a running query."""
+
+    model_config = ConfigDict(validate_by_name=True)
+
+    job_id: Annotated[
+        str,
+        Field(
+            title="UWS job ID",
+            description="Identifier of job in the TAP server's UWS database",
+            validation_alias="jobID",
+        ),
+    ]
+
+    execution_id: Annotated[
+        str,
+        Field(
+            title="Backend execution ID",
+            description="Identifier of the running query in the backend",
+            validation_alias="executionID",
+        ),
+    ]
+
+    owner: Annotated[
+        str,
+        Field(
+            title="Username of owner",
+            description="Username of the user who generated the query",
+            validation_alias="ownerID",
+        ),
+    ]
 
 
 class JobResultEnvelope(BaseModel):

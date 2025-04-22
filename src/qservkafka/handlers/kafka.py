@@ -13,7 +13,7 @@ from fastapi import Depends
 from ..config import config
 from ..dependencies.context import ConsumerContext, context_dependency
 from ..kafkarouters import kafka_router
-from ..models.kafka import JobRun, JobStatus
+from ..models.kafka import JobCancel, JobRun, JobStatus
 
 publisher = kafka_router.publisher(config.job_status_topic)
 """Publisher for status messages, defined separately for testing."""
@@ -34,3 +34,21 @@ async def job_run(
     context.rebind_logger(job_id=message.job_id, username=message.owner)
     query_service = context.factory.create_query_service()
     return await query_service.start_query(message)
+
+
+@kafka_router.subscriber(
+    config.job_cancel_topic,
+    auto_offset_reset="earliest",
+    group_id=config.consumer_group_id,
+)
+async def job_cancel(
+    message: JobCancel,
+    context: Annotated[ConsumerContext, Depends(context_dependency)],
+) -> None:
+    context.rebind_logger(
+        qserv_id=message.execution_id, username=message.owner
+    )
+    query_service = context.factory.create_query_service()
+    result = await query_service.cancel_query(message)
+    if result:
+        await query_service.publish_status(result)
