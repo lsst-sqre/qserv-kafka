@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
+from aiojobs import Scheduler
 from faststream.kafka import KafkaBroker
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
@@ -58,13 +60,26 @@ class QueryMonitor:
         self._kafka = kafka_broker
         self._logger = logger
 
-    async def check_status(self) -> None:
-        """Check the status of running queries and report updates to Kafka."""
-        known_queries = await self._state.get_active_queries()
-        if not known_queries:
+        # Completed jobs that are currently being processed, so that we don't
+        # process them twice.
+        self._in_progress: set[int] = set()
+
+    async def check_status(self, scheduler: Scheduler) -> None:
+        """Check the status of running queries and report updates to Kafka.
+
+        Parameters
+        ----------
+        scheduler
+            Job scheduler to handle background tasks that process completed
+            queries. This allows multiple completed queries to be processed
+            simultaneously using the MySQL client connection pool.
+        """
+        active_queries = await self._state.get_active_queries()
+        queries_to_process = active_queries - self._in_progress
+        if not queries_to_process:
             return
         running = await self._qserv.list_running_queries()
-        for query_id in known_queries:
+        for query_id in queries_to_process:
             query = await self._state.get_query(query_id)
             if not query:
                 continue
@@ -74,8 +89,10 @@ class QueryMonitor:
                 if query.status != status:
                     await self._send_status(job, status)
                     await self._state.update_status(query_id, job, status)
-            else:
-                await self._handle_finished_query(query_id, job)
+            elif query_id not in self._in_progress:
+                self._in_progress.add(query_id)
+                coro = self._handle_finished_query(query_id, job)
+                await scheduler.spawn(coro)
 
     async def _handle_finished_query(self, query_id: int, job: JobRun) -> None:
         """Sent event for a completed query.
@@ -102,8 +119,10 @@ class QueryMonitor:
             )
             await self._publish_status(update)
             await self._state.delete_query(query_id)
+            self._in_progress.remove(query_id)
             return
 
+        success = True
         match status.status:
             case AsyncQueryPhase.EXECUTING:
                 logger.error(
@@ -114,17 +133,20 @@ class QueryMonitor:
                 )
                 # Do nothing and hope that the job either finishes or shows up
                 # in the process list the next time through.
+                return
             case AsyncQueryPhase.COMPLETED:
-                await self._send_completed(query_id, job, status)
-                await self._state.delete_query(query_id)
+                success = await self._send_completed(query_id, job, status)
             case AsyncQueryPhase.FAILED:
                 await self._send_failed(job, status)
-                await self._state.delete_query(query_id)
             case AsyncQueryPhase.ABORTED:
                 await self._send_aborted(job, status)
-                await self._state.delete_query(query_id)
             case _:  # pragma: no cover
                 raise ValueError(f"Unknown phase {status.status}")
+
+        # Clean up the handled query.
+        if success:
+            await self._state.delete_query(query_id)
+            self._in_progress.remove(query_id)
 
     async def _publish_status(self, status: JobStatus) -> None:
         """Publish a status update to Kafka.
@@ -170,7 +192,7 @@ class QueryMonitor:
 
     async def _send_completed(
         self, query_id: int, job: JobRun, status: AsyncQueryStatus
-    ) -> None:
+    ) -> bool:
         """Send a status update for a completed job.
 
         Parameters
@@ -181,6 +203,12 @@ class QueryMonitor:
             Original query request.
         status
             Status of the job.
+
+        Returns
+        -------
+        bool
+            `True` if the result was successfully retrieved and uploaded,
+            `False` otherwise.
         """
         logger = self._logger.bind(
             job_id=job.job_id, qserv_id=query_id, username=job.owner
@@ -188,13 +216,20 @@ class QueryMonitor:
         logger.debug("Processing job completion")
 
         # Retrieve and upload the results.
+        start = datetime.now(tz=UTC)
+        timeout = config.shutdown_timeout.total_seconds()
         results = self._qserv.get_query_results_gen(query_id)
         try:
-            total_rows = await self._votable.store(
-                job.result_url, job.result_format, results
-            )
-        except UploadWebError as e:
-            self._logger.exception("Unable to upload results", error=str(e))
+            async with asyncio.timeout(timeout):
+                total_rows = await self._votable.store(
+                    job.result_url, job.result_format, results
+                )
+        except (QservApiError, UploadWebError) as e:
+            if isinstance(e, UploadWebError):
+                msg = "Unable to upload results"
+            else:
+                msg = "Unable to retrieve results"
+            logger.exception(msg, error=str(e))
             update = JobStatus(
                 job_id=job.job_id,
                 execution_id=str(query_id),
@@ -204,7 +239,15 @@ class QueryMonitor:
                 metadata=job.to_job_metadata(),
             )
             await self._publish_status(update)
-            return
+            return False
+        except TimeoutError:
+            elapsed = datetime.now(tz=UTC) - start
+            logger.exception(
+                "Retrieving results timed out",
+                elapsed=elapsed.total_seconds,
+                timeout=timeout,
+            )
+            return False
         logger.info("Job complete and results uploaded")
 
         # Send the Kafka message indicating job completion.
@@ -222,6 +265,7 @@ class QueryMonitor:
             metadata=job.to_job_metadata(),
         )
         await self._publish_status(update)
+        return True
 
     async def _send_failed(
         self, job: JobRun, status: AsyncQueryStatus

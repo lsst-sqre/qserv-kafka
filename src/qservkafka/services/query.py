@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
+from ..config import config
 from ..exceptions import QservApiError, UploadWebError
 from ..models.kafka import (
     JobError,
@@ -149,12 +151,18 @@ class QueryService:
             await self._state.add_query(query_id, job, status)
         elif status.status == AsyncQueryPhase.COMPLETED:
             results = self._qserv.get_query_results_gen(query_id)
+            start = datetime.now(tz=UTC)
+            timeout = config.shutdown_timeout.total_seconds()
             try:
-                total_rows = await self._votable.store(
-                    job.result_url, job.result_format, results
-                )
-            except UploadWebError as e:
-                msg = "Unable to upload results"
+                async with asyncio.timeout(timeout):
+                    total_rows = await self._votable.store(
+                        job.result_url, job.result_format, results
+                    )
+            except (QservApiError, UploadWebError) as e:
+                if isinstance(e, UploadWebError):
+                    msg = "Unable to upload results"
+                else:
+                    msg = "Unable to retrieve results"
                 logger.exception(msg, error=str(e))
                 return JobStatus(
                     job_id=job.job_id,
@@ -164,11 +172,22 @@ class QueryService:
                     error=e.to_job_error(),
                     metadata=job.to_job_metadata(),
                 )
-            result_info = JobResultInfo(
-                total_rows=total_rows,
-                result_location=job.result_location,
-                format=job.result_format.format,
-            )
+            except TimeoutError:
+                elapsed = datetime.now(tz=UTC) - start
+                logger.exception(
+                    "Retrieving results timed out",
+                    elapsed=elapsed.total_seconds,
+                    timeout=timeout,
+                )
+                status.status = AsyncQueryPhase.EXECUTING
+                await self._state.add_query(query_id, job, status)
+            else:
+                result_info = JobResultInfo(
+                    total_rows=total_rows,
+                    result_location=job.result_location,
+                    format=job.result_format.format,
+                )
+                logger.info("Job complete and results uploaded")
 
         # Return the job status message for Kafka.
         return JobStatus(

@@ -88,6 +88,17 @@ class Config(BaseSettings):
         ),
     )
 
+    shutdown_timeout: HumanTimedelta = Field(
+        timedelta(minutes=1),
+        title="Timeout for shutdown",
+        description=(
+            "How long to wait for result processing to finish during shutdown"
+            " before aborting. Qserv deletes results once retrieved, so"
+            " aborting result processing risks losing a result. This should"
+            " be aligned with the Kubernetes shutdown grace period."
+        ),
+    )
+
     @field_validator("qserv_database_url")
     @classmethod
     def _validate_qserv_database_url(cls, v: MySQLDsn) -> MySQLDsn:

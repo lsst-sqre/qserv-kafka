@@ -10,6 +10,7 @@ from httpx import AsyncClient, HTTPError, Response
 from pydantic import BaseModel, ValidationError
 from safir.database import datetime_from_db
 from sqlalchemy import Row, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_scoped_session
 from structlog.stdlib import BoundLogger
 
@@ -17,6 +18,7 @@ from ..config import config
 from ..exceptions import (
     QservApiFailedError,
     QservApiProtocolError,
+    QservApiSqlError,
     QservApiWebError,
 )
 from ..models.kafka import JobRun
@@ -100,15 +102,24 @@ class QservClient:
         -------
         collections.abc.AsyncIterator
             Iterator over the rows of the query results.
+
+        Raises
+        ------
+        QservApiSqlError
+            Raised if there was some error retrieving results.
         """
         stmt = text(_QUERY_RESULTS_SQL_FORMAT.format(query_id))
         async with self._session.begin():
-            results = await self._session.stream(stmt)
+            results = None
             try:
+                results = await self._session.stream(stmt)
                 async for result in results:
                     yield result
+            except SQLAlchemyError as e:
+                raise QservApiSqlError.from_exception(e) from e
             finally:
-                await results.close()
+                if results:
+                    await results.close()
 
     async def get_query_status(self, query_id: int) -> AsyncQueryStatus:
         """Query for the status of an async job.
@@ -134,20 +145,29 @@ class QservClient:
         -------
         dict of AsyncQueryStatus
             Mapping from query ID to information about a running query.
+
+        Raises
+        ------
+        QservApiSqlError
+            Raised if there was some error retrieving status.
         """
         async with self._session.begin():
-            result = await self._session.stream(text(_QUERY_LIST_SQL))
-            processes = {}
-            async for row in result:
-                self._logger.debug("Saw running query", query=row._asdict())
-                processes[row.id] = AsyncQueryStatus(
-                    query_id=row.id,
-                    status=AsyncQueryPhase.EXECUTING,
-                    total_chunks=row.chunks,
-                    completed_chunks=row.chunks_comp,
-                    query_begin=datetime_from_db(row.submitted),
-                    last_update=datetime_from_db(row.updated),
-                )
+            try:
+                result = await self._session.stream(text(_QUERY_LIST_SQL))
+                processes = {}
+                async for row in result:
+                    msg = "Saw running query"
+                    self._logger.debug(msg, query=row._asdict())
+                    processes[row.id] = AsyncQueryStatus(
+                        query_id=row.id,
+                        status=AsyncQueryPhase.EXECUTING,
+                        total_chunks=row.chunks,
+                        completed_chunks=row.chunks_comp,
+                        query_begin=datetime_from_db(row.submitted),
+                        last_update=datetime_from_db(row.updated),
+                    )
+            except SQLAlchemyError as e:
+                raise QservApiSqlError.from_exception(e) from e
         self._logger.debug("Listed running queries", count=len(processes))
         return processes
 

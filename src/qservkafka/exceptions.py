@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, override
+from typing import ClassVar, Self, override
 
 from safir.slack.blockkit import (
     SlackCodeBlock,
@@ -11,6 +11,7 @@ from safir.slack.blockkit import (
     SlackTextField,
     SlackWebException,
 )
+from sqlalchemy.exc import SQLAlchemyError
 
 from .models.kafka import JobError, JobErrorCode
 from .models.qserv import BaseResponse
@@ -19,6 +20,7 @@ __all__ = [
     "QservApiError",
     "QservApiFailedError",
     "QservApiProtocolError",
+    "QservApiSqlError",
     "QservApiWebError",
     "QueryError",
     "UploadWebError",
@@ -116,6 +118,32 @@ class QservApiProtocolError(QservApiError):
         result = super().to_slack()
         result.fields.append(SlackTextField(heading="URL", text=self.url))
         return result
+
+
+class QservApiSqlError(QservApiError):
+    """A SQL request to Qserv failed unexpectedly."""
+
+    error = JobErrorCode.backend_sql_error
+
+    @classmethod
+    def from_exception(cls, exc: SQLAlchemyError) -> Self:
+        """Create the exception from a SQLAlchemy exception.
+
+        Parameters
+        ----------
+        exc
+            The underlying SQLAlchemy exception.
+
+        Returns
+        -------
+        QservApiSqlError
+            Newly-created exception.
+        """
+        if str(exc):
+            msg = f"{type(exc).__name__}: {exc!s}"
+        else:
+            msg = type(exc).__name__
+        return cls(f"SQL query error: {msg}")
 
 
 class QservApiWebError(SlackWebException, QservApiError):
