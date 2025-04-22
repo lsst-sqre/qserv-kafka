@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
@@ -147,6 +147,39 @@ class MockQserv:
         """
         self._override_submit = response
 
+    def cancel(self, request: Request, *, query_id: str) -> Response:
+        """Cancel a running job.
+
+        Parameters
+        ----------
+        request
+            Incoming request.
+        query_id
+            Query ID (as a string) from the request URL.
+
+        Returns
+        -------
+        httpx.Response
+            Returns 200 with the results of canceling the query.
+        """
+        self._check_version(request)
+        status = self._queries.get(int(query_id))
+        if not status:
+            return Response(
+                200,
+                json={"success": 0, "error": f"Query {query_id} not found"},
+                request=request,
+            )
+        if status.status != AsyncQueryPhase.EXECUTING:
+            return Response(
+                200,
+                json={"success": 0, "error": f"Query {query_id} completed"},
+                request=request,
+            )
+        status.status = AsyncQueryPhase.ABORTED
+        status.last_update = datetime.now(tz=UTC)
+        return Response(200, json={"success": 1}, request=request)
+
     def status(self, request: Request, *, query_id: str) -> Response:
         """Mock a request for job status.
 
@@ -162,9 +195,7 @@ class MockQserv:
         httpx.Response
             Returns 200 with the details of the query.
         """
-        url = urlparse(str(request.url))
-        query = parse_qs(url.query)
-        assert query["version"] == [str(API_VERSION)]
+        self._check_version(request)
         if self._override_status:
             return self._override_status
         status = self._queries.get(int(query_id))
@@ -290,6 +321,12 @@ class MockQserv:
         assert request.content.decode() == header + expected + footer
         return Response(201)
 
+    def _check_version(self, request: Request) -> None:
+        """Check that the correct API version was added to the parameters."""
+        url = urlparse(str(request.url))
+        query = parse_qs(url.query)
+        assert query["version"] == [str(API_VERSION)]
+
 
 @asynccontextmanager
 async def register_mock_qserv(
@@ -314,6 +351,8 @@ async def register_mock_qserv(
     base_url = str(base_url).rstrip("/")
     respx_mock.post(f"{base_url}/query-async").mock(side_effect=mock.submit)
     base_escaped = re.escape(base_url)
+    url_regex = rf"{base_escaped}/query-async/(?P<query_id>[0-9]+)\?"
+    respx_mock.delete(url__regex=url_regex).mock(side_effect=mock.cancel)
     url_regex = rf"{base_escaped}/query-async/status/(?P<query_id>[0-9]+)\?"
     respx_mock.get(url__regex=url_regex).mock(side_effect=mock.status)
     with patch.object(qserv, "_QUERY_LIST_SQL", new=_QUERY_LIST_SQL):

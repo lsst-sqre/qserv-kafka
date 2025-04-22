@@ -84,6 +84,21 @@ class QservClient:
         self._client = http_client
         self._logger = logger
 
+    async def cancel_query(self, query_id: int) -> None:
+        """Cancel a running query.
+
+        Parameters
+        ----------
+        query_id
+            Identifier of the query.
+
+        Raises
+        ------
+        QservApiError
+            Raised if there was some error canceling the query.
+        """
+        await self._delete(f"/query-async/{query_id}")
+
     async def get_query_results_gen(
         self, query_id: int
     ) -> AsyncGenerator[Row[Any]]:
@@ -193,6 +208,31 @@ class QservClient:
         result = await self._post("/query-async", request, AsyncSubmitResponse)
         return result.query_id
 
+    async def _delete(self, route: str) -> None:
+        """Send a DELETE request to the Qserv REST API.
+
+        Parameters
+        ----------
+        route
+            Route to which to send the request.
+
+        Raises
+        ------
+        QservApiError
+            Raised if something failed when issuing the DELETE request.
+        """
+        params = {"version": str(API_VERSION)}
+        url = str(config.qserv_rest_url).rstrip("/") + route
+        try:
+            r = await self._client.delete(url, params=params)
+            r.raise_for_status()
+            self._logger.debug(
+                "Qserv API reply", method="DELETE", url=url, result=r.json()
+            )
+            self._parse_response(url, r, BaseResponse)
+        except HTTPError as e:
+            raise QservApiWebError.from_exception(e) from e
+
     async def _get[T: BaseResponse](
         self, route: str, params: dict[str, str], result_type: type[T]
     ) -> T:
@@ -207,10 +247,15 @@ class QservClient:
         result_type
             Expected type of the response.
 
+        Returns
+        -------
+        BaseResponse
+            Parsed response from the GET request.
+
         Raises
         ------
         QservApiError
-            Raised if something failed when attempting to submit the job.
+            Raised if something failed when issuing the GET request.
         """
         params_with_version = copy(params)
         params_with_version["version"] = str(API_VERSION)
@@ -239,10 +284,15 @@ class QservClient:
         result_type
             Expected type of the response.
 
+        Returns
+        -------
+        BaseResponse
+            Parsed response.
+
         Raises
         ------
         QservApiError
-            Raised if something failed when attempting to submit the job.
+            Raised if the response was an error or did not validate.
         """
         try:
             json_result = response.json()
@@ -267,10 +317,15 @@ class QservClient:
         result_type
             Expected type of the response.
 
+        Returns
+        -------
+        BaseResponse
+            Parsed response from the POST request.
+
         Raises
         ------
         QservApiError
-            Raised if something failed when attempting to submit the job.
+            Raised if something failed when submitting the POST request.
         """
         body_dict = body.model_dump(mode="json", exclude_none=True)
         body_dict["version"] = API_VERSION

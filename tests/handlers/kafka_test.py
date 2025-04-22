@@ -15,7 +15,13 @@ from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.config import config
 from qservkafka.handlers.kafka import publisher
-from qservkafka.models.kafka import JobError, JobErrorCode, JobRun, JobStatus
+from qservkafka.models.kafka import (
+    JobCancel,
+    JobError,
+    JobErrorCode,
+    JobRun,
+    JobStatus,
+)
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 
 from ..support.data import (
@@ -177,4 +183,33 @@ async def test_job_result_error(
         metadata=job.to_job_metadata(),
     ).model_dump(mode="json")
     expected["timestamp"] = ANY
+    publisher.mock.assert_called_once_with(expected)
+
+
+@pytest.mark.asyncio
+async def test_job_cancel(
+    app: FastAPI, kafka_broker: KafkaBroker, mock_qserv: MockQserv
+) -> None:
+    """Test canceling a job."""
+    job = read_test_job_run("jobs/simple")
+    job_json = read_test_json("jobs/simple")
+    status = read_test_job_status(
+        "status/simple-aborted", mock_timestamps=False
+    )
+    assert publisher.mock
+
+    await kafka_broker.publish(job_json, config.job_run_topic)
+    await asyncio.sleep(0.1)
+
+    publisher.mock.reset_mock()
+    cancel = JobCancel(job_id=job.job_id, execution_id="1", owner="username")
+    cancel_json = cancel.model_dump(mode="json")
+    await kafka_broker.publish(cancel_json, config.job_cancel_topic)
+    await asyncio.sleep(0.1)
+
+    expected = status.model_dump(mode="json")
+    expected["status"] = "ABORTED"
+    expected["timestamp"] = ANY
+    expected["queryInfo"]["startTime"] = ANY
+    expected["queryInfo"]["endTime"] = ANY
     publisher.mock.assert_called_once_with(expected)

@@ -195,10 +195,11 @@ class Factory:
             qserv_client=QservClient(
                 self._session, self._context.http_client, self._logger
             ),
+            state_store=self._context.state,
             votable_writer=VOTableWriter(
                 self._context.http_client, self._logger
             ),
-            state_store=self._context.state,
+            kafka_broker=kafka_router.broker,
             logger=self._logger,
         )
 

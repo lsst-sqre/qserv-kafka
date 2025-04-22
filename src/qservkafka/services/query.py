@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
+from faststream.kafka import KafkaBroker
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
 from ..config import config
 from ..exceptions import QservApiError, UploadWebError
 from ..models.kafka import (
+    JobCancel,
     JobError,
     JobErrorCode,
     JobQueryInfo,
@@ -39,6 +41,8 @@ class QueryService:
         Storage for query state.
     votable_writer
         Writer for VOTable output.
+    kafka_broker
+        Broker to use to publish status messages.
     logger
         Logger to use.
     """
@@ -49,12 +53,70 @@ class QueryService:
         qserv_client: QservClient,
         state_store: QueryStateStore,
         votable_writer: VOTableWriter,
+        kafka_broker: KafkaBroker,
         logger: BoundLogger,
     ) -> None:
         self._qserv = qserv_client
         self._state = state_store
         self._votable = votable_writer
+        self._kafka = kafka_broker
         self._logger = logger
+
+    async def cancel_query(self, message: JobCancel) -> JobStatus | None:
+        """Cancel a running query.
+
+        Parameters
+        ----------
+        message
+            Request to cancel the query.
+
+        Returns
+        -------
+        JobStatus or None
+            New status of job, or `None` if there is no update or if the
+            cancel message is invalid.
+        """
+        logger = self._logger.bind(
+            job_id=message.job_id, username=message.owner
+        )
+        try:
+            query_id = int(message.execution_id)
+        except Exception:
+            logger.exception("Invalid exectionID in cancel message")
+            return None
+        logger = logger.bind(qserv_id=query_id)
+        query = await self._state.get_query(query_id)
+        if not query:
+            logger.warning("Cannot cancel unknown job")
+            return None
+
+        # Cancel the query. There's not much we can do with exceptions other
+        # than log them, since we don't have a way of returning a cancelation
+        # error to the TAP server, so we send a status update matching the
+        # last known status in that case.
+        try:
+            await self._qserv.cancel_query(query_id)
+            status = await self._qserv.get_query_status(query_id)
+        except QservApiError as e:
+            logger.exception("Failed to cancel query", error=str(e))
+            return None
+
+        # Return an appropriate status update for the job's current status.
+        return await self._build_status(query_id, query.job, status)
+
+    async def publish_status(self, status: JobStatus) -> None:
+        """Publish a status update to Kafka.
+
+        Parameters
+        ----------
+        status
+            Status update to publish.
+        """
+        await self._kafka.publish(
+            status.model_dump(mode="json"),
+            config.job_status_topic,
+            headers={"Content-Type": "application/json"},
+        )
 
     async def start_query(self, job: JobRun) -> JobStatus:
         """Start a new query and return its initial status.
@@ -105,12 +167,15 @@ class QueryService:
 
         # Analyze the initial status and store the query if it successfully
         # went into executing.
-        return await self._build_initial_status(query_id, job, status)
+        result = await self._build_status(query_id, job, status)
+        if result.status == ExecutionPhase.EXECUTING:
+            await self._state.add_query(query_id, job, status)
+        return result
 
-    async def _build_initial_status(
+    async def _build_status(
         self, query_id: int, job: JobRun, status: AsyncQueryStatus
     ) -> JobStatus:
-        """Build the initial status response for a just-created query.
+        """Build the status response for a query.
 
         If the query has already completed, retrieve the results if successful
         and return an appropriate final status. Otherwise, return a status
@@ -123,12 +188,12 @@ class QueryService:
         job
             Initial query request.
         status
-            Initial status response from Qserv.
+            Status response from Qserv.
 
         Returns
         -------
         JobStatus
-            Initial job status to report to Kafka.
+            Job status to report to Kafka.
         """
         logger = self._logger.bind(
             job_id=job.job_id, qserv_id=query_id, username=job.owner
@@ -147,8 +212,6 @@ class QueryService:
                 code=JobErrorCode.backend_error,
                 message="Query failed in backend",
             )
-        elif status.status == AsyncQueryPhase.EXECUTING:
-            await self._state.add_query(query_id, job, status)
         elif status.status == AsyncQueryPhase.COMPLETED:
             results = self._qserv.get_query_results_gen(query_id)
             start = datetime.now(tz=UTC)
