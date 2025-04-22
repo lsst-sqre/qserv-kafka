@@ -115,8 +115,6 @@ filterwarnings = [
     # do we specify lifespan_context. Perhaps with TestKafkaBroker and the
     # fixture setup?
     "ignore:Specifying 'lifespan_context' manually.*:UserWarning:contextlib",
-    # Bug in pydantic, see https://github.com/pydantic/pydantic/issues/10964
-    "ignore:Pydantic serializer warnings.*:UserWarning",
 ]
 # The python_files setting is not for test detection (pytest will pick up any
 # test files named *_test.py without this setting) but to enable special
