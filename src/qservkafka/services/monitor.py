@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 from aiojobs import Scheduler
@@ -206,17 +207,20 @@ class QueryMonitor:
         logger.debug("Processing job completion")
 
         # Retrieve and upload the results.
+        start = datetime.now(tz=UTC)
+        timeout = config.shutdown_timeout.total_seconds()
         results = self._qserv.get_query_results_gen(query_id)
         try:
-            total_rows = await self._votable.store(
-                job.result_url, job.result_format, results
-            )
+            async with asyncio.timeout(timeout):
+                total_rows = await self._votable.store(
+                    job.result_url, job.result_format, results
+                )
         except (QservApiError, UploadWebError) as e:
             if isinstance(e, UploadWebError):
                 msg = "Unable to upload results"
             else:
                 msg = "Unable to retrieve results"
-            self._logger.exception(msg, error=str(e))
+            logger.exception(msg, error=str(e))
             update = JobStatus(
                 job_id=job.job_id,
                 execution_id=str(query_id),
@@ -226,6 +230,14 @@ class QueryMonitor:
                 metadata=job.to_job_metadata(),
             )
             await self._publish_status(update)
+            return
+        except TimeoutError:
+            elapsed = datetime.now(tz=UTC) - start
+            logger.exception(
+                "Retrieving results timed out",
+                elapsed=elapsed.total_seconds,
+                timeout=timeout,
+            )
             return
         logger.info("Job complete and results uploaded")
 
