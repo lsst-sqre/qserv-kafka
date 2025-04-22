@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import math
 import struct
 from binascii import b2a_base64
 from collections.abc import AsyncGenerator
-from typing import Any, assert_never
+from typing import Any
 from urllib.parse import urlparse
 
 from bitstring import BitArray
@@ -146,7 +145,7 @@ class VOTableEncoder:
             rule = str(column.arraysize.limit) + "s"
             return struct.pack(rule, value)
         else:
-            return struct.pack(column.datatype.pack, value)
+            return column.datatype.pack(value)
 
     def _encode_row(
         self, types: list[JobResultColumnType], row: Row[Any] | tuple[Any]
@@ -172,25 +171,10 @@ class VOTableEncoder:
             value = row[i]
             if value is None:
                 nulls.set(True, i)
-            match datatype:
-                case VOTablePrimitive.boolean:
-                    if value is None:
-                        value = b"\0"
-                    elif value:
-                        value = b"T"
-                    else:
-                        value = b"F"
-                    output += struct.pack(datatype.pack, value)
-                case VOTablePrimitive.char:
-                    output += self._encode_char_column(column, value)
-                case VOTablePrimitive.double | VOTablePrimitive.float:
-                    value = math.nan if value is None else float(value)
-                    output += struct.pack(datatype.pack, value)
-                case VOTablePrimitive.int | VOTablePrimitive.long:
-                    value = 0 if value is None else int(value)
-                    output += struct.pack(datatype.pack, value)
-                case _ as unreachable:
-                    assert_never(unreachable)
+            if datatype == VOTablePrimitive.char:
+                output += self._encode_char_column(column, value)
+            else:
+                output += datatype.pack(value)
         return nulls.tobytes() + output
 
     async def _generate_binary2(
