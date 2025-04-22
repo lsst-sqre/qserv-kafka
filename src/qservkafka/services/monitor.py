@@ -122,6 +122,7 @@ class QueryMonitor:
             self._in_progress.remove(query_id)
             return
 
+        success = True
         match status.status:
             case AsyncQueryPhase.EXECUTING:
                 logger.error(
@@ -134,7 +135,7 @@ class QueryMonitor:
                 # in the process list the next time through.
                 return
             case AsyncQueryPhase.COMPLETED:
-                await self._send_completed(query_id, job, status)
+                success = await self._send_completed(query_id, job, status)
             case AsyncQueryPhase.FAILED:
                 await self._send_failed(job, status)
             case AsyncQueryPhase.ABORTED:
@@ -143,8 +144,9 @@ class QueryMonitor:
                 raise ValueError(f"Unknown phase {status.status}")
 
         # Clean up the handled query.
-        await self._state.delete_query(query_id)
-        self._in_progress.remove(query_id)
+        if success:
+            await self._state.delete_query(query_id)
+            self._in_progress.remove(query_id)
 
     async def _publish_status(self, status: JobStatus) -> None:
         """Publish a status update to Kafka.
@@ -190,7 +192,7 @@ class QueryMonitor:
 
     async def _send_completed(
         self, query_id: int, job: JobRun, status: AsyncQueryStatus
-    ) -> None:
+    ) -> bool:
         """Send a status update for a completed job.
 
         Parameters
@@ -201,6 +203,12 @@ class QueryMonitor:
             Original query request.
         status
             Status of the job.
+
+        Returns
+        -------
+        bool
+            `True` if the result was successfully retrieved and uploaded,
+            `False` otherwise.
         """
         logger = self._logger.bind(
             job_id=job.job_id, qserv_id=query_id, username=job.owner
@@ -231,7 +239,7 @@ class QueryMonitor:
                 metadata=job.to_job_metadata(),
             )
             await self._publish_status(update)
-            return
+            return False
         except TimeoutError:
             elapsed = datetime.now(tz=UTC) - start
             logger.exception(
@@ -239,7 +247,7 @@ class QueryMonitor:
                 elapsed=elapsed.total_seconds,
                 timeout=timeout,
             )
-            return
+            return False
         logger.info("Job complete and results uploaded")
 
         # Send the Kafka message indicating job completion.
@@ -257,6 +265,7 @@ class QueryMonitor:
             metadata=job.to_job_metadata(),
         )
         await self._publish_status(update)
+        return True
 
     async def _send_failed(
         self, job: JobRun, status: AsyncQueryStatus
