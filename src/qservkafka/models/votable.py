@@ -32,7 +32,7 @@ class VOTableSize(BaseModel):
 
 
 def _validate_array_size(arraysize: Any) -> VOTableSize:
-    """Verify that a VOTable arraysize is in a valid format."""
+    """Convert the string representation of `VOTableSize` to an object."""
     if isinstance(arraysize, VOTableSize):
         return arraysize
     elif isinstance(arraysize, dict):

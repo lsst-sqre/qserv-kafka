@@ -397,6 +397,7 @@ class JobErrorCode(StrEnum):
     backend_request_error = "backend_request_error"
     backend_sql_error = "backend_sql_error"
     invalid_request = "invalid_request"
+    result_timeout = "result_timeout"
     upload_failed = "upload_failed"
 
 

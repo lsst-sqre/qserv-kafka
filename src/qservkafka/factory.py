@@ -117,11 +117,19 @@ class ProcessContext:
             connect_args={"ssl": ssl_context},
         )
         session = await create_async_session(engine)
+        qserv_client = QservClient(session, http_client, logger)
+        votable_writer = VOTableWriter(http_client, logger)
+        query_service = QueryService(
+            qserv_client=qserv_client,
+            state_store=state_store,
+            votable_writer=votable_writer,
+            kafka_broker=kafka_router.broker,
+            logger=logger,
+        )
         monitor = QueryMonitor(
+            query_service=query_service,
             qserv_client=QservClient(session, http_client, logger),
             state_store=state_store,
-            votable_writer=VOTableWriter(http_client, logger),
-            kafka_broker=kafka_router.broker,
             logger=logger,
         )
         background = BackgroundTaskManager(monitor, logger)

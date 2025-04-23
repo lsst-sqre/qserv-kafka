@@ -144,7 +144,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     # Return a normal reply from the status endpoint but mark the job as being
     # in an error state.
     query_status = AsyncQueryStatus(
-        query_id=3,
+        query_id=4,
         status=AsyncQueryPhase.FAILED,
         total_chunks=10,
         completed_chunks=4,
