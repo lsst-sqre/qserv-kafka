@@ -147,7 +147,7 @@ class ProcessContext:
         Called during shutdown, or before recreating the process context using
         a different configuration.
         """
-        await self.background.stop()
+        await self.stop()
         await self.session.remove()
         await self.redis.aclose()
         await self.engine.dispose()
@@ -221,27 +221,3 @@ class Factory:
             New logger.
         """
         self._logger = logger
-
-    async def start_background_services(self) -> None:
-        """Start global background services managed by the process context.
-
-        These are normally started by initializing the context dependency when
-        running as a FastAPI app, but the test suite may want the background
-        processes running while testing with only a factory.
-
-        Only used by the test suite.
-        """
-        await self._context.start()
-        self._background_services_started = True
-
-    async def stop_background_services(self) -> None:
-        """Stop global background services managed by the process context.
-
-        These are normally stopped when closing down the global context, but
-        the test suite may want to stop and start them independently.
-
-        Only used by the test suite.
-        """
-        if self._background_services_started:
-            await self._context.stop()
-        self._background_services_started = False
