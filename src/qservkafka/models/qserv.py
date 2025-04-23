@@ -7,7 +7,6 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from safir.pydantic import UtcDatetime
-from vo_models.uws.types import ExecutionPhase
 
 __all__ = [
     "AsyncQueryPhase",
@@ -44,19 +43,6 @@ class AsyncQueryPhase(StrEnum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     ABORTED = "ABORTED"
-
-    def to_execution_phase(self) -> ExecutionPhase:
-        match self.value:
-            case "EXECUTING":
-                return ExecutionPhase.EXECUTING
-            case "COMPLETED":
-                return ExecutionPhase.COMPLETED
-            case "FAILED":
-                return ExecutionPhase.ERROR
-            case "ABORTED":
-                return ExecutionPhase.ABORTED
-            case _:  # pragma: no cover
-                raise ValueError(f"Unknown phase {self.value}")
 
 
 class AsyncQueryStatus(BaseModel):

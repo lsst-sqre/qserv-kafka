@@ -5,6 +5,7 @@
   "status": "COMPLETED",
   "query_info": {
     "start_time": 1743540791,
+    "end_time": 1743540791,
     "total_chunks": 10,
     "completed_chunks": 10
   },

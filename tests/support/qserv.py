@@ -93,11 +93,13 @@ class MockQserv:
     ) -> None:
         self._session = session
         self._respx_mock = respx_mock
+
+        self._expected_job: JobRun
+        self._immediate_success: JobRun | None = None
         self._next_query_id = 1
-        self._queries: dict[int, AsyncQueryStatus] = {}
         self._override_status: Response | None = None
         self._override_submit: Response | None = None
-        self._expected_job: JobRun
+        self._queries: dict[int, AsyncQueryStatus] = {}
 
     @classmethod
     async def initialize(
@@ -124,6 +126,17 @@ class MockQserv:
             Current stored status for that query ID.
         """
         return self._queries[query_id]
+
+    def set_immediate_success(self, job: JobRun | None) -> None:
+        """Configure whether to mark the job completed immediately.
+
+        Parameters
+        ----------
+        job
+            Job for which to mock the upload URL, or `None` to restore normal
+            behavior.
+        """
+        self._immediate_success = job
 
     def set_status_response(self, response: Response | None) -> None:
         """Override the normal status reponse handling.
@@ -254,22 +267,33 @@ class MockQserv:
         query_id = self._next_query_id
         self._next_query_id += 1
         now = current_datetime()
-        self._queries[query_id] = AsyncQueryStatus(
-            query_id=query_id,
-            status=AsyncQueryPhase.EXECUTING,
-            total_chunks=10,
-            completed_chunks=0,
-            query_begin=now,
-        )
-        async with self._session.begin():
-            process = _Process(
-                id=query_id,
-                submitted=now,
-                updated=now,
-                chunks=10,
-                chunks_comp=0,
+        if self._immediate_success:
+            self._queries[query_id] = AsyncQueryStatus(
+                query_id=query_id,
+                status=AsyncQueryPhase.COMPLETED,
+                total_chunks=10,
+                completed_chunks=10,
+                query_begin=now,
+                last_update=now,
             )
-            self._session.add(process)
+            await self.store_results(self._immediate_success)
+        else:
+            self._queries[query_id] = AsyncQueryStatus(
+                query_id=query_id,
+                status=AsyncQueryPhase.EXECUTING,
+                total_chunks=10,
+                completed_chunks=0,
+                query_begin=now,
+            )
+            async with self._session.begin():
+                process = _Process(
+                    id=query_id,
+                    submitted=now,
+                    updated=now,
+                    chunks=10,
+                    chunks_comp=0,
+                )
+                self._session.add(process)
         return Response(
             200, json={"success": 1, "query_id": query_id}, request=request
         )

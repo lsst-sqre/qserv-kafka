@@ -58,8 +58,8 @@ class Config(BaseSettings):
         Profile.production, title="Application logging profile"
     )
 
-    redis_password: SecretStr | None = Field(
-        None, title="Redis password", description="Password for Redis server"
+    redis_password: SecretStr = Field(
+        ..., title="Redis password", description="Password for Redis server"
     )
 
     redis_url: RedisDsn = Field(
