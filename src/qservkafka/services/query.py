@@ -268,7 +268,7 @@ class QueryService:
 
         # Retrieve and upload the results.
         start = datetime.now(tz=UTC)
-        timeout = config.shutdown_timeout.total_seconds()
+        timeout = config.result_timeout.total_seconds()
         results = self._qserv.get_query_results_gen(query_id)
         try:
             async with asyncio.timeout(timeout):
