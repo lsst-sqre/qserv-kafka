@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import ANY
+from unittest.mock import ANY, patch
 
 import pytest
 from httpx import Response
@@ -17,13 +17,15 @@ from qservkafka.models.kafka import (
     JobStatus,
 )
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
+from qservkafka.storage import qserv
 
 from ..support.data import read_test_job_run, read_test_job_status
 from ..support.qserv import MockQserv
 
 
-def assert_approximately_now(time: datetime) -> None:
+def assert_approximately_now(time: datetime | None) -> None:
     """Assert that a datetime is at most five seconds older than now."""
+    assert time
     now = datetime.now(tz=UTC)
     assert now - timedelta(seconds=5) <= time <= now
 
@@ -39,6 +41,22 @@ async def test_start(factory: Factory) -> None:
     assert_approximately_now(status.timestamp)
     assert status.query_info
     assert_approximately_now(status.query_info.start_time)
+
+
+@pytest.mark.asyncio
+async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
+    """Test a job that completes immediately."""
+    query_service = factory.create_query_service()
+    job = read_test_job_run("jobs/data")
+    expected_status = read_test_job_status("status/data-completed")
+
+    mock_qserv.set_immediate_success(job)
+    status = await query_service.start_query(job)
+    assert status == expected_status
+    assert_approximately_now(status.timestamp)
+    assert status.query_info
+    assert_approximately_now(status.query_info.start_time)
+    assert_approximately_now(status.query_info.end_time)
 
 
 @pytest.mark.asyncio
@@ -210,5 +228,30 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
         metadata=job.to_job_metadata(),
     )
     expected.timestamp = ANY
-    assert expected.error
     assert status == expected
+
+
+@pytest.mark.asyncio
+async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
+    query_service = factory.create_query_service()
+    now = datetime.now(tz=UTC)
+
+    job = read_test_job_run("jobs/data")
+    mock_qserv.set_immediate_success(job)
+    sql = "SELECT * FROM nonexistent"
+    with patch.object(qserv, "_QUERY_RESULTS_SQL_FORMAT", new=sql):
+        status = await query_service.start_query(job)
+
+    expected = JobStatus(
+        job_id=job.job_id,
+        execution_id="1",
+        timestamp=now,
+        status=ExecutionPhase.ERROR,
+        error=JobError(code=JobErrorCode.backend_sql_error, message=""),
+        metadata=job.to_job_metadata(),
+    )
+    assert expected.error
+    expected.error.message = ANY
+    expected.timestamp = ANY
+    assert status == expected
+    assert_approximately_now(status.timestamp)
