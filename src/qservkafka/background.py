@@ -74,7 +74,7 @@ class BackgroundTaskManager:
             return
         self._logger.info("Stopping background tasks")
         self._closing = True
-        timeout = config.shutdown_timeout.total_seconds()
+        timeout = config.result_timeout.total_seconds() + 1.0
         await self._scheduler.wait_and_close(timeout=timeout)
         self._closing = False
         self._scheduler = None
