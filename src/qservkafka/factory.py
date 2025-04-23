@@ -89,9 +89,7 @@ class ProcessContext:
         ssl_context.verify_mode = ssl.CERT_NONE
 
         # Create a Redis client pool with exponential backoff.
-        redis_password = None
-        if config.redis_password:
-            redis_password = config.redis_password.get_secret_value()
+        redis_password = config.redis_password.get_secret_value()
         backoff = ExponentialBackoff(
             base=REDIS_BACKOFF_START, cap=REDIS_BACKOFF_MAX
         )
