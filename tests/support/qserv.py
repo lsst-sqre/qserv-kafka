@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
@@ -100,6 +101,7 @@ class MockQserv:
         self._override_status: Response | None = None
         self._override_submit: Response | None = None
         self._queries: dict[int, AsyncQueryStatus] = {}
+        self._upload_delay: timedelta | None = None
 
     @classmethod
     async def initialize(
@@ -159,6 +161,16 @@ class MockQserv:
             behavior.
         """
         self._override_submit = response
+
+    def set_upload_delay(self, delay: timedelta | None) -> None:
+        """Set the delay before the upload handler returns.
+
+        Parameters
+        ----------
+        delay
+            Delay, or `None` to return to default behavior.
+        """
+        self._upload_delay = delay
 
     def cancel(self, request: Request, *, query_id: str) -> Response:
         """Cancel a running job.
@@ -343,6 +355,8 @@ class MockQserv:
         header = self._expected_job.result_format.envelope.header
         footer = self._expected_job.result_format.envelope.footer
         assert request.content.decode() == header + expected + footer
+        if self._upload_delay:
+            await asyncio.sleep(self._upload_delay.total_seconds())
         return Response(201)
 
     def _check_version(self, request: Request) -> None:
