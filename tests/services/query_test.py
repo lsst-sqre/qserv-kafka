@@ -9,6 +9,7 @@ import pytest
 from httpx import Response
 from vo_models.uws.types import ExecutionPhase
 
+from qservkafka.config import config
 from qservkafka.factory import Factory
 from qservkafka.models.kafka import (
     JobError,
@@ -234,9 +235,9 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
 @pytest.mark.asyncio
 async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
     query_service = factory.create_query_service()
+    job = read_test_job_run("jobs/data")
     now = datetime.now(tz=UTC)
 
-    job = read_test_job_run("jobs/data")
     mock_qserv.set_immediate_success(job)
     sql = "SELECT * FROM nonexistent"
     with patch.object(qserv, "_QUERY_RESULTS_SQL_FORMAT", new=sql):
@@ -252,6 +253,38 @@ async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
     )
     assert expected.error
     expected.error.message = ANY
+    expected.timestamp = ANY
+    assert status == expected
+    assert_approximately_now(status.timestamp)
+
+
+@pytest.mark.asyncio
+async def test_upload_timeout(
+    factory: Factory, mock_qserv: MockQserv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test handling of a timeout during results uploading.
+
+    This should also cover a timeout in retrieving the data from SQL.
+    """
+    query_service = factory.create_query_service()
+    job = read_test_job_run("jobs/data")
+
+    mock_qserv.set_immediate_success(job)
+    mock_qserv.set_upload_delay(timedelta(seconds=2))
+    monkeypatch.setattr(config, "result_timeout", timedelta(seconds=1))
+    status = await query_service.start_query(job)
+
+    expected = JobStatus(
+        job_id=job.job_id,
+        execution_id="1",
+        timestamp=datetime.now(tz=UTC),
+        status=ExecutionPhase.ERROR,
+        error=JobError(
+            code=JobErrorCode.result_timeout,
+            message="Retrieving and uploading results timed out",
+        ),
+        metadata=job.to_job_metadata(),
+    )
     expected.timestamp = ANY
     assert status == expected
     assert_approximately_now(status.timestamp)
