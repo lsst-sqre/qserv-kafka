@@ -9,12 +9,12 @@ from unittest.mock import ANY
 import pytest
 from fastapi import FastAPI
 from faststream.kafka import KafkaBroker
+from faststream.kafka.publisher.asyncapi import AsyncAPIDefaultPublisher
 from httpx import Response
 from safir.datetime import current_datetime
 from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.config import config
-from qservkafka.handlers.kafka import publisher
 from qservkafka.models.kafka import (
     JobCancel,
     JobError,
@@ -34,7 +34,11 @@ from ..support.qserv import MockQserv
 
 @pytest.mark.asyncio
 async def test_job_run(
-    app: FastAPI, kafka_broker: KafkaBroker, mock_qserv: MockQserv
+    *,
+    app: FastAPI,
+    kafka_broker: KafkaBroker,
+    status_publisher: AsyncAPIDefaultPublisher,
+    mock_qserv: MockQserv,
 ) -> None:
     job = read_test_json("jobs/simple")
     status = read_test_job_status(
@@ -45,11 +49,11 @@ async def test_job_run(
     expected["queryInfo"]["startTime"] = ANY
 
     await kafka_broker.publish(job, config.job_run_topic)
-    assert publisher.mock
-    publisher.mock.assert_called_once_with(expected)
+    assert status_publisher.mock
+    status_publisher.mock.assert_called_once_with(expected)
 
     async_status = mock_qserv.get_status(1)
-    publisher.mock.reset_mock()
+    status_publisher.mock.reset_mock()
     now = current_datetime()
     await mock_qserv.update_status(
         1,
@@ -68,9 +72,9 @@ async def test_job_run(
         async_status.query_begin.timestamp() * 1000
     )
     expected["timestamp"] = int(now.timestamp() * 1000)
-    publisher.mock.assert_called_once_with(expected)
+    status_publisher.mock.assert_called_once_with(expected)
 
-    publisher.mock.reset_mock()
+    status_publisher.mock.reset_mock()
     now = current_datetime()
     await mock_qserv.update_status(
         1,
@@ -92,23 +96,27 @@ async def test_job_run(
     expected["queryInfo"]["completedChunks"] = 8
     expected["queryInfo"]["endTime"] = int(now.timestamp() * 1000)
     expected["timestamp"] = int(now.timestamp() * 1000)
-    publisher.mock.assert_called_once_with(expected)
+    status_publisher.mock.assert_called_once_with(expected)
 
 
 @pytest.mark.asyncio
 async def test_job_results(
-    app: FastAPI, kafka_broker: KafkaBroker, mock_qserv: MockQserv
+    *,
+    app: FastAPI,
+    kafka_broker: KafkaBroker,
+    status_publisher: AsyncAPIDefaultPublisher,
+    mock_qserv: MockQserv,
 ) -> None:
     job = read_test_json("jobs/data")
     status = read_test_job_status(
         "status/data-completed", mock_timestamps=False
     )
     expected = status.model_dump(mode="json")
-    assert publisher.mock
+    assert status_publisher.mock
 
     await kafka_broker.publish(job, config.job_run_topic)
 
-    publisher.mock.reset_mock()
+    status_publisher.mock.reset_mock()
     await mock_qserv.store_results(JobRun.model_validate(job))
     async_status = mock_qserv.get_status(1)
     now = datetime.now(tz=UTC)
@@ -130,12 +138,16 @@ async def test_job_results(
     )
     expected["queryInfo"]["endTime"] = int(now.timestamp() * 1000)
     expected["timestamp"] = int(now.timestamp() * 1000)
-    publisher.mock.assert_called_once_with(expected)
+    status_publisher.mock.assert_called_once_with(expected)
 
 
 @pytest.mark.asyncio
 async def test_job_result_error(
-    app: FastAPI, kafka_broker: KafkaBroker, mock_qserv: MockQserv
+    *,
+    app: FastAPI,
+    kafka_broker: KafkaBroker,
+    status_publisher: AsyncAPIDefaultPublisher,
+    mock_qserv: MockQserv,
 ) -> None:
     """Test proper handling of an API error getting completed job status.
 
@@ -144,12 +156,12 @@ async def test_job_result_error(
     """
     job = read_test_job_run("jobs/data")
     job_json = read_test_json("jobs/data")
-    assert publisher.mock
+    assert status_publisher.mock
 
     await kafka_broker.publish(job_json, config.job_run_topic)
     await asyncio.sleep(0.1)
 
-    publisher.mock.reset_mock()
+    status_publisher.mock.reset_mock()
     mock_qserv.set_status_response(
         Response(
             200,
@@ -183,12 +195,16 @@ async def test_job_result_error(
         metadata=job.to_job_metadata(),
     ).model_dump(mode="json")
     expected["timestamp"] = ANY
-    publisher.mock.assert_called_once_with(expected)
+    status_publisher.mock.assert_called_once_with(expected)
 
 
 @pytest.mark.asyncio
 async def test_job_cancel(
-    app: FastAPI, kafka_broker: KafkaBroker, mock_qserv: MockQserv
+    *,
+    app: FastAPI,
+    kafka_broker: KafkaBroker,
+    status_publisher: AsyncAPIDefaultPublisher,
+    mock_qserv: MockQserv,
 ) -> None:
     """Test canceling a job."""
     job = read_test_job_run("jobs/simple")
@@ -196,12 +212,12 @@ async def test_job_cancel(
     status = read_test_job_status(
         "status/simple-aborted", mock_timestamps=False
     )
-    assert publisher.mock
+    assert status_publisher.mock
 
     await kafka_broker.publish(job_json, config.job_run_topic)
     await asyncio.sleep(0.1)
 
-    publisher.mock.reset_mock()
+    status_publisher.mock.reset_mock()
     cancel = JobCancel(job_id=job.job_id, execution_id="1", owner="username")
     cancel_json = cancel.model_dump(mode="json")
     await kafka_broker.publish(cancel_json, config.job_cancel_topic)
@@ -212,4 +228,4 @@ async def test_job_cancel(
     expected["timestamp"] = ANY
     expected["queryInfo"]["startTime"] = ANY
     expected["queryInfo"]["endTime"] = ANY
-    publisher.mock.assert_called_once_with(expected)
+    status_publisher.mock.assert_called_once_with(expected)

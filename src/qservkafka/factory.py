@@ -6,6 +6,7 @@ import ssl
 from dataclasses import dataclass
 from typing import Self
 
+from faststream.kafka import KafkaBroker
 from httpx import AsyncClient
 from redis.asyncio import BlockingConnectionPool, Redis
 from redis.asyncio.retry import Retry
@@ -26,7 +27,6 @@ from .constants import (
     REDIS_RETRIES,
     REDIS_TIMEOUT,
 )
-from .kafkarouters import kafka_router
 from .models.state import Query
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
@@ -55,6 +55,9 @@ class ProcessContext:
     session: async_scoped_session
     """Session used by background jobs."""
 
+    kafka_broker: KafkaBroker
+    """Kafka broker to use for publishing messages from background jobs."""
+
     redis: Redis
     """Connection pool for state-tracking Redis."""
 
@@ -69,8 +72,13 @@ class ProcessContext:
     """Manager for background tasks."""
 
     @classmethod
-    async def from_config(cls) -> Self:
+    async def create(cls, kafka_broker: KafkaBroker | None = None) -> Self:
         """Create a new process context from a database engine.
+
+        Parameters
+        ----------
+        kafka_broker
+            If not `None`, use this Kafka broker instead of making a new one.
 
         Returns
         -------
@@ -108,6 +116,15 @@ class ProcessContext:
             datatype=Query, redis=redis_client, key_prefix="query:"
         )
 
+        # Create a Kafka broker used for background tasks. This needs to be a
+        # separate broker from the one used by handlers, since the one used by
+        # handlers will be shut down when SIGTERM is retrieved, thus
+        # preventing the Qserv Kafka bridge from completing any result
+        # processing that is still running.
+        if not kafka_broker:
+            kafka_broker = KafkaBroker(**config.kafka.to_faststream_params())
+        await kafka_broker.connect()
+
         state_store = QueryStateStore(redis_storage, logger)
         engine = create_database_engine(
             str(config.qserv_database_url),
@@ -121,7 +138,7 @@ class ProcessContext:
             qserv_client=qserv_client,
             state_store=state_store,
             votable_writer=votable_writer,
-            kafka_broker=kafka_router.broker,
+            kafka_broker=kafka_broker,
             logger=logger,
         )
         monitor = QueryMonitor(
@@ -136,6 +153,7 @@ class ProcessContext:
             http_client=http_client,
             engine=engine,
             session=session,
+            kafka_broker=kafka_broker,
             redis=redis_client,
             state=state_store,
             background=background,
@@ -148,6 +166,7 @@ class ProcessContext:
         a different configuration.
         """
         await self.stop()
+        await self.kafka_broker.close()
         await self.session.remove()
         await self.redis.aclose()
         await self.engine.dispose()
@@ -205,7 +224,7 @@ class Factory:
             votable_writer=VOTableWriter(
                 self._context.http_client, self._logger
             ),
-            kafka_broker=kafka_router.broker,
+            kafka_broker=self._context.kafka_broker,
             logger=self._logger,
         )
 

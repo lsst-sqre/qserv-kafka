@@ -9,24 +9,16 @@ router will have no subscribers and no publishers and will thus do nothing.
 from typing import Annotated
 
 from fastapi import Depends
+from faststream.kafka.fastapi import KafkaRouter
+from faststream.kafka.publisher.asyncapi import AsyncAPIDefaultPublisher
 
 from ..config import config
 from ..dependencies.context import ConsumerContext, context_dependency
-from ..kafkarouters import kafka_router
 from ..models.kafka import JobCancel, JobRun, JobStatus
 
-publisher = kafka_router.publisher(config.job_status_topic)
-"""Publisher for status messages, defined separately for testing."""
-
-__all__ = ["kafka_router", "publisher"]
+__all__ = ["register_kafka_handlers"]
 
 
-@kafka_router.subscriber(
-    config.job_run_topic,
-    auto_offset_reset="earliest",
-    group_id=config.consumer_group_id,
-)
-@publisher
 async def job_run(
     message: JobRun,
     context: Annotated[ConsumerContext, Depends(context_dependency)],
@@ -36,11 +28,6 @@ async def job_run(
     return await query_service.start_query(message)
 
 
-@kafka_router.subscriber(
-    config.job_cancel_topic,
-    auto_offset_reset="earliest",
-    group_id=config.consumer_group_id,
-)
 async def job_cancel(
     message: JobCancel,
     context: Annotated[ConsumerContext, Depends(context_dependency)],
@@ -52,3 +39,35 @@ async def job_cancel(
     result = await query_service.cancel_query(message)
     if result:
         await query_service.publish_status(result)
+
+
+def register_kafka_handlers(
+    kafka_router: KafkaRouter,
+    status_publisher: AsyncAPIDefaultPublisher | None = None,
+) -> None:
+    """Register the Kafka message handlers with the router.
+
+    This is done dynamically via a function instead of statically with
+    decorators to allow the Kafka router to be constructed after the test
+    suite has set up the Kafka configuration.
+
+    Parameters
+    ----------
+    kafka_router
+        Kafka router to register handlers with.
+    status_publisher
+        If not `None`, use this publisher to handle the return value of query
+        processing. This is only used by the test suite.
+    """
+    if not status_publisher:
+        status_publisher = kafka_router.publisher(config.job_status_topic)
+    kafka_router.subscriber(
+        config.job_run_topic,
+        auto_offset_reset="earliest",
+        group_id=config.consumer_group_id,
+    )(status_publisher(job_run))
+    kafka_router.subscriber(
+        config.job_cancel_topic,
+        auto_offset_reset="earliest",
+        group_id=config.consumer_group_id,
+    )(job_cancel)

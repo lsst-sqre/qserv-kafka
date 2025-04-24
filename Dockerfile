@@ -66,4 +66,4 @@ WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Run the application.
-CMD ["uvicorn", "qservkafka.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "--factory", "qservkafka.main:create_app", "--host", "0.0.0.0", "--port", "8080"]
