@@ -2,7 +2,6 @@
 
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
-from typing import Any
 
 from faststream.kafka import KafkaBroker
 from faststream.kafka.fastapi import KafkaMessage
@@ -29,17 +28,6 @@ class ConsumerContext:
 
     factory: Factory
     """The component factory."""
-
-    def rebind_logger(self, **values: Any) -> None:
-        """Add the given values to the logging context.
-
-        Parameters
-        ----------
-        **values
-            Additional values that should be added to the logging context.
-        """
-        self.logger = self.logger.bind(**values)
-        self.factory.set_logger(self.logger)
 
 
 class ContextDependency:

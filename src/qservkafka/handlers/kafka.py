@@ -23,7 +23,6 @@ async def job_run(
     message: JobRun,
     context: Annotated[ConsumerContext, Depends(context_dependency)],
 ) -> JobStatus:
-    context.rebind_logger(job_id=message.job_id, username=message.owner)
     query_service = context.factory.create_query_service()
     return await query_service.start_query(message)
 
@@ -32,9 +31,6 @@ async def job_cancel(
     message: JobCancel,
     context: Annotated[ConsumerContext, Depends(context_dependency)],
 ) -> None:
-    context.rebind_logger(
-        qserv_id=message.execution_id, username=message.owner
-    )
     query_service = context.factory.create_query_service()
     result = await query_service.cancel_query(message)
     if result:
