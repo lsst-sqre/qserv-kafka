@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from faststream.kafka import KafkaBroker
 from faststream.kafka.fastapi import KafkaMessage
 from safir.database import create_async_session
 from sqlalchemy.ext.asyncio import async_scoped_session
@@ -95,11 +96,20 @@ class ContextDependency:
             await self._process_context.aclose()
         self._process_context = None
 
-    async def initialize(self) -> None:
-        """Initialize the process-wide shared context."""
+    async def initialize(
+        self, kafka_broker: KafkaBroker | None = None
+    ) -> None:
+        """Initialize the process-wide shared context.
+
+        Parameters
+        ----------
+        kafka_broker
+            Use this Kafka broker instead of creating a new one if it is not
+            `None`.
+        """
         if self._process_context:
             await self.aclose()
-        self._process_context = await ProcessContext.from_config()
+        self._process_context = await ProcessContext.create(kafka_broker)
         await self._process_context.start()
         engine = self._process_context.engine
         self._session = await create_async_session(engine)

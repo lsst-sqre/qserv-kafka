@@ -44,11 +44,13 @@ build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
+    "aiokafka>=0.12",
     "asgi-lifespan",
     "coverage[toml]",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
+    "pytest-timeout",
     "respx",
     "scriv[toml]",
     "testcontainers[mysql,redis]",
