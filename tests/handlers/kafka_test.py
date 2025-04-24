@@ -66,7 +66,7 @@ async def test_job_run(
             last_update=now,
         ),
     )
-    await asyncio.sleep(1)
+    await asyncio.sleep(1.1)
     expected["queryInfo"]["completedChunks"] = 5
     expected["queryInfo"]["startTime"] = int(
         async_status.query_begin.timestamp() * 1000
@@ -87,7 +87,7 @@ async def test_job_run(
             last_update=now,
         ),
     )
-    await asyncio.sleep(1)
+    await asyncio.sleep(1.1)
     expected["errorInfo"] = {
         "errorCode": "backend_error",
         "errorMessage": "Query failed in backend",
