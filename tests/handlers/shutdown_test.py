@@ -169,12 +169,15 @@ async def test_shutdown(
                 last_update=now,
             ),
         )
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(1.1)
 
     expected["queryInfo"]["startTime"] = ANY
     expected["queryInfo"]["endTime"] = ANY
     expected["timestamp"] = ANY
-    await asyncio.sleep(1.1)
+    await asyncio.sleep(1)
     raw_message = await kafka_status_consumer.getone()
     message = json.loads(raw_message.value.decode())
     assert message == expected
+
+    redis_client = redis.get_client()
+    assert set(redis_client.scan_iter("query:*")) == set()
