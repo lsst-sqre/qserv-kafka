@@ -28,7 +28,7 @@ dependencies = [
     "pydantic>=2.11",
     "pydantic-settings>=2.8",
     "redis>=5",
-    "safir[db,redis]>=10.1.0",
+    "safir[db,redis]>=10.2.0",
     "uvicorn[standard]>=0.34",
     "vo-models>=0.4",
 ]

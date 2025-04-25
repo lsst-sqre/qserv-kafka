@@ -72,12 +72,51 @@ class Config(BaseSettings):
         None, title="Qserv MySQL password"
     )
 
+    qserv_database_overflow: int = Field(
+        100,
+        title="Qserv MySQL connection overflow",
+        description=(
+            "The maximum number of connections to open to the Qserv MySQL"
+            " server above and beyond the pool size. Connections will then"
+            " be closed when idle until the connection count returns to the"
+            " pool size."
+        ),
+    )
+
+    qserv_database_pool_size: int = Field(
+        20,
+        title="Qserv MySQL pool size",
+        description=(
+            "Number of Qserv MySQL connections to keep open. The number of"
+            " open connections will not drop below this even if the Qserv"
+            " Kafka bridge is idle."
+        ),
+    )
+
     qserv_database_url: MySQLDsn = Field(..., title="Qserv MySQL DSN")
 
     qserv_poll_interval: HumanTimedelta = Field(
         timedelta(seconds=1),
         title="Qserv poll interval",
         description="How frequently to poll Qserv for query status",
+    )
+
+    qserv_rest_max_connections: int = Field(
+        20,
+        title="Max Qserv REST API connections",
+        description=(
+            "How many connections the bridge will open to the Qserv REST API"
+            " simultaneously"
+        ),
+    )
+
+    qserv_rest_timeout: HumanTimedelta = Field(
+        timedelta(seconds=30),
+        title="Qserv REST timeout",
+        description=(
+            "Maximum timeout for a REST API call to Qserv. This includes the"
+            " time spent waiting for a free connection."
+        ),
     )
 
     qserv_rest_url: HttpUrl = Field(..., title="Qserv REST API URL")
