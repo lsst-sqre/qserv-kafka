@@ -15,6 +15,7 @@ from safir.datetime import current_datetime
 from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.config import config
+from qservkafka.dependencies.context import context_dependency
 from qservkafka.models.kafka import (
     JobCancel,
     JobError,
@@ -98,6 +99,10 @@ async def test_job_run(
     expected["timestamp"] = int(now.timestamp() * 1000)
     status_publisher.mock.assert_called_once_with(expected)
 
+    assert context_dependency._process_context
+    state = context_dependency._process_context.state
+    assert await state.get_active_queries() == set()
+
 
 @pytest.mark.asyncio
 async def test_job_results(
@@ -139,6 +144,10 @@ async def test_job_results(
     expected["queryInfo"]["endTime"] = int(now.timestamp() * 1000)
     expected["timestamp"] = int(now.timestamp() * 1000)
     status_publisher.mock.assert_called_once_with(expected)
+
+    assert context_dependency._process_context
+    state = context_dependency._process_context.state
+    assert await state.get_active_queries() == set()
 
 
 @pytest.mark.asyncio
@@ -197,6 +206,10 @@ async def test_job_result_error(
     expected["timestamp"] = ANY
     status_publisher.mock.assert_called_once_with(expected)
 
+    assert context_dependency._process_context
+    state = context_dependency._process_context.state
+    assert await state.get_active_queries() == set()
+
 
 @pytest.mark.asyncio
 async def test_job_cancel(
@@ -229,3 +242,7 @@ async def test_job_cancel(
     expected["queryInfo"]["startTime"] = ANY
     expected["queryInfo"]["endTime"] = ANY
     status_publisher.mock.assert_called_once_with(expected)
+
+    assert context_dependency._process_context
+    state = context_dependency._process_context.state
+    assert await state.get_active_queries() == set()

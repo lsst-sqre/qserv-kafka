@@ -43,6 +43,8 @@ async def test_start(factory: Factory) -> None:
     assert status.query_info
     assert_approximately_now(status.query_info.start_time)
 
+    assert await factory.query_state_store.get_active_queries() == {1}
+
 
 @pytest.mark.asyncio
 async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
@@ -58,6 +60,8 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     assert status.query_info
     assert_approximately_now(status.query_info.start_time)
     assert_approximately_now(status.query_info.end_time)
+
+    assert await factory.query_state_store.get_active_queries() == set()
 
 
 @pytest.mark.asyncio
@@ -101,6 +105,8 @@ async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     expected.error.code = JobErrorCode.backend_error
     expected.error.message = "Qserv request failed: Some error"
     assert status == expected
+
+    assert await factory.query_state_store.get_active_queries() == set()
 
 
 @pytest.mark.asyncio
@@ -192,6 +198,8 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     assert status.query_info
     assert_approximately_now(status.query_info.start_time)
 
+    assert await factory.query_state_store.get_active_queries() == set()
+
 
 @pytest.mark.asyncio
 async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
@@ -231,6 +239,8 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
     expected.timestamp = ANY
     assert status == expected
 
+    assert await factory.query_state_store.get_active_queries() == set()
+
 
 @pytest.mark.asyncio
 async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
@@ -256,6 +266,8 @@ async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
     expected.timestamp = ANY
     assert status == expected
     assert_approximately_now(status.timestamp)
+
+    assert await factory.query_state_store.get_active_queries() == set()
 
 
 @pytest.mark.asyncio
@@ -288,3 +300,5 @@ async def test_upload_timeout(
     expected.timestamp = ANY
     assert status == expected
     assert_approximately_now(status.timestamp)
+
+    assert await factory.query_state_store.get_active_queries() == set()

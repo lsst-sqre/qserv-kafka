@@ -135,7 +135,10 @@ class QueryService:
             return None
 
         # Return an appropriate status update for the job's current status.
-        return await self.build_status(query.job, status)
+        result = await self.build_status(query.job, status)
+        if result.status != ExecutionPhase.EXECUTING:
+            await self._state.delete_query(query_id)
+        return result
 
     async def publish_status(self, status: JobStatus) -> None:
         """Publish a status update to Kafka.

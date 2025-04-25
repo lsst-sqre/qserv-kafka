@@ -208,6 +208,11 @@ class Factory:
         self._logger = logger
         self._background_services_started = False
 
+    @property
+    def query_state_store(self) -> QueryStateStore:
+        """Underlying state storage for queries."""
+        return self._context.state
+
     def create_query_service(self) -> QueryService:
         """Create a new service for starting queries.
 
@@ -220,7 +225,7 @@ class Factory:
             qserv_client=QservClient(
                 self._session, self._context.http_client, self._logger
             ),
-            state_store=self._context.state,
+            state_store=self.query_state_store,
             votable_writer=VOTableWriter(
                 self._context.http_client, self._logger
             ),
