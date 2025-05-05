@@ -311,7 +311,11 @@ class QueryService:
                 ),
                 metadata=job.to_job_metadata(),
             )
-        logger.info("Job complete and results uploaded", rows=total_rows)
+        logger.info(
+            "Job complete and results uploaded",
+            rows=total_rows,
+            elapsed=(datetime.now(tz=UTC) - start).total_seconds(),
+        )
 
         # Return the resulting status.
         return JobStatus(
