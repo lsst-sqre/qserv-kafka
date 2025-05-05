@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Self
 
 from faststream.kafka import KafkaBroker
-from httpx import AsyncClient
+from httpx import AsyncClient, Limits
 from redis.asyncio import BlockingConnectionPool, Redis
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
@@ -88,7 +88,12 @@ class ProcessContext:
         logger = get_logger("qservkafka")
 
         # Qserv currently uses a self-signed certificate.
-        http_client = AsyncClient(timeout=30, verify=False)  # noqa: S501
+        limits = Limits(max_connections=config.qserv_rest_max_connections)
+        http_client = AsyncClient(
+            timeout=config.qserv_rest_timeout.total_seconds(),
+            limits=limits,
+            verify=False,  # noqa: S501
+        )
 
         # Qserv uses a self-signed certificate with no known certificate
         # chain. We do not use TLS to validate the identity of the server.
@@ -130,6 +135,8 @@ class ProcessContext:
             str(config.qserv_database_url),
             config.qserv_database_password,
             connect_args={"ssl": ssl_context},
+            max_overflow=config.qserv_database_overflow,
+            pool_size=config.qserv_database_pool_size,
         )
         session = await create_async_session(engine)
         qserv_client = QservClient(session, http_client, logger)
