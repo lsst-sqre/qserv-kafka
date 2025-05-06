@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from unittest.mock import ANY
+from unittest.mock import ANY, patch
 
 import pytest
 from fastapi import FastAPI
@@ -25,6 +25,7 @@ from qservkafka.models.kafka import (
 )
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 
+from ..support.arq import run_arq_jobs
 from ..support.data import (
     read_test_job_run,
     read_test_job_status,
@@ -75,7 +76,6 @@ async def test_job_run(
     expected["timestamp"] = int(now.timestamp() * 1000)
     status_publisher.mock.assert_called_once_with(expected)
 
-    status_publisher.mock.reset_mock()
     now = current_datetime()
     await mock_qserv.update_status(
         1,
@@ -89,6 +89,8 @@ async def test_job_run(
         ),
     )
     await asyncio.sleep(1.1)
+    with patch.object(kafka_broker, "publish") as mock:
+        assert await run_arq_jobs(kafka_broker) == 1
     expected["errorInfo"] = {
         "errorCode": "backend_error",
         "errorMessage": "Query failed in backend",
@@ -97,7 +99,11 @@ async def test_job_run(
     expected["queryInfo"]["completedChunks"] = 8
     expected["queryInfo"]["endTime"] = int(now.timestamp() * 1000)
     expected["timestamp"] = int(now.timestamp() * 1000)
-    status_publisher.mock.assert_called_once_with(expected)
+    mock.assert_called_once_with(
+        expected,
+        config.job_status_topic,
+        headers={"Content-Type": "application/json"},
+    )
 
     assert context_dependency._process_context
     state = context_dependency._process_context.state
@@ -138,12 +144,18 @@ async def test_job_results(
     )
 
     await asyncio.sleep(1.1)
+    with patch.object(kafka_broker, "publish") as mock:
+        assert await run_arq_jobs(kafka_broker) == 1
     expected["queryInfo"]["startTime"] = int(
         async_status.query_begin.timestamp() * 1000
     )
     expected["queryInfo"]["endTime"] = int(now.timestamp() * 1000)
     expected["timestamp"] = int(now.timestamp() * 1000)
-    status_publisher.mock.assert_called_once_with(expected)
+    mock.assert_called_once_with(
+        expected,
+        config.job_status_topic,
+        headers={"Content-Type": "application/json"},
+    )
 
     assert context_dependency._process_context
     state = context_dependency._process_context.state
@@ -192,6 +204,8 @@ async def test_job_result_error(
     )
 
     await asyncio.sleep(1)
+    with patch.object(kafka_broker, "publish") as mock:
+        assert await run_arq_jobs(kafka_broker) == 1
     expected = JobStatus(
         job_id=job.job_id,
         execution_id="1",
@@ -204,7 +218,11 @@ async def test_job_result_error(
         metadata=job.to_job_metadata(),
     ).model_dump(mode="json")
     expected["timestamp"] = ANY
-    status_publisher.mock.assert_called_once_with(expected)
+    mock.assert_called_once_with(
+        expected,
+        config.job_status_topic,
+        headers={"Content-Type": "application/json"},
+    )
 
     assert context_dependency._process_context
     state = context_dependency._process_context.state

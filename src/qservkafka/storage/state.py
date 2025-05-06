@@ -72,8 +72,26 @@ class QueryStateStore:
         """
         return await self._storage.get(str(query_id))
 
+    async def mark_queued_query(self, query_id: int) -> None:
+        """Mark a query as queued.
+
+        Parameters
+        ----------
+        query_id
+            Qserv query ID.
+        """
+        query = await self.get_query(query_id)
+        if query:
+            query.result_queued = True
+            await self._storage.store(str(query_id), query)
+
     async def store_query(
-        self, query_id: int, job: JobRun, status: AsyncQueryStatus
+        self,
+        query_id: int,
+        job: JobRun,
+        status: AsyncQueryStatus,
+        *,
+        result_queued: bool = False,
     ) -> None:
         """Add or update a record for an in-progress query.
 
@@ -84,11 +102,20 @@ class QueryStateStore:
         job
             Original job request.
         status
-            Initial query status.
+            Query status.
+        result_queued
+            Whether this query has been dispatched to arq for result
+            processing.
         """
         query = await self.get_query(query_id)
         if query:
             query.status = status
+            query.result_queued = result_queued
         else:
-            query = Query(query_id=query_id, job=job, status=status)
+            query = Query(
+                query_id=query_id,
+                job=job,
+                status=status,
+                result_queued=result_queued,
+            )
         await self._storage.store(str(query_id), query)

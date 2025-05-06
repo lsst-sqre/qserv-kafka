@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from aiojobs import Scheduler
+from safir.arq import ArqQueue
 from structlog.stdlib import BoundLogger
-from vo_models.uws.types import ExecutionPhase
 
 from ..storage.qserv import QservClient
 from ..storage.state import QueryStateStore
@@ -22,6 +22,8 @@ class QueryMonitor:
         Service used to process results.
     qserv_client
         Client to talk to the Qserv REST API.
+    arq_queue
+        Queue to which to dispatch result processing requests.
     state_store
         Storage for query state.
     logger
@@ -33,11 +35,13 @@ class QueryMonitor:
         *,
         result_processor: ResultProcessor,
         qserv_client: QservClient,
+        arq_queue: ArqQueue,
         state_store: QueryStateStore,
         logger: BoundLogger,
     ) -> None:
         self._results = result_processor
         self._qserv = qserv_client
+        self._arq = arq_queue
         self._state = state_store
         self._logger = logger
 
@@ -62,7 +66,7 @@ class QueryMonitor:
         running = await self._qserv.list_running_queries()
         for query_id in queries_to_process:
             query = await self._state.get_query(query_id)
-            if not query:
+            if not query or query.result_queued:
                 continue
             job = query.job
             if query_id in running:
@@ -73,29 +77,5 @@ class QueryMonitor:
                 await self._results.publish_status(update)
                 await self._state.store_query(query_id, job, status)
             elif query_id not in self._in_progress:
-                self._in_progress.add(query_id)
-                coro = self.handle_finished_query(query_id)
-                await scheduler.spawn(coro)
-
-    async def handle_finished_query(self, query_id: int) -> None:
-        """Process results and send event for a completed query.
-
-        Parameters
-        ----------
-        query_id
-           Qserv ID of completed query.
-        """
-        query = await self._state.get_query(query_id)
-        if not query:
-            return
-
-        # Analyze the status and retrieve and upload the results if needed.
-        update = await self._results.build_query_status(query_id, query.job)
-
-        # Publish the status update.
-        await self._results.publish_status(update)
-
-        # Clean up the handled query if it is no longer executing.
-        if update.status != ExecutionPhase.EXECUTING:
-            await self._state.delete_query(query_id)
-        self._in_progress.remove(query_id)
+                await self._arq.enqueue("handle_finished_query", query_id)
+                await self._state.mark_queued_query(query_id)

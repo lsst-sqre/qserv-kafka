@@ -4,18 +4,13 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from pydantic import (
-    Field,
-    HttpUrl,
-    MySQLDsn,
-    RedisDsn,
-    SecretStr,
-    field_validator,
-)
+from arq.connections import RedisSettings
+from pydantic import Field, HttpUrl, MySQLDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from safir.arq import ArqMode, build_arq_redis_settings
 from safir.kafka import KafkaConnectionSettings
 from safir.logging import LogLevel, Profile
-from safir.pydantic import HumanTimedelta
+from safir.pydantic import EnvRedisDsn, HumanTimedelta
 
 __all__ = ["Config", "config"]
 
@@ -25,6 +20,12 @@ class Config(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="QSERV_KAFKA_", case_sensitive=False
+    )
+
+    arq_mode: ArqMode = Field(
+        ArqMode.production,
+        title="arq queue mode",
+        description="Used by the test suite to switch to a mock queue",
     )
 
     consumer_group_id: str | None = Field(
@@ -62,7 +63,7 @@ class Config(BaseSettings):
         ..., title="Redis password", description="Password for Redis server"
     )
 
-    redis_url: RedisDsn = Field(
+    redis_url: EnvRedisDsn = Field(
         ...,
         title="Redis DSN",
         description="DSN for the Redis server storing query state",
@@ -142,6 +143,11 @@ class Config(BaseSettings):
             " with the Kubernetes shutdown grace period."
         ),
     )
+
+    @property
+    def arq_redis_settings(self) -> RedisSettings:
+        """Redis settings for arq."""
+        return build_arq_redis_settings(self.redis_url, self.redis_password)
 
     @field_validator("qserv_database_url")
     @classmethod

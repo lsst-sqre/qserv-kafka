@@ -64,7 +64,7 @@ def create_app(
         await context_dependency.initialize(kafka_broker)
         logger = get_logger("qservkafka")
         factory = context_dependency.create_factory()
-        monitor = factory.create_query_monitor()
+        monitor = await factory.create_query_monitor()
         background = BackgroundTaskManager(monitor, logger)
         await background.start()
         logger.info("Qserv Kafka bridge started")

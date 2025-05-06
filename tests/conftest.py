@@ -59,7 +59,7 @@ async def background(
     factory: Factory, logger: BoundLogger
 ) -> AsyncGenerator[BackgroundTaskManager]:
     """Create and start the background task manager."""
-    monitor = factory.create_query_monitor()
+    monitor = await factory.create_query_monitor()
     background = BackgroundTaskManager(monitor, logger)
     await background.start()
     yield background

@@ -20,3 +20,7 @@ class Query(BaseModel):
     job: Annotated[JobRun, Field(title="Full job request")]
 
     status: Annotated[AsyncQueryStatus, Field(title="Last known status")]
+
+    result_queued: Annotated[
+        bool, Field(title="Whether queued for result procesing")
+    ]
