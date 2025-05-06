@@ -34,7 +34,8 @@ async def job_cancel(
     query_service = context.factory.create_query_service()
     result = await query_service.cancel_query(message)
     if result:
-        await query_service.publish_status(result)
+        processor = context.factory.create_result_processor()
+        await processor.publish_status(result)
 
 
 def register_kafka_handlers(

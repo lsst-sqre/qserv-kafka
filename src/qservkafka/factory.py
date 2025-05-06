@@ -11,13 +11,12 @@ from httpx import AsyncClient, Limits
 from redis.asyncio import BlockingConnectionPool, Redis
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
-from safir.database import create_async_session, create_database_engine
+from safir.database import create_database_engine
 from safir.redis import PydanticRedisStorage
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
 from structlog import get_logger
 from structlog.stdlib import BoundLogger
 
-from .background import BackgroundTaskManager
 from .config import config
 from .constants import (
     REDIS_BACKOFF_MAX,
@@ -30,6 +29,7 @@ from .constants import (
 from .models.state import Query
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
+from .services.results import ResultProcessor
 from .storage.qserv import QservClient
 from .storage.state import QueryStateStore
 from .storage.votable import VOTableWriter
@@ -52,9 +52,6 @@ class ProcessContext:
     engine: AsyncEngine
     """Database engine."""
 
-    session: async_scoped_session
-    """Session used by background jobs."""
-
     kafka_broker: KafkaBroker
     """Kafka broker to use for publishing messages from background jobs."""
 
@@ -68,17 +65,22 @@ class ProcessContext:
     been moved into Qserv.
     """
 
-    background: BackgroundTaskManager
-    """Manager for background tasks."""
-
     @classmethod
-    async def create(cls, kafka_broker: KafkaBroker | None = None) -> Self:
+    async def create(
+        cls,
+        kafka_broker: KafkaBroker | None = None,
+        *,
+        is_frontend: bool = True,
+    ) -> Self:
         """Create a new process context from a database engine.
 
         Parameters
         ----------
         kafka_broker
             If not `None`, use this Kafka broker instead of making a new one.
+        is_frontend
+            Whether this is the process context for the frontend, which also
+            runs the background task manager.
 
         Returns
         -------
@@ -101,7 +103,8 @@ class ProcessContext:
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
 
-        # Create a Redis client pool with exponential backoff.
+        # Create a Redis client pool with exponential backoff and the state
+        # store that stores job state in Redis.
         redis_password = config.redis_password.get_secret_value()
         backoff = ExponentialBackoff(
             base=REDIS_BACKOFF_START, cap=REDIS_BACKOFF_MAX
@@ -120,6 +123,7 @@ class ProcessContext:
         redis_storage = PydanticRedisStorage(
             datatype=Query, redis=redis_client, key_prefix="query:"
         )
+        state_store = QueryStateStore(redis_storage, logger)
 
         # Create a Kafka broker used for background tasks. This needs to be a
         # separate broker from the one used by handlers, since the one used by
@@ -130,7 +134,7 @@ class ProcessContext:
             kafka_broker = KafkaBroker(**config.kafka.to_faststream_params())
         await kafka_broker.connect()
 
-        state_store = QueryStateStore(redis_storage, logger)
+        # Create the database engine.
         engine = create_database_engine(
             str(config.qserv_database_url),
             config.qserv_database_password,
@@ -138,32 +142,14 @@ class ProcessContext:
             max_overflow=config.qserv_database_overflow,
             pool_size=config.qserv_database_pool_size,
         )
-        session = await create_async_session(engine)
-        qserv_client = QservClient(session, http_client, logger)
-        votable_writer = VOTableWriter(http_client, logger)
-        query_service = QueryService(
-            qserv_client=qserv_client,
-            state_store=state_store,
-            votable_writer=votable_writer,
-            kafka_broker=kafka_broker,
-            logger=logger,
-        )
-        monitor = QueryMonitor(
-            query_service=query_service,
-            qserv_client=QservClient(session, http_client, logger),
-            state_store=state_store,
-            logger=logger,
-        )
-        background = BackgroundTaskManager(monitor, logger)
 
+        # Return the newly-constructed context.
         return cls(
             http_client=http_client,
             engine=engine,
-            session=session,
             kafka_broker=kafka_broker,
             redis=redis_client,
             state=state_store,
-            background=background,
         )
 
     async def aclose(self) -> None:
@@ -172,20 +158,10 @@ class ProcessContext:
         Called during shutdown, or before recreating the process context using
         a different configuration.
         """
-        await self.stop()
         await self.kafka_broker.close()
-        await self.session.remove()
         await self.redis.aclose()
         await self.engine.dispose()
         await self.http_client.aclose()
-
-    async def start(self) -> None:
-        """Start the background tasks running."""
-        await self.background.start()
-
-    async def stop(self) -> None:
-        """Stop the background tasks if they are running."""
-        await self.background.stop()
 
 
 class Factory:
@@ -213,12 +189,40 @@ class Factory:
         self._context = context
         self._session = session
         self._logger = logger
-        self._background_services_started = False
 
     @property
     def query_state_store(self) -> QueryStateStore:
         """Underlying state storage for queries."""
         return self._context.state
+
+    def create_qserv_client(self) -> QservClient:
+        """Create a client for talking to the Qserv API.
+
+        Returns
+        -------
+        QservClient
+            Client for the Qserv API.
+        """
+        return QservClient(
+            self._session, self._context.http_client, self._logger
+        )
+
+    def create_query_monitor(self) -> QueryMonitor:
+        """Create the singleton monitor for query status.
+
+        This is run as a background task.
+
+        Returns
+        -------
+        QueryMonitor
+            New service to monitor query status.
+        """
+        return QueryMonitor(
+            result_processor=self.create_result_processor(),
+            qserv_client=self.create_qserv_client(),
+            state_store=self.query_state_store,
+            logger=self._logger,
+        )
 
     def create_query_service(self) -> QueryService:
         """Create a new service for starting queries.
@@ -229,9 +233,22 @@ class Factory:
             New service to start queries.
         """
         return QueryService(
-            qserv_client=QservClient(
-                self._session, self._context.http_client, self._logger
-            ),
+            qserv_client=self.create_qserv_client(),
+            state_store=self.query_state_store,
+            result_processor=self.create_result_processor(),
+            logger=self._logger,
+        )
+
+    def create_result_processor(self) -> ResultProcessor:
+        """Create a new service for processing results.
+
+        Returns
+        -------
+        ResultProcessor
+            New service to process a completed query.
+        """
+        return ResultProcessor(
+            qserv_client=self.create_qserv_client(),
             state_store=self.query_state_store,
             votable_writer=VOTableWriter(
                 self._context.http_client, self._logger

@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from aiojobs import Scheduler
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
-from ..exceptions import QservApiError
-from ..models.kafka import JobRun, JobStatus
 from ..storage.qserv import QservClient
 from ..storage.state import QueryStateStore
-from .query import QueryService
+from .results import ResultProcessor
 
 __all__ = ["QueryMonitor"]
 
@@ -22,8 +18,8 @@ class QueryMonitor:
 
     Parameters
     ----------
-    query_service
-        Query service used to process queries.
+    result_processor
+        Service used to process results.
     qserv_client
         Client to talk to the Qserv REST API.
     state_store
@@ -35,12 +31,12 @@ class QueryMonitor:
     def __init__(
         self,
         *,
-        query_service: QueryService,
+        result_processor: ResultProcessor,
         qserv_client: QservClient,
         state_store: QueryStateStore,
         logger: BoundLogger,
     ) -> None:
-        self._query = query_service
+        self._results = result_processor
         self._qserv = qserv_client
         self._state = state_store
         self._logger = logger
@@ -71,48 +67,33 @@ class QueryMonitor:
             job = query.job
             if query_id in running:
                 status = running[query_id]
-                if query.status != status:
-                    update = await self._query.build_status(job, status)
-                    await self._query.publish_status(update)
-                    await self._state.update_status(query_id, job, status)
+                if query.status == status:
+                    continue
+                update = await self._results.build_query_status(query_id, job)
+                await self._results.publish_status(update)
+                await self._state.store_query(query_id, job, status)
             elif query_id not in self._in_progress:
                 self._in_progress.add(query_id)
-                coro = self._handle_finished_query(query_id, job)
+                coro = self.handle_finished_query(query_id)
                 await scheduler.spawn(coro)
 
-    async def _handle_finished_query(self, query_id: int, job: JobRun) -> None:
-        """Sent event for a completed query.
+    async def handle_finished_query(self, query_id: int) -> None:
+        """Process results and send event for a completed query.
 
         Parameters
         ----------
         query_id
            Qserv ID of completed query.
         """
-        logger = self._logger.bind(
-            job_id=job.job_id, qserv_id=query_id, username=job.owner
-        )
-        try:
-            status = await self._qserv.get_query_status(query_id)
-        except QservApiError as e:
-            logger.exception("Unable to get job status", error=str(e))
-            update = JobStatus(
-                job_id=job.job_id,
-                execution_id=str(query_id),
-                timestamp=datetime.now(tz=UTC),
-                status=ExecutionPhase.ERROR,
-                error=e.to_job_error(),
-                metadata=job.to_job_metadata(),
-            )
-            await self._query.publish_status(update)
-            await self._state.delete_query(query_id)
-            self._in_progress.remove(query_id)
+        query = await self._state.get_query(query_id)
+        if not query:
             return
 
         # Analyze the status and retrieve and upload the results if needed.
-        update = await self._query.build_status(job, status)
+        update = await self._results.build_query_status(query_id, query.job)
 
-        # Publish the results.
-        await self._query.publish_status(update)
+        # Publish the status update.
+        await self._results.publish_status(update)
 
         # Clean up the handled query if it is no longer executing.
         if update.status != ExecutionPhase.EXECUTING:
