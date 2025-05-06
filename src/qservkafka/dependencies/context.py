@@ -84,6 +84,23 @@ class ContextDependency:
             await self._process_context.aclose()
         self._process_context = None
 
+    def create_factory(self) -> Factory:
+        """Create a new factory.
+
+        This is used for background processing, so it is separate from the
+        work inside ``__call__``, which assumes that there is a Kafka message
+        to which the bridge is reacting.
+
+        Returns
+        -------
+        Factory
+            Newly-constructed factory.
+        """
+        if not self._process_context or not self._session:
+            raise RuntimeError("Context dependency not initialized")
+        logger = get_logger("qservkafka")
+        return Factory(self._process_context, self._session, logger)
+
     async def initialize(
         self, kafka_broker: KafkaBroker | None = None
     ) -> None:
@@ -98,7 +115,6 @@ class ContextDependency:
         if self._process_context:
             await self.aclose()
         self._process_context = await ProcessContext.create(kafka_broker)
-        await self._process_context.start()
         engine = self._process_context.engine
         self._session = await create_async_session(engine)
 

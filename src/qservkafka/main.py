@@ -11,6 +11,7 @@ from faststream.kafka.publisher.asyncapi import AsyncAPIDefaultPublisher
 from safir.logging import configure_logging, configure_uvicorn_logging
 from structlog import get_logger
 
+from .background import BackgroundTaskManager
 from .config import config
 from .dependencies.context import context_dependency
 from .handlers.internal import internal_router
@@ -62,8 +63,15 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await context_dependency.initialize(kafka_broker)
         logger = get_logger("qservkafka")
+        factory = context_dependency.create_factory()
+        monitor = factory.create_query_monitor()
+        background = BackgroundTaskManager(monitor, logger)
+        await background.start()
         logger.info("Qserv Kafka bridge started")
+
         yield
+
+        await background.stop()
         await context_dependency.aclose()
 
     app = FastAPI(

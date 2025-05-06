@@ -18,9 +18,11 @@ from pydantic import MySQLDsn, RedisDsn, SecretStr
 from safir.database import create_async_session, create_database_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 from structlog import get_logger
+from structlog.stdlib import BoundLogger
 from testcontainers.mysql import MySqlContainer
 from testcontainers.redis import RedisContainer
 
+from qservkafka.background import BackgroundTaskManager
 from qservkafka.config import config
 from qservkafka.factory import Factory, ProcessContext
 from qservkafka.main import create_app
@@ -53,6 +55,18 @@ async def app(
 
 
 @pytest_asyncio.fixture
+async def background(
+    factory: Factory, logger: BoundLogger
+) -> AsyncGenerator[BackgroundTaskManager]:
+    """Create and start the background task manager."""
+    monitor = factory.create_query_monitor()
+    background = BackgroundTaskManager(monitor, logger)
+    await background.start()
+    yield background
+    await background.stop()
+
+
+@pytest_asyncio.fixture
 async def client(app: FastAPI) -> AsyncGenerator[AsyncClient]:
     """Return an ``httpx.AsyncClient`` configured to talk to the test app."""
     async with AsyncClient(
@@ -63,7 +77,7 @@ async def client(app: FastAPI) -> AsyncGenerator[AsyncClient]:
 
 @pytest_asyncio.fixture
 async def engine(
-    mysql: MySqlContainer, monkeypatch: pytest.MonkeyPatch
+    mysql: MySqlContainer, monkeypatch: pytest.MonkeyPatch, logger: BoundLogger
 ) -> AsyncGenerator[AsyncEngine]:
     """Construct a SQLAlchemy engine for the test database."""
     url = MySQLDsn(mysql.get_connection_url())
@@ -71,7 +85,6 @@ async def engine(
     monkeypatch.setattr(config, "qserv_database_password", password)
     monkeypatch.setattr(config, "qserv_database_url", url)
     engine = create_database_engine(str(url), config.qserv_database_password)
-    logger = get_logger("qservkafka")
     await MockQserv.initialize(engine, logger)
     yield engine
     await engine.dispose()
@@ -84,6 +97,7 @@ async def factory(
     engine: AsyncEngine,
     redis: RedisContainer,
     monkeypatch: pytest.MonkeyPatch,
+    logger: BoundLogger,
 ) -> AsyncGenerator[Factory]:
     """Provide a component factory for tests that don't require the app."""
     redis_host = redis.get_container_host_ip()
@@ -94,17 +108,20 @@ async def factory(
     async with TestKafkaBroker(kafka_broker) as mock_broker:
         context = await ProcessContext.create(mock_broker)
         async with aclosing(context):
-            logger = get_logger("qservkafka")
             session = await create_async_session(engine, logger)
             yield Factory(context, session, logger)
 
 
 @pytest.fixture
-def kafka_router() -> KafkaRouter:
+def kafka_router(logger: BoundLogger) -> KafkaRouter:
     """Kafka router used for testing, broken out so that it can be mocked."""
     kafka_params = config.kafka.to_faststream_params()
-    logger = get_logger("qservkafka")
     return KafkaRouter(**kafka_params, logger=logger)
+
+
+@pytest.fixture
+def logger() -> BoundLogger:
+    return get_logger("qservkafka")
 
 
 @pytest.fixture
