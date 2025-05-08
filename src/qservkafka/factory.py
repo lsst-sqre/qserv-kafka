@@ -11,6 +11,7 @@ from httpx import AsyncClient, Limits
 from redis.asyncio import BlockingConnectionPool, Redis
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
+from safir.arq import ArqMode, ArqQueue, MockArqQueue, RedisArqQueue
 from safir.database import create_database_engine
 from safir.redis import PydanticRedisStorage
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
@@ -69,8 +70,6 @@ class ProcessContext:
     async def create(
         cls,
         kafka_broker: KafkaBroker | None = None,
-        *,
-        is_frontend: bool = True,
     ) -> Self:
         """Create a new process context from a database engine.
 
@@ -78,9 +77,6 @@ class ProcessContext:
         ----------
         kafka_broker
             If not `None`, use this Kafka broker instead of making a new one.
-        is_frontend
-            Whether this is the process context for the frontend, which also
-            runs the background task manager.
 
         Returns
         -------
@@ -207,7 +203,7 @@ class Factory:
             self._session, self._context.http_client, self._logger
         )
 
-    def create_query_monitor(self) -> QueryMonitor:
+    async def create_query_monitor(self) -> QueryMonitor:
         """Create the singleton monitor for query status.
 
         This is run as a background task.
@@ -217,15 +213,26 @@ class Factory:
         QueryMonitor
             New service to monitor query status.
         """
+        if config.arq_mode == ArqMode.production:
+            settings = config.arq_redis_settings
+            arq_queue: ArqQueue = await RedisArqQueue.initialize(settings)
+        else:
+            arq_queue = MockArqQueue()
         return QueryMonitor(
             result_processor=self.create_result_processor(),
             qserv_client=self.create_qserv_client(),
+            arq_queue=arq_queue,
             state_store=self.query_state_store,
             logger=self._logger,
         )
 
     def create_query_service(self) -> QueryService:
         """Create a new service for starting queries.
+
+        Parameters
+        ----------
+        arq_queue
+            arq queue to which to dispatch result handling jobs.
 
         Returns
         -------

@@ -91,10 +91,7 @@ class QueryService:
             return None
 
         # Return an appropriate status update for the job's current status.
-        result = await self._results.build_query_status(query_id, query.job)
-        if result.status != ExecutionPhase.EXECUTING:
-            await self._state.delete_query(query_id)
-        return result
+        return await self._results.build_query_status(query_id, query.job)
 
     async def start_query(self, job: JobRun) -> JobStatus:
         """Start a new query and return its initial status.

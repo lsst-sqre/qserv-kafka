@@ -15,6 +15,7 @@ from aiokafka import AIOKafkaConsumer
 from asgi_lifespan import LifespanManager
 from faststream.kafka import KafkaBroker
 from pydantic import RedisDsn
+from safir.arq import ArqMode
 from safir.kafka import KafkaConnectionSettings, SecurityProtocol
 from testcontainers.core.container import Network
 from testcontainers.redis import RedisContainer
@@ -23,6 +24,7 @@ from qservkafka.config import config
 from qservkafka.main import create_app
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 
+from ..support.arq import run_arq_jobs
 from ..support.data import (
     read_test_job_run,
     read_test_job_status,
@@ -138,6 +140,7 @@ async def test_shutdown(
     redis_host = redis.get_container_host_ip()
     redis_port = redis.get_exposed_port(6379)
     redis_url = RedisDsn(f"redis://{redis_host}:{redis_port}/0")
+    monkeypatch.setattr(config, "arq_mode", ArqMode.production)
     monkeypatch.setattr(config, "redis_url", redis_url)
     monkeypatch.setattr(config, "kafka", kafka_connection_settings)
 
@@ -174,7 +177,7 @@ async def test_shutdown(
     expected["queryInfo"]["startTime"] = ANY
     expected["queryInfo"]["endTime"] = ANY
     expected["timestamp"] = ANY
-    await asyncio.sleep(1)
+    assert await run_arq_jobs() == 1
     raw_message = await kafka_status_consumer.getone()
     message = json.loads(raw_message.value.decode())
     assert message == expected

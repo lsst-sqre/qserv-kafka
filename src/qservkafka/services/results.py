@@ -99,16 +99,18 @@ class ResultProcessor:
             return update
         match status.status:
             case AsyncQueryPhase.ABORTED:
-                return self._build_aborted_status(job, status)
+                result = self._build_aborted_status(job, status)
             case AsyncQueryPhase.EXECUTING:
                 await self._state.store_query(query_id, job, status)
                 return self._build_executing_status(job, status)
             case AsyncQueryPhase.COMPLETED:
-                return await self._build_completed_status(job, status)
+                result = await self._build_completed_status(job, status)
             case AsyncQueryPhase.FAILED:
-                return self._build_failed_status(job, status)
+                result = self._build_failed_status(job, status)
             case _:  # pragma: no cover
                 raise ValueError(f"Unknown phase {status.status}")
+        await self._state.delete_query(query_id)
+        return result
 
     async def publish_status(self, status: JobStatus) -> None:
         """Publish a status update to Kafka.
