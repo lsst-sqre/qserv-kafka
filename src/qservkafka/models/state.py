@@ -23,4 +23,4 @@ class Query(BaseModel):
 
     result_queued: Annotated[
         bool, Field(title="Whether queued for result procesing")
-    ]
+    ] = False
