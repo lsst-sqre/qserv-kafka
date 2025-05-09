@@ -44,14 +44,10 @@ class QueryMonitor:
         self._state = state_store
         self._logger = logger
 
-        # Completed jobs that are currently being processed, so that we don't
-        # process them twice.
-        self._in_progress: set[int] = set()
-
     async def check_status(self) -> None:
         """Check status of running queries and report updates to Kafka."""
         active_queries = await self._state.get_active_queries()
-        queries_to_process = active_queries - self._in_progress
+        queries_to_process = active_queries
         if not queries_to_process:
             return
         running = await self._qserv.list_running_queries()
@@ -67,6 +63,12 @@ class QueryMonitor:
                 update = await self._results.build_query_status(query_id, job)
                 await self._results.publish_status(update)
                 await self._state.store_query(query_id, job, status)
-            elif query_id not in self._in_progress:
+            else:
                 await self._arq.enqueue("handle_finished_query", query_id)
                 await self._state.mark_queued_query(query_id)
+                self._logger.debug(
+                    "Dispatched finished query to worker",
+                    job_id=job.job_id,
+                    qserv_id=query_id,
+                    username=job.owner,
+                )
