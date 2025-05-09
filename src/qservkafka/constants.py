@@ -22,6 +22,16 @@ but still shorter than the additional grace period Kubernetes is configured
 to give the worker pod.
 """
 
+MAXIMUM_QUERY_LIFETIME = timedelta(days=1)
+"""How long before we forget about a query entirely.
+
+Various bugs and other issues may result in stranding a query in Redis with
+the flag set to indicate it has been dispatched by arq but without any active
+arq job processing it. As a last resort, tell Redis to forget about these
+queries after this interval. This will strand unretrieved results in Qserv
+that will have to be pruned by Qserv garbage collection.
+"""
+
 REDIS_BACKOFF_MAX = 1.0
 """Maximum delay (in seconds) to wait after a Redis failure."""
 
