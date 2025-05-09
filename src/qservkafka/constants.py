@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 __all__ = [
+    "ARQ_TIMEOUT_GRACE",
     "REDIS_BACKOFF_MAX",
     "REDIS_BACKOFF_START",
     "REDIS_POOL_SIZE",
@@ -10,6 +13,14 @@ __all__ = [
     "REDIS_RETRIES",
     "REDIS_TIMEOUT",
 ]
+
+ARQ_TIMEOUT_GRACE = timedelta(seconds=2)
+"""Additional grace period to allow on top of result processing timeout.
+
+This should be long enough to allow for asking the REST API for the status,
+but still shorter than the additional grace period Kubernetes is configured
+to give the worker pod.
+"""
 
 REDIS_BACKOFF_MAX = 1.0
 """Maximum delay (in seconds) to wait after a Redis failure."""
