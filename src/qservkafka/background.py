@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from functools import partial
 
 from aiojobs import Scheduler
 from structlog.stdlib import BoundLogger
@@ -54,7 +53,7 @@ class BackgroundTaskManager:
         self._scheduler = Scheduler()
         coros = [
             self._loop(
-                partial(self._monitor.check_status, self._scheduler),
+                self._monitor.check_status,
                 config.qserv_poll_interval,
                 "polling query status",
             )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from aiojobs import Scheduler
 from safir.arq import ArqQueue
 from structlog.stdlib import BoundLogger
 
@@ -49,16 +48,8 @@ class QueryMonitor:
         # process them twice.
         self._in_progress: set[int] = set()
 
-    async def check_status(self, scheduler: Scheduler) -> None:
-        """Check the status of running queries and report updates to Kafka.
-
-        Parameters
-        ----------
-        scheduler
-            Job scheduler to handle background tasks that process completed
-            queries. This allows multiple completed queries to be processed
-            simultaneously using the MySQL client connection pool.
-        """
+    async def check_status(self) -> None:
+        """Check status of running queries and report updates to Kafka."""
         active_queries = await self._state.get_active_queries()
         queries_to_process = active_queries - self._in_progress
         if not queries_to_process:
