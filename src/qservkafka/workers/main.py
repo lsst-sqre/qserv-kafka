@@ -11,6 +11,7 @@ from safir.logging import configure_logging
 from structlog import get_logger
 
 from ..config import config
+from ..constants import ARQ_TIMEOUT_GRACE
 from ..factory import Factory, ProcessContext
 from .functions.results import handle_finished_query
 
@@ -57,6 +58,7 @@ class WorkerSettings:
     """Configuration for the arq worker."""
 
     functions: ClassVar[list[Callable]] = [handle_finished_query]
-    redis_settings = config.arq_redis_settings
+    job_timeout = config.result_timeout + ARQ_TIMEOUT_GRACE
     on_startup = startup
     on_shutdown = shutdown
+    redis_settings = config.arq_redis_settings
