@@ -59,6 +59,38 @@ class ResultProcessor:
         self._kafka = kafka_broker
         self._logger = logger
 
+    def build_executing_status(
+        self, job: JobRun, status: AsyncQueryStatus
+    ) -> JobStatus:
+        """Build the status for a query that's still executing.
+
+        Parameters
+        ----------
+        job
+            Original query request.
+        status
+            Status response from Qserv.
+
+        Returns
+        -------
+        JobStatus
+            Job status to report to Kafka.
+        """
+        self._logger.debug(
+            "Query is executing",
+            job_id=job.job_id,
+            qserv_id=status.query_id,
+            username=job.owner,
+        )
+        return JobStatus(
+            job_id=job.job_id,
+            execution_id=str(status.query_id),
+            timestamp=status.last_update or datetime.now(tz=UTC),
+            status=ExecutionPhase.EXECUTING,
+            query_info=JobQueryInfo.from_query_status(status),
+            metadata=job.to_job_metadata(),
+        )
+
     async def build_query_status(
         self, query_id: int, job: JobRun
     ) -> JobStatus:
@@ -102,7 +134,7 @@ class ResultProcessor:
                 result = self._build_aborted_status(job, status)
             case AsyncQueryPhase.EXECUTING:
                 await self._state.store_query(query_id, job, status)
-                return self._build_executing_status(job, status)
+                return self.build_executing_status(job, status)
             case AsyncQueryPhase.COMPLETED:
                 result = await self._build_completed_status(job, status)
             case AsyncQueryPhase.FAILED:
@@ -247,38 +279,6 @@ class ResultProcessor:
                 result_location=job.result_location,
                 format=job.result_format.format,
             ),
-            metadata=job.to_job_metadata(),
-        )
-
-    def _build_executing_status(
-        self, job: JobRun, status: AsyncQueryStatus
-    ) -> JobStatus:
-        """Build the status for a query that's still executing.
-
-        Parameters
-        ----------
-        job
-            Original query request.
-        status
-            Status response from Qserv.
-
-        Returns
-        -------
-        JobStatus
-            Job status to report to Kafka.
-        """
-        self._logger.debug(
-            "Query is executing",
-            job_id=job.job_id,
-            qserv_id=status.query_id,
-            username=job.owner,
-        )
-        return JobStatus(
-            job_id=job.job_id,
-            execution_id=str(status.query_id),
-            timestamp=status.last_update or datetime.now(tz=UTC),
-            status=ExecutionPhase.EXECUTING,
-            query_info=JobQueryInfo.from_query_status(status),
             metadata=job.to_job_metadata(),
         )
 
