@@ -5,6 +5,7 @@ from __future__ import annotations
 from safir.redis import PydanticRedisStorage
 from structlog.stdlib import BoundLogger
 
+from ..constants import MAXIMUM_QUERY_LIFETIME
 from ..models.kafka import JobRun
 from ..models.qserv import AsyncQueryStatus
 from ..models.state import Query
@@ -83,7 +84,8 @@ class QueryStateStore:
         query = await self.get_query(query_id)
         if query:
             query.result_queued = True
-            await self._storage.store(str(query_id), query)
+            lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
+            await self._storage.store(str(query_id), query, lifetime)
 
     async def store_query(
         self,
@@ -118,4 +120,5 @@ class QueryStateStore:
                 status=status,
                 result_queued=result_queued,
             )
-        await self._storage.store(str(query_id), query)
+        lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
+        await self._storage.store(str(query_id), query, lifetime)
