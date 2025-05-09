@@ -112,4 +112,4 @@ class BackgroundTaskManager:
                 # whatever the problem was to be resolved.
                 elapsed = datetime.now(tz=UTC) - start
                 msg = f"Uncaught exception {description}"
-                self._logger.exception(msg, delay=elapsed.total_seconds)
+                self._logger.exception(msg, delay=elapsed.total_seconds())
