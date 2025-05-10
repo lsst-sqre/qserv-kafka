@@ -58,7 +58,11 @@ class WorkerSettings:
     """Configuration for the arq worker."""
 
     functions: ClassVar[list[Callable]] = [handle_finished_query]
+    job_completion_wait = int(
+        (config.result_timeout + ARQ_TIMEOUT_GRACE).total_seconds()
+    )
     job_timeout = config.result_timeout + ARQ_TIMEOUT_GRACE
+    max_jobs = config.max_worker_jobs
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = config.arq_redis_settings

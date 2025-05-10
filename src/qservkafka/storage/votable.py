@@ -205,6 +205,8 @@ class VOTableEncoder:
                 encoded = self._encode_row(types, row)
                 yield encoded
                 self._total_rows += 1
+                if self._total_rows % 10000 == 0:
+                    self._logger.debug(f"Processed {self._total_rows} rows")
         finally:
             await results.aclose()
 

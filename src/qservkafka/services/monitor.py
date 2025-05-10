@@ -5,6 +5,7 @@ from __future__ import annotations
 from safir.arq import ArqQueue
 from structlog.stdlib import BoundLogger
 
+from ..models.qserv import AsyncQueryPhase
 from ..storage.qserv import QservClient
 from ..storage.state import QueryStateStore
 from .results import ResultProcessor
@@ -56,11 +57,25 @@ class QueryMonitor:
             if not query or query.result_queued:
                 continue
             job = query.job
-            if query_id in running:
+
+            # Send updates to executing queries directly from the background
+            # monitoring task for faster updates, but make sure we do not
+            # accidentally process finished queries from the monitor task. We
+            # otherwise might send duplicate updates. Ensure all finished
+            # queries are dispatched to arq.
+            #
+            # Do not use build_query_status inside the first block, since it
+            # will re-retrieve the status from Qserv and may at that point
+            # find that it is completed.
+            is_running = (
+                query_id in running
+                and running[query_id].status == AsyncQueryPhase.EXECUTING
+            )
+            if is_running:
                 status = running[query_id]
                 if query.status == status:
                     continue
-                update = await self._results.build_query_status(query_id, job)
+                update = self._results.build_executing_status(job, status)
                 await self._results.publish_status(update)
                 await self._state.store_query(query_id, job, status)
             else:

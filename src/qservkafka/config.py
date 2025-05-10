@@ -53,6 +53,10 @@ class Config(BaseSettings):
         LogLevel.INFO, title="Log level of the application's logger"
     )
 
+    max_worker_jobs: int = Field(
+        5, title="Simultaneous result worker jobs per pod"
+    )
+
     name: str = Field("qserv-kafka", title="Name of application")
 
     profile: Profile = Field(
