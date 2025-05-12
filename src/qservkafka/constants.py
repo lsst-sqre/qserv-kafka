@@ -12,6 +12,7 @@ __all__ = [
     "REDIS_POOL_TIMEOUT",
     "REDIS_RETRIES",
     "REDIS_TIMEOUT",
+    "UPLOAD_BUFFER_SIZE",
 ]
 
 ARQ_TIMEOUT_GRACE = timedelta(seconds=2)
@@ -53,3 +54,10 @@ REDIS_RETRIES = 10
 
 REDIS_TIMEOUT = 5
 """Timeout in seconds for a Redis network operation (including connecting)."""
+
+UPLOAD_BUFFER_SIZE = 64 * 1024
+"""Size of the internal buffer for HTTP PUT.
+
+Writes to the signed URL are buffered to avoid too many small writes and
+context switches. This is the size of the buffer.
+"""
