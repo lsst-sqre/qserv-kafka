@@ -73,16 +73,15 @@ class VOTableEncoder:
         binary2 = self._generate_binary2(self._config.column_types, results)
         encoded = self._base64_encode(binary2)
         buf = BytesIO()
-        length = 0
         try:
             async for output in encoded:
                 buf.write(output)
-                length += len(output)
-                if length >= UPLOAD_BUFFER_SIZE:
-                    yield buf.getbuffer()
-                    buf = BytesIO()
-                    length = 0
-            if length:
+                if buf.tell() >= UPLOAD_BUFFER_SIZE:
+                    buf.truncate()
+                    yield buf.getvalue()
+                    buf.seek(0)
+            if buf.tell() > 0:
+                buf.truncate()
                 yield buf.getbuffer()
         finally:
             await encoded.aclose()
