@@ -55,7 +55,7 @@ REDIS_RETRIES = 10
 REDIS_TIMEOUT = 5
 """Timeout in seconds for a Redis network operation (including connecting)."""
 
-UPLOAD_BUFFER_SIZE = 64 * 1024
+UPLOAD_BUFFER_SIZE = 128 * 1024
 """Size of the internal buffer for HTTP PUT.
 
 Writes to the signed URL are buffered to avoid too many small writes and
