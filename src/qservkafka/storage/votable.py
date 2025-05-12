@@ -70,51 +70,66 @@ class VOTableEncoder:
             ``PUT`` request.
         """
         yield self._config.envelope.header.encode()
-        binary2 = self._generate_binary2(self._config.column_types, results)
-        encoded = self._base64_encode(binary2)
-        buf = BytesIO()
+        encoded = BytesIO()
+        input_line_length = _BASE64_LINE_LENGTH * 3 // 4
+        output_lines = UPLOAD_BUFFER_SIZE // (_BASE64_LINE_LENGTH + 1)
+        threshold = input_line_length * output_lines
         try:
-            async for output in encoded:
-                buf.write(output)
-                if buf.tell() >= UPLOAD_BUFFER_SIZE:
-                    buf.truncate()
-                    yield buf.getvalue()
-                    buf.seek(0)
-            if buf.tell() > 0:
-                buf.truncate()
-                yield buf.getbuffer()
+            async for row in results:
+                encoded.write(self._encode_row(self._config.column_types, row))
+                self._total_rows += 1
+                if self._total_rows % 100000 == 0:
+                    self._logger.debug(f"Processed {self._total_rows} rows")
+                if encoded.tell() >= threshold:
+                    encoded.truncate()
+                    yield self._base64_encode_bytes(encoded)
+            encoded.truncate()
+            yield self._base64_encode_bytes(encoded, last=True)
         finally:
-            await encoded.aclose()
+            await results.aclose()
         yield self._config.envelope.footer.encode()
 
-    async def _base64_encode(
-        self, data: AsyncGenerator[bytes]
-    ) -> AsyncGenerator[bytes]:
-        """Encode a stream in base64.
+    def _base64_encode_bytes(
+        self, binary: BytesIO, *, last: bool = False
+    ) -> bytes:
+        """Encode the provided `io.BytesIO` object into base64.
+
+        Break up the base64 encoding with newlines to match the output of our
+        modified version of the CADC TAP server, just in case that helps some
+        clients that might not want to deal with long lines.
 
         Parameters
         ----------
-        data
-            An async generator producing the data to be encoded.
+        binary
+            Buffer object containing BINARY2-encoded rows without base64
+            encoding.
+        last
+            If `True`, this is the end of the data, so the last portion of
+            the buffer should be encoded into a partial line rather than
+            preserved.
 
-        Yields
-        ------
+        Returns
+        -------
         bytes
-            A blob of base64-encoded data.
+            Base64-encoded chunk.
         """
         input_line_length = _BASE64_LINE_LENGTH * 3 // 4
-        buf = bytearray()
-        try:
-            async for blob in data:
-                buf += blob
-                while len(buf) >= input_line_length:
-                    view = memoryview(buf)
-                    yield b2a_base64(view[:input_line_length])
-                    view.release()
-                    buf = buf[input_line_length:]
-            yield b2a_base64(buf)
-        finally:
-            await data.aclose()
+        available = binary.tell()
+        view = binary.getbuffer()
+        offset = 0
+        output = bytearray()
+        while available > offset + input_line_length:
+            output += b2a_base64(view[offset : offset + input_line_length])
+            offset += input_line_length
+        if last:
+            output += b2a_base64(view[offset:])
+            view.release()
+        else:
+            leftover = view[offset:].tobytes()
+            view.release()
+            binary.seek(0)
+            binary.write(leftover)
+        return output
 
     def _encode_char_column(
         self, column: JobResultColumnType, value_raw: Any
@@ -186,39 +201,6 @@ class VOTableEncoder:
             else:
                 output += datatype.pack(value)
         return nulls.tobytes() + output
-
-    async def _generate_binary2(
-        self,
-        types: list[JobResultColumnType],
-        results: AsyncGenerator[Row[Any] | tuple[Any]],
-    ) -> AsyncGenerator[bytes]:
-        """Generate the binary output that goes into BINARY2 encoding.
-
-        This output needs to be base64-encoded and then wrapped in the XML
-        envelope to make a valid VOTable.
-
-        Parameters
-        ----------
-        types
-            Column types. This must exactly match the structure of each row
-            yielded by the ``results`` parameter. This is not checked.
-        results
-            Async generator that yields one result row at a time.
-
-        Yields
-        ------
-        bytes
-            A blob of binary data that needs to be base64-encoded.
-        """
-        try:
-            async for row in results:
-                encoded = self._encode_row(types, row)
-                yield encoded
-                self._total_rows += 1
-                if self._total_rows % 100000 == 0:
-                    self._logger.debug(f"Processed {self._total_rows} rows")
-        finally:
-            await results.aclose()
 
 
 class VOTableWriter:
