@@ -108,7 +108,7 @@ class VOTableEncoder:
         try:
             async for blob in data:
                 buf += blob
-                if len(buf) >= input_line_length:
+                while len(buf) >= input_line_length:
                     view = memoryview(buf)
                     yield b2a_base64(view[:input_line_length])
                     view.release()
