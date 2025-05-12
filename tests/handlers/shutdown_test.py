@@ -156,7 +156,7 @@ async def test_shutdown(
     async with LifespanManager(app):
         await kafka_broker.publish(job_json, config.job_run_topic)
         await asyncio.sleep(0.1)
-        await kafka_status_consumer.getone()
+        await kafka_status_consumer.getmany()
 
         await mock_qserv.store_results(job)
         async_status = mock_qserv.get_status(1)

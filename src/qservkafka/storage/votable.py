@@ -5,6 +5,7 @@ from __future__ import annotations
 import struct
 from binascii import b2a_base64
 from collections.abc import AsyncGenerator
+from io import BytesIO
 from typing import Any
 from urllib.parse import urlparse
 
@@ -15,6 +16,7 @@ from sqlalchemy import Row
 from structlog.stdlib import BoundLogger
 
 from ..config import config
+from ..constants import UPLOAD_BUFFER_SIZE
 from ..exceptions import UploadWebError
 from ..models.kafka import JobResultColumnType, JobResultConfig
 from ..models.votable import VOTablePrimitive
@@ -70,9 +72,18 @@ class VOTableEncoder:
         yield self._config.envelope.header.encode()
         binary2 = self._generate_binary2(self._config.column_types, results)
         encoded = self._base64_encode(binary2)
+        buf = BytesIO()
+        length = 0
         try:
             async for output in encoded:
-                yield output
+                buf.write(output)
+                length += len(output)
+                if length >= UPLOAD_BUFFER_SIZE:
+                    yield buf.getbuffer()
+                    buf = BytesIO()
+                    length = 0
+            if length:
+                yield buf.getbuffer()
         finally:
             await encoded.aclose()
         yield self._config.envelope.footer.encode()
@@ -97,7 +108,7 @@ class VOTableEncoder:
         try:
             async for blob in data:
                 buf += blob
-                if len(buf) >= input_line_length:
+                while len(buf) >= input_line_length:
                     view = memoryview(buf)
                     yield b2a_base64(view[:input_line_length])
                     view.release()
@@ -205,7 +216,7 @@ class VOTableEncoder:
                 encoded = self._encode_row(types, row)
                 yield encoded
                 self._total_rows += 1
-                if self._total_rows % 10000 == 0:
+                if self._total_rows % 100000 == 0:
                     self._logger.debug(f"Processed {self._total_rows} rows")
         finally:
             await results.aclose()
