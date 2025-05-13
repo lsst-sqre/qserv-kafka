@@ -17,9 +17,12 @@ set -euo pipefail
 # Display each command as it's run.
 set -x
 
-# Tell apt-get we're never going to be able to give manual
-# feedback:
+# Tell apt-get we're never going to be able to give manual feedback.
 export DEBIAN_FRONTEND=noninteractive
+
+# Refresh lists. This is normally not necessary since it's done by
+# install-base-packages.sh, but that step might be skipped due to caching.
+apt-get update
 
 # build-essential is sometimes required by Python dependencies that build C
 # modules. git is required during package installation for setuptools_scm.
