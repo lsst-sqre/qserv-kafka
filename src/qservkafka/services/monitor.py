@@ -5,6 +5,7 @@ from __future__ import annotations
 from safir.arq import ArqQueue
 from structlog.stdlib import BoundLogger
 
+from ..events import Events
 from ..models.qserv import AsyncQueryPhase
 from ..storage.qserv import QservClient
 from ..storage.state import QueryStateStore
@@ -26,6 +27,8 @@ class QueryMonitor:
         Queue to which to dispatch result processing requests.
     state_store
         Storage for query state.
+    events
+        Metrics events publishers.
     logger
         Logger to use.
     """
@@ -37,12 +40,14 @@ class QueryMonitor:
         qserv_client: QservClient,
         arq_queue: ArqQueue,
         state_store: QueryStateStore,
+        events: Events,
         logger: BoundLogger,
     ) -> None:
         self._results = result_processor
         self._qserv = qserv_client
         self._arq = arq_queue
         self._state = state_store
+        self._events = events
         self._logger = logger
 
     async def check_status(self) -> None:
@@ -77,7 +82,7 @@ class QueryMonitor:
                     continue
                 update = self._results.build_executing_status(job, status)
                 await self._results.publish_status(update)
-                await self._state.store_query(query_id, job, status)
+                await self._state.update_status(query_id, status)
             else:
                 await self._arq.enqueue("handle_finished_query", query_id)
                 await self._state.mark_queued_query(query_id)

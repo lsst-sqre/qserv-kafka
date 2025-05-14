@@ -19,7 +19,7 @@ from ..config import config
 from ..constants import UPLOAD_BUFFER_SIZE
 from ..exceptions import UploadWebError
 from ..models.kafka import JobResultColumnType, JobResultConfig
-from ..models.votable import VOTablePrimitive
+from ..models.votable import EncodedSize, VOTablePrimitive
 
 _BASE64_LINE_LENGTH = 64
 """Maximum length of a base64-encoded line in BINARY2 output."""
@@ -47,11 +47,17 @@ class VOTableEncoder:
         self._config = config
         self._logger = logger
         self._total_rows: int = 0
+        self._total_size: int = 0
 
     @property
     def total_rows(self) -> int:
         """Total number of rows encoded."""
         return self._total_rows
+
+    @property
+    def total_size(self) -> int:
+        """Total size of the output VOTable, including header and footer."""
+        return self._total_size
 
     async def encode(
         self, results: AsyncGenerator[Row[Any] | tuple[Any]]
@@ -69,15 +75,19 @@ class VOTableEncoder:
             Encoded data suitable for writing to a file or sending via an HTTP
             ``PUT`` request.
         """
-        yield self._config.envelope.header.encode()
+        header = self._config.envelope.header.encode()
+        self._total_size += len(header)
+        yield header
         encoded = BytesIO()
         input_line_length = _BASE64_LINE_LENGTH * 3 // 4
         output_lines = UPLOAD_BUFFER_SIZE // (_BASE64_LINE_LENGTH + 1)
         threshold = input_line_length * output_lines
         try:
             async for row in results:
-                encoded.write(self._encode_row(self._config.column_types, row))
+                encoded_row = self._encode_row(self._config.column_types, row)
                 self._total_rows += 1
+                self._total_size += len(encoded_row)
+                encoded.write(encoded_row)
                 if self._total_rows % 100000 == 0:
                     self._logger.debug(f"Processed {self._total_rows} rows")
                 if encoded.tell() >= threshold:
@@ -87,7 +97,9 @@ class VOTableEncoder:
             yield self._base64_encode_bytes(encoded, last=True)
         finally:
             await results.aclose()
-        yield self._config.envelope.footer.encode()
+        footer = self._config.envelope.footer.encode()
+        self._total_size += len(footer)
+        yield footer
 
     def _base64_encode_bytes(
         self, binary: BytesIO, *, last: bool = False
@@ -231,7 +243,7 @@ class VOTableWriter:
         url: str | HttpUrl,
         config: JobResultConfig,
         results: AsyncGenerator[Row[Any]],
-    ) -> int:
+    ) -> EncodedSize:
         """Store the encoded VOTable via an HTTP PUT.
 
         Parameters
@@ -247,8 +259,8 @@ class VOTableWriter:
 
         Returns
         -------
-        int
-            Total number of rows encoded.
+        EncodedSize
+            Size of the output VOTable.
 
         Raises
         ------
@@ -269,4 +281,4 @@ class VOTableWriter:
             raise UploadWebError.from_exception(e) from e
         finally:
             await generator.aclose()
-        return encoder.total_rows
+        return EncodedSize(rows=encoder.total_rows, bytes=encoder.total_size)

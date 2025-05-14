@@ -40,6 +40,7 @@ async def startup(ctx: dict[Any, Any]) -> None:
     ctx["context"] = context
     ctx["session"] = session
     ctx["factory"] = factory
+    ctx["logger"] = logger
 
 
 async def shutdown(ctx: dict[Any, Any]) -> None:
