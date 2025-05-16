@@ -90,7 +90,7 @@ class ResultProcessor:
         self._logger.debug(
             "Query is executing",
             job_id=job.job_id,
-            qserv_id=status.query_id,
+            qserv_id=str(status.query_id),
             username=job.owner,
         )
         return JobStatus(
@@ -134,7 +134,7 @@ class ResultProcessor:
             Job status to report to Kafka.
         """
         logger = self._logger.bind(
-            job_id=job.job_id, qserv_id=query_id, username=job.owner
+            job_id=job.job_id, qserv_id=str(query_id), username=job.owner
         )
         try:
             status = await self._qserv.get_query_status(query_id)
@@ -154,7 +154,12 @@ class ResultProcessor:
             case AsyncQueryPhase.ABORTED:
                 result = await self._build_aborted_status(job, status, start)
             case AsyncQueryPhase.EXECUTING:
-                await self._state.update_status(query_id, status)
+                if initial:
+                    await self._state.store_query(
+                        query_id, job, status, start=start
+                    )
+                else:
+                    await self._state.update_status(query_id, status)
                 return self.build_executing_status(job, status)
             case AsyncQueryPhase.COMPLETED:
                 result = await self._build_completed_status(
@@ -203,7 +208,7 @@ class ResultProcessor:
         self._logger.info(
             "Job aborted",
             job_id=job.job_id,
-            qserv_id=status.query_id,
+            qserv_id=str(status.query_id),
             username=job.owner,
         )
         timestamp = status.last_update or datetime.now(tz=UTC)
@@ -251,7 +256,7 @@ class ResultProcessor:
         """
         query_id = status.query_id
         logger = self._logger.bind(
-            job_id=job.job_id, qserv_id=query_id, username=job.owner
+            job_id=job.job_id, qserv_id=str(query_id), username=job.owner
         )
         logger.debug("Processing job completion")
 
@@ -335,7 +340,7 @@ class ResultProcessor:
             Status for the query.
         """
         logger = self._logger.bind(
-            job_id=job.job_id, qserv_id=query_id, username=job.owner
+            job_id=job.job_id, qserv_id=str(query_id), username=job.owner
         )
         now = datetime.now(tz=UTC)
         elapsed = now - start
@@ -405,7 +410,7 @@ class ResultProcessor:
         self._logger.warning(
             "Backend reported query failure",
             job_id=job.job_id,
-            qserv_id=status.query_id,
+            qserv_id=str(status.query_id),
             username=job.owner,
             query=metadata.model_dump(mode="json", exclude_none=True),
             status=status.model_dump(mode="json", exclude_none=True),

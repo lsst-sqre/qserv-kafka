@@ -41,7 +41,7 @@ async def handle_finished_query(ctx: dict[Any, Any], query_id: int) -> None:
         logger.warning(
             "Apparently completed job still executing",
             job_id=query.job.job_id,
-            qserv_id=query_id,
+            qserv_id=str(query_id),
             username=query.job.owner,
             status=status.model_dump(mode="json", exclude_none=True),
         )

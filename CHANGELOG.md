@@ -7,6 +7,21 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-0.3.0'></a>
+## 0.3.0 (2025-05-16)
+
+### New features
+
+- Add metrics events on query success, failure, and abort. Include elapsed time for Qserv, result processing, and the entire query, row count, encoded size, and processing rates by result size for the whole query and just result processing.
+
+### Bug fixes
+
+- Log the Qserv query ID as a string, since one apparently cannot search for numbers in Google's Log Explorer.
+
+### Other changes
+
+- Improve debug logging to include more metadata and provide more specifics when starting a new query.
+
 <a id='changelog-0.2.0'></a>
 ## 0.2.0 (2025-05-12)
 
