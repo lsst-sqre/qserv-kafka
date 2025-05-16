@@ -115,8 +115,11 @@ class QueryService:
         JobStatus
             Initial status of the job.
         """
-        logger = self._logger.bind(job_id=job.job_id, username=job.owner)
         metadata = job.to_job_metadata()
+        query_for_logging = metadata.model_dump(mode="json", exclude_none=True)
+        logger = self._logger.bind(
+            job_id=job.job_id, username=job.owner, query=query_for_logging
+        )
         start = datetime.now(tz=UTC)
 
         # Check that the job request is supported.
@@ -131,15 +134,11 @@ class QueryService:
                 return self._build_invalid_request_status(job, msg)
 
         # Start the query.
-        logger.info(
-            "Starting query",
-            query=metadata.model_dump(mode="json", exclude_none=True),
-        )
         query_id = None
         try:
             query_id = await self._qserv.submit_query(job)
         except QservApiError as e:
-            logger.exception("Unable to start job", error=str(e))
+            logger.exception("Unable to start query", error=str(e))
             return JobStatus(
                 job_id=job.job_id,
                 execution_id=str(query_id) if query_id else None,
@@ -148,6 +147,7 @@ class QueryService:
                 error=e.to_job_error(),
                 metadata=metadata,
             )
+        logger.info("Started query", qserv_id=query_id)
 
         # Analyze the initial status and return it.
         await self._state.store_query(query_id, job, status=None, start=start)
