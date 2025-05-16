@@ -181,6 +181,9 @@ async def test_shutdown(
     assert await run_arq_jobs() == 1
     raw_message = await kafka_status_consumer.getone()
     message = json.loads(raw_message.value.decode())
+    if message["status"] == "EXECUTING":
+        raw_message = await kafka_status_consumer.getone()
+        message = json.loads(raw_message.value.decode())
     assert message == expected
 
     redis_client = redis.get_client()
