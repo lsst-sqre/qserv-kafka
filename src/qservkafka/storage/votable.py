@@ -46,8 +46,15 @@ class VOTableEncoder:
     def __init__(self, config: JobResultConfig, logger: BoundLogger) -> None:
         self._config = config
         self._logger = logger
+
+        self._encoded_size: int = 0
         self._total_rows: int = 0
-        self._total_size: int = 0
+        self._wrapper_size: int = 0
+
+    @property
+    def encoded_size(self) -> int:
+        """Size of the encoded data without the VOTable wrapper."""
+        return self._encoded_size
 
     @property
     def total_rows(self) -> int:
@@ -57,7 +64,7 @@ class VOTableEncoder:
     @property
     def total_size(self) -> int:
         """Total size of the output VOTable, including header and footer."""
-        return self._total_size
+        return self._encoded_size + self._wrapper_size
 
     async def encode(
         self, results: AsyncGenerator[Row[Any] | tuple[Any]]
@@ -76,7 +83,7 @@ class VOTableEncoder:
             ``PUT`` request.
         """
         header = self._config.envelope.header.encode()
-        self._total_size += len(header)
+        self._wrapper_size += len(header)
         yield header
         encoded = BytesIO()
         input_line_length = _BASE64_LINE_LENGTH * 3 // 4
@@ -86,7 +93,7 @@ class VOTableEncoder:
             async for row in results:
                 encoded_row = self._encode_row(self._config.column_types, row)
                 self._total_rows += 1
-                self._total_size += len(encoded_row)
+                self._encoded_size += len(encoded_row)
                 encoded.write(encoded_row)
                 if self._total_rows % 100000 == 0:
                     self._logger.debug(f"Processed {self._total_rows} rows")
@@ -98,7 +105,7 @@ class VOTableEncoder:
         finally:
             await results.aclose()
         footer = self._config.envelope.footer.encode()
-        self._total_size += len(footer)
+        self._wrapper_size += len(footer)
         yield footer
 
     def _base64_encode_bytes(
@@ -281,4 +288,8 @@ class VOTableWriter:
             raise UploadWebError.from_exception(e) from e
         finally:
             await generator.aclose()
-        return EncodedSize(rows=encoder.total_rows, bytes=encoder.total_size)
+        return EncodedSize(
+            rows=encoder.total_rows,
+            data_bytes=encoder.encoded_size,
+            total_bytes=encoder.total_size,
+        )

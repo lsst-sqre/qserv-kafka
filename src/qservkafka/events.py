@@ -57,19 +57,27 @@ class QuerySuccessEvent(BaseQueryEvent):
     )
 
     encoded_size: int = Field(
-        ..., title="Result size", description="Encoded result size in bytes"
+        ...,
+        title="Encoded data size",
+        description="Encoded data size in bytes",
+    )
+
+    result_size: int = Field(
+        ...,
+        title="Result size",
+        description="Total size of result VOTable including XML wrapper",
     )
 
     rate: float = Field(
         ...,
         title="Query rate",
-        description="Encoded output bytes per second for the whole query",
+        description="Encoded data bytes per second for the whole query",
     )
 
     result_rate: float = Field(
         ...,
         title="Processing rate",
-        description="Encoded output bytes per second for result processing",
+        description="Encoded data bytes per second for result processing",
     )
 
     immediate: bool = Field(

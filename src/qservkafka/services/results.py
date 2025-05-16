@@ -278,16 +278,18 @@ class ResultProcessor:
             qserv_elapsed=qserv_end - status.query_begin,
             result_elapsed=now - result_start,
             rows=size.rows,
-            encoded_size=size.bytes,
-            rate=size.bytes / (now - start).total_seconds(),
-            result_rate=size.bytes / (now - result_start).total_seconds(),
+            encoded_size=size.data_bytes,
+            result_size=size.total_bytes,
+            rate=size.data_bytes / (now - start).total_seconds(),
+            result_rate=size.data_bytes / (now - result_start).total_seconds(),
             immediate=initial,
         )
         await self._events.query_success.publish(event)
         logger.info(
             "Job complete and results uploaded",
             rows=size.rows,
-            size=size.bytes,
+            data_size=size.data_bytes,
+            total_size=size.total_bytes,
             elapsed=(now - result_start).total_seconds(),
         )
 

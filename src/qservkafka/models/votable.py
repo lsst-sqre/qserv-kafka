@@ -25,8 +25,11 @@ class EncodedSize:
     rows: int
     """Number of rows in the table."""
 
-    bytes: int
-    """Total size of the table in bytes, including the header and footer."""
+    data_bytes: int
+    """Size of the encoded data in bytes, not including the XML wrapper."""
+
+    total_bytes: int
+    """Total size of the result in bytes, including the XML wrapper."""
 
 
 class VOTableSize(BaseModel):
