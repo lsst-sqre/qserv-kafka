@@ -4,16 +4,32 @@ from __future__ import annotations
 
 import math
 import struct
+from dataclasses import dataclass
 from enum import Enum
 from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, Field, PlainSerializer, PlainValidator
 
 __all__ = [
+    "EncodedSize",
     "VOTableArraySize",
     "VOTablePrimitive",
     "VOTableSize",
 ]
+
+
+@dataclass
+class EncodedSize:
+    """Size of the result VOTable."""
+
+    rows: int
+    """Number of rows in the table."""
+
+    data_bytes: int
+    """Size of the encoded data in bytes, not including the XML wrapper."""
+
+    total_bytes: int
+    """Total size of the result in bytes, including the XML wrapper."""
 
 
 class VOTableSize(BaseModel):

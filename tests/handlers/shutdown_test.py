@@ -155,10 +155,11 @@ async def test_shutdown(
     app = create_app()
     async with LifespanManager(app):
         await kafka_broker.publish(job_json, config.job_run_topic)
+        await mock_qserv.store_results(job)
+
         await asyncio.sleep(0.1)
         await kafka_status_consumer.getmany()
 
-        await mock_qserv.store_results(job)
         async_status = mock_qserv.get_status(1)
         now = datetime.now(tz=UTC)
         await mock_qserv.update_status(
@@ -180,6 +181,9 @@ async def test_shutdown(
     assert await run_arq_jobs() == 1
     raw_message = await kafka_status_consumer.getone()
     message = json.loads(raw_message.value.decode())
+    if message["status"] == "EXECUTING":
+        raw_message = await kafka_status_consumer.getone()
+        message = json.loads(raw_message.value.decode())
     assert message == expected
 
     redis_client = redis.get_client()

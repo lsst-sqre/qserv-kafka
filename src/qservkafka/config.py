@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from safir.arq import ArqMode, build_arq_redis_settings
 from safir.kafka import KafkaConnectionSettings
 from safir.logging import LogLevel, Profile
+from safir.metrics import MetricsConfiguration, metrics_configuration_factory
 from safir.pydantic import EnvRedisDsn, HumanTimedelta
 
 __all__ = ["Config", "config"]
@@ -55,6 +56,11 @@ class Config(BaseSettings):
 
     max_worker_jobs: int = Field(
         5, title="Simultaneous result worker jobs per pod"
+    )
+
+    metrics: MetricsConfiguration = Field(
+        default_factory=metrics_configuration_factory,
+        title="Metrics configuration",
     )
 
     name: str = Field("qserv-kafka", title="Name of application")

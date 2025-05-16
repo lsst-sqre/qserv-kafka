@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
+from ..events import Events
 from ..exceptions import QservApiError
 from ..models.kafka import (
     JobCancel,
@@ -35,6 +36,8 @@ class QueryService:
         Storage for query state.
     result_processor
         Service to process completed queries.
+    events
+        Metrics events publishers.
     logger
         Logger to use.
     """
@@ -45,11 +48,13 @@ class QueryService:
         qserv_client: QservClient,
         state_store: QueryStateStore,
         result_processor: ResultProcessor,
+        events: Events,
         logger: BoundLogger,
     ) -> None:
         self._qserv = qserv_client
         self._state = state_store
         self._results = result_processor
+        self._events = events
         self._logger = logger
 
     async def cancel_query(self, message: JobCancel) -> JobStatus | None:
@@ -91,7 +96,11 @@ class QueryService:
             return None
 
         # Return an appropriate status update for the job's current status.
-        return await self._results.build_query_status(query_id, query.job)
+        return await self._results.build_query_status(
+            query_id,
+            query.job,
+            query.start or datetime.now(tz=UTC),
+        )
 
     async def start_query(self, job: JobRun) -> JobStatus:
         """Start a new query and return its initial status.
@@ -106,8 +115,12 @@ class QueryService:
         JobStatus
             Initial status of the job.
         """
-        logger = self._logger.bind(job_id=job.job_id, username=job.owner)
         metadata = job.to_job_metadata()
+        query_for_logging = metadata.model_dump(mode="json", exclude_none=True)
+        logger = self._logger.bind(
+            job_id=job.job_id, username=job.owner, query=query_for_logging
+        )
+        start = datetime.now(tz=UTC)
 
         # Check that the job request is supported.
         serialization = job.result_format.format.serialization
@@ -121,15 +134,11 @@ class QueryService:
                 return self._build_invalid_request_status(job, msg)
 
         # Start the query.
-        logger.info(
-            "Starting query",
-            query=metadata.model_dump(mode="json", exclude_none=True),
-        )
         query_id = None
         try:
             query_id = await self._qserv.submit_query(job)
         except QservApiError as e:
-            logger.exception("Unable to start job", error=str(e))
+            logger.exception("Unable to start query", error=str(e))
             return JobStatus(
                 job_id=job.job_id,
                 execution_id=str(query_id) if query_id else None,
@@ -138,9 +147,13 @@ class QueryService:
                 error=e.to_job_error(),
                 metadata=metadata,
             )
+        logger.info("Started query", qserv_id=query_id)
 
         # Analyze the initial status and return it.
-        return await self._results.build_query_status(query_id, job)
+        await self._state.store_query(query_id, job, status=None, start=start)
+        return await self._results.build_query_status(
+            query_id, job, start, initial=True
+        )
 
     def _build_invalid_request_status(
         self, job: JobRun, error: str

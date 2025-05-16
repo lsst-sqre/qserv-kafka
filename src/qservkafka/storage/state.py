@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from safir.redis import PydanticRedisStorage
 from structlog.stdlib import BoundLogger
 
@@ -71,7 +73,16 @@ class QueryStateStore:
         job or None
             Original job request, or `None` if no such job was found.
         """
-        return await self._storage.get(str(query_id))
+        query = await self._storage.get(str(query_id))
+
+        # Temporary code to fix up existing job records that have no start
+        # time. This can be deleted in the 0.4.0 release or later.
+        if query and not query.start:
+            query.start = datetime.now(tz=UTC)
+            lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
+            await self._storage.store(str(query_id), query, lifetime)
+
+        return query
 
     async def mark_queued_query(self, query_id: int) -> None:
         """Mark a query as queued.
@@ -91,8 +102,9 @@ class QueryStateStore:
         self,
         query_id: int,
         job: JobRun,
-        status: AsyncQueryStatus,
+        status: AsyncQueryStatus | None,
         *,
+        start: datetime,
         result_queued: bool = False,
     ) -> None:
         """Add or update a record for an in-progress query.
@@ -105,20 +117,36 @@ class QueryStateStore:
             Original job request.
         status
             Query status.
+        start
+            When the query was received.
         result_queued
             Whether this query has been dispatched to arq for result
             processing.
         """
+        query = Query(
+            query_id=query_id,
+            job=job,
+            status=status,
+            start=start,
+            result_queued=result_queued,
+        )
+        lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
+        await self._storage.store(str(query_id), query, lifetime)
+
+    async def update_status(
+        self, query_id: int, status: AsyncQueryStatus
+    ) -> None:
+        """Update the status of a query.
+
+        Parameters
+        ----------
+        query_id
+            Qserv query ID.
+        status
+            Qserv query status.
+        """
         query = await self.get_query(query_id)
         if query:
             query.status = status
-            query.result_queued = result_queued
-        else:
-            query = Query(
-                query_id=query_id,
-                job=job,
-                status=status,
-                result_queued=result_queued,
-            )
-        lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
-        await self._storage.store(str(query_id), query, lifetime)
+            lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
+            await self._storage.store(str(query_id), query, lifetime)

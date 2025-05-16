@@ -13,6 +13,7 @@ from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
 from safir.arq import ArqMode, ArqQueue, MockArqQueue, RedisArqQueue
 from safir.database import create_database_engine
+from safir.metrics import EventManager
 from safir.redis import PydanticRedisStorage
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
 from structlog import get_logger
@@ -27,6 +28,7 @@ from .constants import (
     REDIS_RETRIES,
     REDIS_TIMEOUT,
 )
+from .events import Events
 from .models.state import Query
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
@@ -55,6 +57,12 @@ class ProcessContext:
 
     kafka_broker: KafkaBroker
     """Kafka broker to use for publishing messages from background jobs."""
+
+    event_manager: EventManager
+    """Manager for publishing metrics events."""
+
+    events: Events
+    """Event publishers for metrics events."""
 
     redis: Redis
     """Connection pool for state-tracking Redis."""
@@ -121,15 +129,6 @@ class ProcessContext:
         )
         state_store = QueryStateStore(redis_storage, logger)
 
-        # Create a Kafka broker used for background tasks. This needs to be a
-        # separate broker from the one used by handlers, since the one used by
-        # handlers will be shut down when SIGTERM is retrieved, thus
-        # preventing the Qserv Kafka bridge from completing any result
-        # processing that is still running.
-        if not kafka_broker:
-            kafka_broker = KafkaBroker(**config.kafka.to_faststream_params())
-        await kafka_broker.connect()
-
         # Create the database engine.
         engine = create_database_engine(
             str(config.qserv_database_url),
@@ -139,11 +138,28 @@ class ProcessContext:
             pool_size=config.qserv_database_pool_size,
         )
 
+        # Create a Kafka broker used for background tasks. This needs to be a
+        # separate broker from the one used by handlers, since the one used by
+        # handlers will be shut down when SIGTERM is retrieved, thus
+        # preventing the Qserv Kafka bridge from completing any result
+        # processing that is still running.
+        if not kafka_broker:
+            kafka_broker = KafkaBroker(**config.kafka.to_faststream_params())
+        await kafka_broker.connect()
+
+        # Create an event manager for posting metrics events.
+        event_manager = config.metrics.make_manager()
+        await event_manager.initialize()
+        events = Events()
+        await events.initialize(event_manager)
+
         # Return the newly-constructed context.
         return cls(
             http_client=http_client,
             engine=engine,
             kafka_broker=kafka_broker,
+            event_manager=event_manager,
+            events=events,
             redis=redis_client,
             state=state_store,
         )
@@ -154,6 +170,7 @@ class ProcessContext:
         Called during shutdown, or before recreating the process context using
         a different configuration.
         """
+        await self.event_manager.aclose()
         await self.kafka_broker.close()
         await self.redis.aclose()
         await self.engine.dispose()
@@ -223,6 +240,7 @@ class Factory:
             qserv_client=self.create_qserv_client(),
             arq_queue=arq_queue,
             state_store=self.query_state_store,
+            events=self._context.events,
             logger=self._logger,
         )
 
@@ -243,6 +261,7 @@ class Factory:
             qserv_client=self.create_qserv_client(),
             state_store=self.query_state_store,
             result_processor=self.create_result_processor(),
+            events=self._context.events,
             logger=self._logger,
         )
 
@@ -261,5 +280,6 @@ class Factory:
                 self._context.http_client, self._logger
             ),
             kafka_broker=self._context.kafka_broker,
+            events=self._context.events,
             logger=self._logger,
         )
