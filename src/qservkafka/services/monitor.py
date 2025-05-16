@@ -62,7 +62,7 @@ class QueryMonitor:
                 continue
             job = query.job
             logger = self._logger.bind(
-                job_id=job.job_id, qserv_id=query_id, username=job.owner
+                job_id=job.job_id, qserv_id=str(query_id), username=job.owner
             )
             if query.result_queued:
                 logger.debug("Skipping already queued query")

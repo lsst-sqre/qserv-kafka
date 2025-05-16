@@ -79,7 +79,7 @@ class QueryService:
         except Exception:
             logger.exception("Invalid exectionID in cancel message")
             return None
-        logger = logger.bind(qserv_id=query_id)
+        logger = logger.bind(qserv_id=str(query_id))
         query = await self._state.get_query(query_id)
         if not query:
             logger.warning("Cannot cancel unknown or completed job")
@@ -147,7 +147,7 @@ class QueryService:
                 error=e.to_job_error(),
                 metadata=metadata,
             )
-        logger.info("Started query", qserv_id=query_id)
+        logger.info("Started query", qserv_id=str(query_id))
 
         # Analyze the initial status and return it.
         return await self._results.build_query_status(
