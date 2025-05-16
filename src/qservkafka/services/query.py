@@ -150,7 +150,6 @@ class QueryService:
         logger.info("Started query", qserv_id=query_id)
 
         # Analyze the initial status and return it.
-        await self._state.store_query(query_id, job, status=None, start=start)
         return await self._results.build_query_status(
             query_id, job, start, initial=True
         )

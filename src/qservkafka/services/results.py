@@ -154,7 +154,12 @@ class ResultProcessor:
             case AsyncQueryPhase.ABORTED:
                 result = await self._build_aborted_status(job, status, start)
             case AsyncQueryPhase.EXECUTING:
-                await self._state.update_status(query_id, status)
+                if initial:
+                    await self._state.store_query(
+                        query_id, job, status, start=start
+                    )
+                else:
+                    await self._state.update_status(query_id, status)
                 return self.build_executing_status(job, status)
             case AsyncQueryPhase.COMPLETED:
                 result = await self._build_completed_status(
