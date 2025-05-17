@@ -124,17 +124,17 @@ class QservClient:
             Raised if there was some error retrieving results.
         """
         stmt = text(_QUERY_RESULTS_SQL_FORMAT.format(query_id))
-        async with self._session.begin():
-            results = None
-            try:
+        results = None
+        try:
+            async with self._session.begin():
                 results = await self._session.stream(stmt)
                 async for result in results:
                     yield result
-            except SQLAlchemyError as e:
-                raise QservApiSqlError.from_exception(e) from e
-            finally:
-                if results:
-                    await results.close()
+        except SQLAlchemyError as e:
+            raise QservApiSqlError.from_exception(e) from e
+        finally:
+            if results:
+                await results.close()
 
     async def get_query_status(self, query_id: int) -> AsyncQueryStatus:
         """Query for the status of an async job.
@@ -166,8 +166,8 @@ class QservClient:
         QservApiSqlError
             Raised if there was some error retrieving status.
         """
-        async with self._session.begin():
-            try:
+        try:
+            async with self._session.begin():
                 result = await self._session.stream(text(_QUERY_LIST_SQL))
                 processes = {}
                 async for row in result:
@@ -181,8 +181,8 @@ class QservClient:
                         query_begin=datetime_from_db(row.submitted),
                         last_update=datetime_from_db(row.updated),
                     )
-            except SQLAlchemyError as e:
-                raise QservApiSqlError.from_exception(e) from e
+        except SQLAlchemyError as e:
+            raise QservApiSqlError.from_exception(e) from e
         self._logger.debug("Listed running queries", count=len(processes))
         return processes
 
