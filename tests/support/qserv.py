@@ -95,13 +95,15 @@ class MockQserv:
         self._session = session
         self._respx_mock = respx_mock
 
-        self._expected_job: JobRun
-        self._immediate_success: JobRun | None = None
-        self._next_query_id = 1
-        self._override_status: Response | None = None
-        self._override_submit: Response | None = None
-        self._queries: dict[int, AsyncQueryStatus] = {}
-        self._upload_delay: timedelta | None = None
+        self._expected_job: JobRun | None
+        self._immediate_success: JobRun | None
+        self._next_query_id: int
+        self._override_status: Response | None
+        self._override_submit: Response | None
+        self._queries: dict[int, AsyncQueryStatus]
+        self._results_stored: bool
+        self._upload_delay: timedelta | None
+        self.reset()
 
     @classmethod
     async def initialize(
@@ -128,6 +130,17 @@ class MockQserv:
             Current stored status for that query ID.
         """
         return self._queries[query_id]
+
+    def reset(self) -> None:
+        """Reset the mock to its initial state."""
+        self._expected_job = None
+        self._immediate_success = None
+        self._next_query_id = 1
+        self._override_status = None
+        self._override_submit = None
+        self._queries = {}
+        self._results_stored = False
+        self._upload_delay = None
 
     def set_immediate_success(self, job: JobRun | None) -> None:
         """Configure whether to mark the job completed immediately.
@@ -242,7 +255,8 @@ class MockQserv:
 
         After this is called, an attempt to retrieve results and upload them
         should work and the uploaded VOTable will be checked against the
-        properties of the job.
+        properties of the job. Any calls to this method after the first will
+        not repeat the MySQL work, but will change the mock and expected job.
 
         Parameters
         ----------
@@ -251,11 +265,13 @@ class MockQserv:
         """
         url = str(job.result_url)
         self._respx_mock.put(url).mock(side_effect=self.upload)
-        data = read_test_json("results/data")
-        async with self._session.begin():
-            for row in data:
-                result = _Result(**row)
-                self._session.add(result)
+        if not self._results_stored:
+            data = read_test_json("results/data")
+            async with self._session.begin():
+                for row in data:
+                    result = _Result(**row)
+                    self._session.add(result)
+            self._results_stored = True
         self._expected_job = job
 
     async def submit(self, request: Request) -> Response:

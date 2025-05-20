@@ -40,7 +40,7 @@ from .storage.votable import VOTableWriter
 __all__ = ["Factory", "ProcessContext"]
 
 
-@dataclass(frozen=True, kw_only=True, slots=True)
+@dataclass(kw_only=True, slots=True)
 class ProcessContext:
     """Per-process application context.
 
