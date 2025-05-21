@@ -319,7 +319,7 @@ async def test_memory(
     respx_mock: respx.Router,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test a job that completes immediately."""
+    """Test for memory leaks in the immediate job processing flow."""
     configure_logging(
         profile=Profile.production, log_level="WARNING", name="qservkafka"
     )
