@@ -20,7 +20,7 @@ classifiers = [
 requires-python = ">=3.13"
 dependencies = [
     "aiojobs>=1.3",
-    "arq>=0.23",
+    "arq>=0.26",
     "asyncmy>=0.2",
     "bitstring>=4.3",
     "fastapi>=0.112.2",
