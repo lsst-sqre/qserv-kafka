@@ -131,7 +131,9 @@ class QueryStateStore:
             result_queued=result_queued,
         )
         lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
-        await self._storage.store(str(query_id), query, lifetime)
+        await self._storage.store(
+            str(query_id), query, lifetime, exclude_defaults=True
+        )
 
     async def update_status(
         self, query_id: int, status: AsyncQueryStatus
