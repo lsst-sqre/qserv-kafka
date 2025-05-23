@@ -5,6 +5,7 @@ from __future__ import annotations
 import struct
 from binascii import b2a_base64
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from io import BytesIO
 from typing import Any
 from urllib.parse import urlparse
@@ -172,7 +173,12 @@ class VOTableEncoder:
         bytes
             Serialized representation of the column.
         """
-        value_str = "" if value_raw is None else str(value_raw)
+        if isinstance(value_raw, datetime):
+            value_str = value_raw.strftime("%Y-%m-%dT%H:%M:%S")
+            if value_raw.microsecond:
+                value_str += f".{value_raw.microsecond // 1000:03d}"
+        else:
+            value_str = "" if value_raw is None else str(value_raw)
         if value_str and column.requires_url_rewrite:
             try:
                 base_url = urlparse(str(config.rewrite_base_url))
