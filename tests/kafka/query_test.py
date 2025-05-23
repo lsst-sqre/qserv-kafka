@@ -46,6 +46,8 @@ async def test_success(
     monkeypatch.setattr(config, "arq_mode", ArqMode.production)
     monkeypatch.setattr(config, "redis_url", redis_url)
     monkeypatch.setattr(config, "kafka", kafka_connection_settings)
+    monkeypatch.delenv("METRICS_MOCK")
+    monkeypatch.setenv("METRICS_ENALBED", "true")
 
     job = read_test_job_run("jobs/data")
     job_json = read_test_json("jobs/data")

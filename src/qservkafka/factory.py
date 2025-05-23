@@ -6,7 +6,6 @@ import ssl
 from dataclasses import dataclass
 from typing import Self
 
-from aiokafka.admin.client import AIOKafkaAdminClient
 from faststream.kafka import KafkaBroker
 from httpx import AsyncClient, Limits
 from redis.asyncio import BlockingConnectionPool, Redis
@@ -14,7 +13,7 @@ from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
 from safir.arq import ArqMode, ArqQueue, MockArqQueue, RedisArqQueue
 from safir.database import create_database_engine
-from safir.metrics import EventManager, KafkaClients
+from safir.metrics import EventManager
 from safir.redis import PydanticRedisStorage
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
 from structlog import get_logger
@@ -58,9 +57,6 @@ class ProcessContext:
 
     kafka_broker: KafkaBroker
     """Kafka broker to use for publishing messages from background jobs."""
-
-    kafka_admin_client: AIOKafkaAdminClient
-    """Admin client used when publishing metrics events."""
 
     event_manager: EventManager
     """Manager for publishing metrics events."""
@@ -152,12 +148,7 @@ class ProcessContext:
         await kafka_broker.connect()
 
         # Create an event manager for posting metrics events.
-        admin_client = AIOKafkaAdminClient(**config.kafka.to_aiokafka_params())
-        event_manager = config.metrics.make_manager(
-            kafka_clients=KafkaClients(
-                broker=kafka_broker, admin_client=admin_client
-            )
-        )
+        event_manager = config.metrics.make_manager()
         await event_manager.initialize()
         events = Events()
         await events.initialize(event_manager)
@@ -167,7 +158,6 @@ class ProcessContext:
             http_client=http_client,
             engine=engine,
             kafka_broker=kafka_broker,
-            kafka_admin_client=admin_client,
             event_manager=event_manager,
             events=events,
             redis=redis_client,
@@ -182,7 +172,6 @@ class ProcessContext:
         """
         await self.event_manager.aclose()
         await self.kafka_broker.close()
-        await self.kafka_admin_client.close()
         await self.redis.aclose()
         await self.engine.dispose()
         await self.http_client.aclose()
