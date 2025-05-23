@@ -103,6 +103,7 @@ class VOTableEncoder:
             encoded.truncate()
             yield self._base64_encode_bytes(encoded, last=True)
         finally:
+            encoded.close()
             await results.aclose()
         footer = self._config.envelope.footer.encode()
         self._wrapper_size += len(footer)
