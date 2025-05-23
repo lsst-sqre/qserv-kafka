@@ -1222,7 +1222,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.11" },
     { name = "pydantic-settings", specifier = ">=2.8" },
     { name = "redis", specifier = ">=5" },
-    { name = "safir", extras = ["arq", "db", "redis"], git = "https://github.com/lsst-sqre/safir?subdirectory=safir&branch=main" },
+    { name = "safir", extras = ["arq", "db", "redis"], specifier = ">=11.0.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
     { name = "vo-models", specifier = ">=0.4" },
 ]
@@ -1238,7 +1238,7 @@ dev = [
     { name = "pytest-sugar" },
     { name = "pytest-timeout" },
     { name = "respx" },
-    { name = "safir", extras = ["testcontainers"], git = "https://github.com/lsst-sqre/safir?subdirectory=safir&branch=main" },
+    { name = "safir", extras = ["testcontainers"], specifier = ">=11.0.0" },
     { name = "scriv", extras = ["toml"] },
     { name = "testcontainers", extras = ["mysql", "redis"] },
 ]
@@ -1385,8 +1385,8 @@ wheels = [
 
 [[package]]
 name = "safir"
-version = "10.2.1.dev29+gb7c6ef7"
-source = { git = "https://github.com/lsst-sqre/safir?subdirectory=safir&branch=main#b7c6ef7f98b41a2e4069f79effe3d39c8cfcd8c0" }
+version = "11.0.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiokafka" },
     { name = "click" },
@@ -1404,6 +1404,10 @@ dependencies = [
     { name = "sentry-sdk" },
     { name = "starlette" },
     { name = "structlog" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ba/f6/8f5ba251fcf5a5a8d55ecc14c728fe1b55d10f16654e32f8f942a59b21f1/safir-11.0.0.tar.gz", hash = "sha256:2d8ea70798da18a4471e08e37cc3a359c731245af00cb9d6f9903bb6954e20c3", size = 185630, upload-time = "2025-05-28T19:52:02.624Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/52/81/850f2bdb6cbe4f741ea5c1826edf5a4722c1750aa1b054b0fa5ed6ffdb92/safir-11.0.0-py3-none-any.whl", hash = "sha256:e15bacc7493580fee02fc874fea68e508a1f9c477b829ab0968a6f1f18c040a3", size = 166781, upload-time = "2025-05-28T19:52:00.95Z" },
 ]
 
 [package.optional-dependencies]
@@ -1424,7 +1428,7 @@ testcontainers = [
 
 [[package]]
 name = "safir-arq"
-version = "10.2.0"
+version = "11.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "arq" },
@@ -1432,21 +1436,21 @@ dependencies = [
     { name = "pydantic-core" },
     { name = "structlog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/be/be/f6f4215597dde89861c380306f0cef9d08330784ecf7804549df5608788d/safir_arq-10.2.0.tar.gz", hash = "sha256:2fb794d21b908b015f289ca2e3b83d3be294f11d43d4bf2ffd75838c13a8c348", size = 11665, upload-time = "2025-05-05T22:57:16.104Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/bc/2fe47746b5804c4294ae2006030d738ee515651ee92d5fabb91b6a86136d/safir_arq-11.0.0.tar.gz", hash = "sha256:114c7d6212cfd139c95f07eb927670f481d9b406907455ee5d4c2aef0243395f", size = 11671, upload-time = "2025-05-28T19:52:07.298Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cd/b9/4736ea70cc7689608f048e020311363c35346669471219c5a2d53822d174/safir_arq-10.2.0-py3-none-any.whl", hash = "sha256:6fa016ab66f7dc8ee076d31342cd61f48086009bd5fb27047c9331834d8306d8", size = 13165, upload-time = "2025-05-05T22:57:14.759Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/b3/503b376b49af2b5dd14c4a391ecfa2d36c714cd8b67634e067360107a222/safir_arq-11.0.0-py3-none-any.whl", hash = "sha256:805154be167b03ad77ef2dde57902d063d54c2b1f6745410c48e1d998b6a10a0", size = 13169, upload-time = "2025-05-28T19:52:06.434Z" },
 ]
 
 [[package]]
 name = "safir-logging"
-version = "10.2.0"
+version = "11.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "structlog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7a/b8/a21a623f85a0b10703e02f582dc01ddf875255f7c0d495e7befb1729cf15/safir_logging-10.2.0.tar.gz", hash = "sha256:87ee8459e882ac27dda5dbc3176909d80548d2c990b3aa557a02e127360ddcb6", size = 7091, upload-time = "2025-05-05T22:57:21.407Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/87/cf/1e5d7b155626dbf066ef72efb2375d0d48018f86ca6084510eda9142f93d/safir_logging-11.0.0.tar.gz", hash = "sha256:450f2d700bb26fc6a9b8471c8604f84fbcd137785ef1b2dab738d7b6d7e5bfcd", size = 8439, upload-time = "2025-05-28T19:52:12.241Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/98/b243e1f11d0758bd247d04370f3ddf5756211a6f36bf9737f0b2e612c3c9/safir_logging-10.2.0-py3-none-any.whl", hash = "sha256:bb7b41739c61586e44c4c7009ddb868484277353c0f8225656198e1d405eb5d4", size = 8537, upload-time = "2025-05-05T22:57:20.534Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/d9/63a5373fb1706b5da1099c677b62d283eefa478492d02f656d0c02cb3752/safir_logging-11.0.0-py3-none-any.whl", hash = "sha256:3dc8107dc276146ca415a3c809b454b2fd7c46f13293acae31158c45f299580f", size = 10470, upload-time = "2025-05-28T19:52:10.953Z" },
 ]
 
 [[package]]

@@ -30,7 +30,7 @@ dependencies = [
     "pydantic>=2.11",
     "pydantic-settings>=2.8",
     "redis>=5",
-    "safir[arq,db,redis]>=10.2.0",
+    "safir[arq,db,redis]>=11.0.0",
     "uvicorn[standard]>=0.34",
     "vo-models>=0.4",
 ]
@@ -55,7 +55,7 @@ dev = [
     "pytest-sugar",
     "pytest-timeout",
     "respx",
-    "safir[testcontainers]",
+    "safir[testcontainers]>=11.0.0",
     "scriv[toml]",
     "testcontainers[mysql,redis]",
 ]
@@ -157,6 +157,3 @@ new_fragment_template = "file:changelog.d/_template.md.jinja"
 skip_fragments = "_template.md.jinja"
 
 [tool.setuptools_scm]
-
-[tool.uv.sources]
-safir = { git = "https://github.com/lsst-sqre/safir", branch = "main", subdirectory = "safir" }
