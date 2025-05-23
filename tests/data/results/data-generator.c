@@ -29,7 +29,7 @@ main(void)
     long len;
 
     /* Null bitmap for first line. */
-    bits = htons(0x5500);
+    bits = htons(0x5540);
     fwrite(&bits, sizeof(bits), 1, stdout);
 
     /* Data for first line. */
@@ -55,10 +55,15 @@ main(void)
     i = 0;
     fwrite(&i, sizeof(i), 1, stdout);       /* g */
     k = htobe64(5294967296ULL);
-    fwrite(&k, sizeof(k), 1, stdout);       /* k */
+    fwrite(&k, sizeof(k), 1, stdout);       /* h */
+    fwrite(&zero, sizeof(zero), 1, stdout); /* i length */
+    len = strlen("2025-05-23T17:00:35.025");
+    i = htonl(len);
+    fwrite(&i, sizeof(i), 1, stdout);       /* j length */
+    fwrite("2025-05-23T17:00:35.025", 1, len, stdout); /* j */
 
     /* Null bitmap for second line. */
-    bits = htons(0x2A80);
+    bits = htons(0x2AA0);
     fwrite(&bits, sizeof(bits), 1, stdout);
 
     /* Data for second line. */
@@ -81,7 +86,11 @@ main(void)
     i = htonl(47);
     fwrite(&i, sizeof(i), 1, stdout);       /* g */
     k = 0;
-    fwrite(&k, sizeof(k), 1, stdout);       /* k */
+    fwrite(&k, sizeof(k), 1, stdout);       /* h */
+    i = htonl(4);
+    fwrite(&i, sizeof(i), 1, stdout);       /* i length */
+    fwrite("abcd", 1, 4, stdout);           /* i */
+    fwrite(&zero, sizeof(zero), 1, stdout); /* j length */
 
     exit(0);
 }

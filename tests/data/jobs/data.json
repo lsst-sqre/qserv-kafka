@@ -53,6 +53,16 @@
       {
         "name": "h",
         "datatype": "long"
+      },
+      {
+        "name": "i",
+        "datatype": "char",
+        "arraysize": "4*"
+      },
+      {
+        "name": "j",
+        "datatype": "char",
+        "arraysize": "*"
       }
     ]
   }

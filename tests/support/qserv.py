@@ -20,6 +20,7 @@ from safir.database import (
 )
 from safir.datetime import current_datetime
 from sqlalchemy import BigInteger, Double, String, delete, select
+from sqlalchemy.dialects.mysql import DATETIME
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from structlog import get_logger
@@ -84,6 +85,8 @@ class _Result(_SchemaBase):
     f: Mapped[float | None]
     g: Mapped[int | None]
     h: Mapped[int | None] = mapped_column(BigInteger)
+    i: Mapped[str | None] = mapped_column(String(256))
+    j: Mapped[datetime | None] = mapped_column(DATETIME(fsp=6))
 
 
 class MockQserv:
@@ -269,6 +272,8 @@ class MockQserv:
             data = read_test_json("results/data")
             async with self._session.begin():
                 for row in data:
+                    if row["j"] is not None:
+                        row["j"] = datetime.fromisoformat(row["j"] + "Z")
                     result = _Result(**row)
                     self._session.add(result)
             self._results_stored = True
