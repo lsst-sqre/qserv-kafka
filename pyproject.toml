@@ -55,6 +55,7 @@ dev = [
     "pytest-memray",
     "pytest-timeout",
     "respx",
+    "safir[testcontainers]",
     "scriv[toml]",
     "testcontainers[mysql,redis]",
 ]
