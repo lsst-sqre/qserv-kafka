@@ -14,7 +14,7 @@ from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
 from safir.arq import ArqMode, ArqQueue, MockArqQueue, RedisArqQueue
 from safir.database import create_database_engine
-from safir.metrics import EventManager, KafkaClients
+from safir.metrics import EventManager, KafkaClients, KafkaEventManager
 from safir.redis import PydanticRedisStorage
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
 from structlog import get_logger
@@ -152,12 +152,17 @@ class ProcessContext:
         await kafka_broker.connect()
 
         # Create an event manager for posting metrics events.
-        admin_client = AIOKafkaAdminClient(**config.kafka.to_aiokafka_params())
+        admin_client = AIOKafkaAdminClient(
+            client_id="safir-metrics-admin-client-qservkafka",
+            **config.kafka.to_aiokafka_params(),
+        )
         event_manager = config.metrics.make_manager(
             kafka_clients=KafkaClients(
                 broker=kafka_broker, admin_client=admin_client
             )
         )
+        if isinstance(event_manager, KafkaEventManager):
+            await admin_client.start()
         await event_manager.initialize()
         events = Events()
         await events.initialize(event_manager)
