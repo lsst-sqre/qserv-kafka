@@ -5,6 +5,7 @@ from __future__ import annotations
 import struct
 from binascii import b2a_base64
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from io import BytesIO
 from typing import Any
 from urllib.parse import urlparse
@@ -172,7 +173,32 @@ class VOTableEncoder:
         bytes
             Serialized representation of the column.
         """
-        value_str = "" if value_raw is None else str(value_raw)
+        if isinstance(value_raw, datetime):
+            millisecond = value_raw.microsecond // 1000
+
+            # Blindly assume that the timestamp is already in UTC (or TAI,
+            # which we are not yet handling correctly with TIMESYS). We could
+            # check whether the datetime is zone-aware and, if so, convert to
+            # UTC, but the database really shouldn't have times in civil time
+            # zones in it.
+            #
+            # This f-string approach is slightly faster than using strftime
+            # and separately appending milliseconds. Unfortunately, we can't
+            # use isoformat because we don't want to append a time zone.
+            #
+            # The VOTable format says that astronomical times must be in UTC
+            # and not use any time zone suffix, and civil times must be in UTC
+            # but may use a Z suffix. Since we have no way of knowing whether
+            # a given column is an astronomical or civil time, the only safe
+            # approach seems to be to leave off the time zone suffix.
+            value_str = (
+                f"{value_raw.year:04d}-{value_raw.month:02d}"
+                f"-{value_raw.day:02d}T{value_raw.hour:02d}"
+                f":{value_raw.minute:02d}:{value_raw.second:02d}"
+                f".{millisecond:03d}"
+            )
+        else:
+            value_str = "" if value_raw is None else str(value_raw)
         if value_str and column.requires_url_rewrite:
             try:
                 base_url = urlparse(str(config.rewrite_base_url))
