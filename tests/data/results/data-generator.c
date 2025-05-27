@@ -16,7 +16,7 @@
 int
 main(void)
 {
-    uint16_t bits;
+    uint16_t bits, h;
     uint32_t i;
     int32_t j;
     uint32_t zero = htonl(0);
@@ -29,7 +29,7 @@ main(void)
     long len;
 
     /* Null bitmap for first line. */
-    bits = htons(0x5540);
+    bits = htons(0x5550);
     fwrite(&bits, sizeof(bits), 1, stdout);
 
     /* Data for first line. */
@@ -61,6 +61,8 @@ main(void)
     i = htonl(len);
     fwrite(&i, sizeof(i), 1, stdout);       /* j length */
     fwrite("2025-05-23T17:00:35.025", 1, len, stdout); /* j */
+    h = 0;
+    fwrite(&h, sizeof(h), 1, stdout);       /* k */
 
     /* Null bitmap for second line. */
     bits = htons(0x2AA0);
@@ -91,6 +93,8 @@ main(void)
     fwrite(&i, sizeof(i), 1, stdout);       /* i length */
     fwrite("abcd", 1, 4, stdout);           /* i */
     fwrite(&zero, sizeof(zero), 1, stdout); /* j length */
+    h = htons(-12);
+    fwrite(&h, sizeof(h), 1, stdout);       /* k */
 
     exit(0);
 }

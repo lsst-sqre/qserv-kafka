@@ -83,6 +83,7 @@ class VOTablePrimitive(Enum):
     char = ("char", "s")
     double = ("double", ">d")
     float = ("float", ">f")
+    short = ("short", ">h")
     int = ("int", ">l")
     long = ("long", ">q")
 
@@ -118,7 +119,7 @@ class VOTablePrimitive(Enum):
             case "double" | "float":
                 value = math.nan if value is None else float(value)
                 return struct.pack(self._pack_format, value)
-            case "int" | "long":
+            case "short" | "int" | "long":
                 value = 0 if value is None else int(value)
                 return struct.pack(self._pack_format, value)
             case _:  # pragma: no cover
