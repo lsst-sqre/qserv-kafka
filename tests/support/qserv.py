@@ -87,6 +87,7 @@ class _Result(_SchemaBase):
     h: Mapped[int | None] = mapped_column(BigInteger)
     i: Mapped[str | None] = mapped_column(String(256))
     j: Mapped[datetime | None] = mapped_column(DATETIME(fsp=6))
+    k: Mapped[int | None]
 
 
 class MockQserv:
