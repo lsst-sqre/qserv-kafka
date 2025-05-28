@@ -63,6 +63,7 @@ class AsyncQueryStatus(BaseModel):
         Field(
             title="Completed query chunks", validation_alias="completedChunks"
         ),
+        BeforeValidator(lambda v: 0 if v is None else v),
     ]
 
     query_begin: Annotated[
