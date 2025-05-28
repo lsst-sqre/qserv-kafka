@@ -52,7 +52,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
-    "pytest-memray",
+    "pytest-sugar",
     "pytest-timeout",
     "respx",
     "safir[testcontainers]",
