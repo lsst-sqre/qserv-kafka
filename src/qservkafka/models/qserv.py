@@ -91,7 +91,9 @@ class AsyncSubmitRequest(BaseModel):
 
     query: Annotated[str, Field(title="Query to run")]
 
-    database: Annotated[str | None, Field(title="Default database for query")]
+    database: Annotated[
+        str | None, Field(title="Default database for query")
+    ] = None
 
 
 class AsyncSubmitResponse(BaseResponse):

@@ -20,8 +20,9 @@ from ..exceptions import (
     QservApiProtocolError,
     QservApiSqlError,
     QservApiWebError,
+    TableUploadWebError,
 )
-from ..models.kafka import JobRun
+from ..models.kafka import JobRun, JobTableUpload
 from ..models.qserv import (
     AsyncQueryPhase,
     AsyncQueryStatus,
@@ -211,6 +212,56 @@ class QservClient:
         request = AsyncSubmitRequest(query=job.query, database=job.database)
         result = await self._post("/query-async", request, AsyncSubmitResponse)
         return result.query_id
+
+    async def upload_table(self, upload: JobTableUpload) -> None:
+        """Upload a table to Qserv.
+
+        Parameters
+        ----------
+        upload
+            Table to upload.
+
+        Raises
+        ------
+        QservApiError
+            Raised if something failed when uploading the table.
+        TableUploadWebError
+            Raised if retrieving the uploaded table or schema failed.
+        """
+        try:
+            r = await self._client.get(upload.schema_url)
+            r.raise_for_status()
+            schema = r.text
+            r = await self._client.get(upload.source_url)
+            r.raise_for_status()
+            source = r.content
+        except HTTPError as e:
+            raise TableUploadWebError.from_exception(e) from e
+        url = str(config.qserv_rest_url).rstrip("/") + "/ingest/csv"
+        timeout = int(config.qserv_upload_timeout.total_seconds())
+        try:
+            r = await self._client.post(
+                url,
+                data={
+                    "database": upload.database,
+                    "table": upload.table,
+                    "fields_terminated_by": ",",
+                    "charset_name": "utf8",
+                    "timeout": timeout,
+                    "version": API_VERSION,
+                },
+                files=(
+                    ("schema", ("schema.json", schema, "application/json")),
+                    ("rows", ("table.csv", source, "text/csv")),
+                ),
+                timeout=timeout + 1,
+            )
+            self._logger.debug(
+                "Qserv API reply", method="POST", url=url, result=r.json()
+            )
+            self._parse_response(url, r, BaseResponse)
+        except HTTPError as e:
+            raise QservApiWebError.from_exception(e) from e
 
     async def _delete(self, route: str) -> None:
         """Send a DELETE request to the Qserv REST API.

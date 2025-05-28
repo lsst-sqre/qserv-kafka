@@ -8,11 +8,13 @@ import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 import respx
 from httpx import Request, Response
+from multipart import MultipartParser, parse_options_header
 from safir.database import (
     create_async_session,
     datetime_to_db,
@@ -26,17 +28,19 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from structlog import get_logger
 from structlog.stdlib import BoundLogger
 
+from qservkafka.config import config
 from qservkafka.models.kafka import JobRun
 from qservkafka.models.qserv import (
     AsyncQueryPhase,
     AsyncQueryStatus,
     AsyncStatusResponse,
     AsyncSubmitRequest,
+    BaseResponse,
 )
 from qservkafka.storage import qserv
 from qservkafka.storage.qserv import API_VERSION
 
-from .data import read_test_data, read_test_json
+from .data import read_test_data, read_test_job_run, read_test_json
 
 __all__ = ["MockQserv", "register_mock_qserv"]
 
@@ -93,6 +97,12 @@ class _Result(_SchemaBase):
 class MockQserv:
     """Mock Qserv that simulates the REST API."""
 
+    _UPLOAD_CSV = "one\ntwo\n"
+    """Static table data to return for user table upload."""
+
+    _UPLOAD_SCHEMA = '[{"name":"col_0","type":"VARCHAR(32)"}]'
+    """Static schema to return for user table upload."""
+
     def __init__(
         self, session: async_scoped_session, respx_mock: respx.Router
     ) -> None:
@@ -107,6 +117,7 @@ class MockQserv:
         self._queries: dict[int, AsyncQueryStatus]
         self._results_stored: bool
         self._upload_delay: timedelta | None
+        self._uploaded_table: str | None
         self.reset()
 
     @classmethod
@@ -135,6 +146,17 @@ class MockQserv:
         """
         return self._queries[query_id]
 
+    def get_uploaded_table(self) -> str | None:
+        """Get the name of the uploaded table, if any.
+
+        Returns
+        -------
+        str or None
+            The name of any uploaded table, or `None` if no table has been
+            uploaded.
+        """
+        return self._uploaded_table
+
     def reset(self) -> None:
         """Reset the mock to its initial state."""
         self._expected_job = None
@@ -145,6 +167,7 @@ class MockQserv:
         self._queries = {}
         self._results_stored = False
         self._upload_delay = None
+        self._uploaded_table = None
 
     def set_immediate_success(self, job: JobRun | None) -> None:
         """Configure whether to mark the job completed immediately.
@@ -221,6 +244,36 @@ class MockQserv:
         status.status = AsyncQueryPhase.ABORTED
         status.last_update = datetime.now(tz=UTC)
         return Response(200, json={"success": 1}, request=request)
+
+    def get_upload_schema(self, request: Request) -> Response:
+        """Return the stored schema for table upload.
+
+        Parameters
+        ----------
+        request
+            Incoming request.
+
+        Returns
+        -------
+        httpx.Response
+            Returns 200 with the static schema string.
+        """
+        return Response(200, content=self._UPLOAD_SCHEMA.encode())
+
+    def get_upload_source(self, request: Request) -> Response:
+        """Return the stored data for table upload.
+
+        Parameters
+        ----------
+        request
+            Incoming request.
+
+        Returns
+        -------
+        httpx.Response
+            Returns 200 with the static data string.
+        """
+        return Response(200, content=self._UPLOAD_CSV.encode())
 
     def status(self, request: Request, *, query_id: str) -> Response:
         """Mock a request for job status.
@@ -381,6 +434,57 @@ class MockQserv:
             await asyncio.sleep(self._upload_delay.total_seconds())
         return Response(201)
 
+    async def upload_table(self, request: Request) -> Response:
+        """Mock a request to upload a table.
+
+        Parameters
+        ----------
+        request
+            Incoming request.
+
+        Returns
+        -------
+        httpx.Response
+            Returns 200 with the details of the query.
+        """
+        body = BytesIO(request.content)
+        content_type_header = request.headers["Content-Type"]
+        content_type, options = parse_options_header(content_type_header)
+        assert content_type == "multipart/form-data"
+        assert "boundary" in options
+        parser = MultipartParser(body, options["boundary"])
+        data = {}
+        files = []
+        for part in parser:
+            if part.filename:
+                file_info = (part.filename, part.value, part.content_type)
+                files.append((part.name, file_info))
+            else:
+                data[part.name] = part.value
+        body.close()
+
+        # Check the request is correct.
+        expected_job = read_test_job_run("jobs/upload")
+        upload_table = expected_job.upload_tables[0]
+        assert data == {
+            "database": upload_table.table_name.split(".", 1)[0],
+            "table": upload_table.table_name.split(".", 1)[1],
+            "fields_terminated_by": ",",
+            "charset_name": "utf8",
+            "timeout": str(int(config.qserv_upload_timeout.total_seconds())),
+            "version": str(API_VERSION),
+        }
+        assert files == [
+            (
+                "schema",
+                ("schema.json", self._UPLOAD_SCHEMA, "application/json"),
+            ),
+            ("rows", ("table.csv", self._UPLOAD_CSV, "text/csv")),
+        ]
+        assert not self._uploaded_table, "Too many tables uploaded"
+        self._uploaded_table = upload_table.table_name
+        return Response(200, json=BaseResponse(success=1).model_dump())
+
     def _check_version(self, request: Request) -> None:
         """Check that the correct API version was added to the parameters."""
         url = urlparse(str(request.url))
@@ -410,13 +514,22 @@ async def register_mock_qserv(
     mock = MockQserv(session, respx_mock)
     base_url = str(base_url).rstrip("/")
     respx_mock.post(f"{base_url}/query-async").mock(side_effect=mock.submit)
+    ingest_url = f"{base_url}/ingest/csv"
+    respx_mock.post(ingest_url).mock(side_effect=mock.upload_table)
     base_escaped = re.escape(base_url)
     url_regex = rf"{base_escaped}/query-async/(?P<query_id>[0-9]+)\?"
     respx_mock.delete(url__regex=url_regex).mock(side_effect=mock.cancel)
     url_regex = rf"{base_escaped}/query-async/status/(?P<query_id>[0-9]+)\?"
     respx_mock.get(url__regex=url_regex).mock(side_effect=mock.status)
-    with patch.object(qserv, "_QUERY_LIST_SQL", new=_QUERY_LIST_SQL):
-        with patch.object(
-            qserv, "_QUERY_RESULTS_SQL_FORMAT", new=_QUERY_RESULT_SQL
-        ):
+
+    upload_job = read_test_job_run("jobs/upload")
+    for upload_table in upload_job.upload_tables:
+        url = upload_table.source_url
+        respx_mock.get(url).mock(side_effect=mock.get_upload_source)
+        url = upload_table.schema_url
+        respx.mock.get(url).mock(side_effect=mock.get_upload_schema)
+
+    sql = _QUERY_RESULT_SQL
+    with patch.object(qserv, "_QUERY_RESULTS_SQL_FORMAT", new=sql):
+        with patch.object(qserv, "_QUERY_LIST_SQL", new=_QUERY_LIST_SQL):
             yield mock

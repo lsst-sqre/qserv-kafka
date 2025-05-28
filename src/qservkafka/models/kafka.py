@@ -194,6 +194,55 @@ class JobResultConfig(BaseModel):
     ] = None
 
 
+class JobTableUpload(BaseModel):
+    """Table to upload for a query."""
+
+    model_config = ConfigDict(validate_by_name=True)
+
+    table_name: Annotated[
+        str,
+        Field(
+            title="Name of table",
+            description=(
+                "Name of the table in Qserv. Must start with user_<username>."
+            ),
+            pattern=r"user_[^.]+\.[^.]+$",
+            validation_alias="tableName",
+        ),
+    ]
+
+    source_url: Annotated[
+        str,
+        Field(
+            title="URL of data",
+            description="URL to a CSV file of table data",
+            validation_alias="sourceUrl",
+        ),
+    ]
+
+    schema_url: Annotated[
+        str,
+        Field(
+            title="URL of schema",
+            description=(
+                "URL to a JSON file specifying the table schema. This must"
+                " be in the format expected by Qserv."
+            ),
+            validation_alias="schemaUrl",
+        ),
+    ]
+
+    @property
+    def database(self) -> str:
+        """Name of the database."""
+        return self.table_name.split(".", 1)[0]
+
+    @property
+    def table(self) -> str:
+        """Name of the table."""
+        return self.table_name.split(".", 1)[1]
+
+
 class JobMetadata(BaseModel):
     """Metadata about a query."""
 
@@ -284,6 +333,15 @@ class JobRun(BaseModel):
             validation_alias="resultFormat",
         ),
     ]
+
+    upload_tables: Annotated[
+        list[JobTableUpload],
+        Field(
+            title="Upload tables",
+            description="Temporary tables to create while running this job",
+            validation_alias="uploadTables",
+        ),
+    ] = []
 
     timeout: Annotated[
         SecondsTimedelta | None,
@@ -399,6 +457,7 @@ class JobErrorCode(StrEnum):
     invalid_request = "invalid_request"
     result_timeout = "result_timeout"
     upload_failed = "upload_failed"
+    table_read = "table_read"
 
 
 class JobError(BaseModel):

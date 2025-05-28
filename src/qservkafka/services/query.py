@@ -8,7 +8,7 @@ from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
 from ..events import Events
-from ..exceptions import QservApiError
+from ..exceptions import QservApiError, TableUploadWebError
 from ..models.kafka import (
     JobCancel,
     JobError,
@@ -132,6 +132,26 @@ class QueryService:
             if not is_char and column.arraysize is not None:
                 msg = "arraysize only supported for char fields"
                 return self._build_invalid_request_status(job, msg)
+
+        # Upload any tables.
+        try:
+            for upload in job.upload_tables:
+                await self._qserv.upload_table(upload)
+                logger.info("Uploaded table", table_name=upload.table_name)
+        except (QservApiError, TableUploadWebError) as e:
+            if isinstance(e, TableUploadWebError):
+                msg = "Unable to retrieve table to upload"
+            else:
+                msg = "Unable to upload table"
+            logger.exception(msg, error=str(e))
+            return JobStatus(
+                job_id=job.job_id,
+                execution_id=None,
+                timestamp=datetime.now(tz=UTC),
+                status=ExecutionPhase.ERROR,
+                error=e.to_job_error(),
+                metadata=metadata,
+            )
 
         # Start the query.
         query_id = None

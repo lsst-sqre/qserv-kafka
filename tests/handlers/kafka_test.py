@@ -29,6 +29,7 @@ from ..support.arq import run_arq_jobs
 from ..support.data import (
     read_test_job_run,
     read_test_job_status,
+    read_test_job_status_json,
     read_test_json,
 )
 from ..support.qserv import MockQserv
@@ -264,3 +265,23 @@ async def test_job_cancel(
     assert context_dependency._process_context
     state = context_dependency._process_context.state
     assert await state.get_active_queries() == set()
+
+
+@pytest.mark.asyncio
+async def test_job_upload(
+    *,
+    app: FastAPI,
+    kafka_broker: KafkaBroker,
+    status_publisher: AsyncAPIDefaultPublisher,
+    mock_qserv: MockQserv,
+) -> None:
+    """Test canceling a job."""
+    job = read_test_job_run("jobs/upload")
+    job_json = read_test_json("jobs/upload")
+    status = read_test_job_status_json("status/upload-started")
+    assert status_publisher.mock
+
+    await kafka_broker.publish(job_json, config.job_run_topic)
+    await asyncio.sleep(0.1)
+    status_publisher.mock.assert_called_once_with(status)
+    assert mock_qserv.get_uploaded_table() == job.upload_tables[0].table_name
