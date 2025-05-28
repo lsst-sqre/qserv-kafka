@@ -149,6 +149,9 @@ class QueryStateStore:
         """
         query = await self.get_query(query_id)
         if query:
+            query.result_queued = False
             query.status = status
             lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
-            await self._storage.store(str(query_id), query, lifetime)
+            await self._storage.store(
+                str(query_id), query, lifetime, exclude_defaults=True
+            )
