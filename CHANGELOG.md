@@ -7,6 +7,18 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-0.4.0'></a>
+## 0.4.0 (2025-05-28)
+
+### New features
+
+- Add support for the `short` VOTable data type.
+
+### Bug fixes
+
+- Catch more SQLAlchemy errors during result processing, hopefully closing an error case where result processing failed without sending an error reply or removing the query from Redis.
+- When formatting `char` fields in VOTable results, convert column `datetime` types to the ISO 8601 string representation required by the IVOA DALI standard. Previously, such fields were serialized using the Python `str` value of `datetime`, which does not match the expected IVOA format.
+
 <a id='changelog-0.3.0'></a>
 ## 0.3.0 (2025-05-16)
 
