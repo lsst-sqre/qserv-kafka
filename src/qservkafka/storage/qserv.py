@@ -128,13 +128,14 @@ class QservClient:
         try:
             async with self._session.begin():
                 results = await self._session.stream(stmt)
-                async for result in results:
-                    yield result
+                results = results.yield_per(100)
+                try:
+                    async for result in results:
+                        yield result
+                finally:
+                    await results.close()
         except SQLAlchemyError as e:
             raise QservApiSqlError.from_exception(e) from e
-        finally:
-            if results:
-                await results.close()
 
     async def get_query_status(self, query_id: int) -> AsyncQueryStatus:
         """Query for the status of an async job.
@@ -170,17 +171,20 @@ class QservClient:
             async with self._session.begin():
                 result = await self._session.stream(text(_QUERY_LIST_SQL))
                 processes = {}
-                async for row in result:
-                    msg = "Saw running query"
-                    self._logger.debug(msg, query=row._asdict())
-                    processes[row.id] = AsyncQueryStatus(
-                        query_id=row.id,
-                        status=AsyncQueryPhase.EXECUTING,
-                        total_chunks=row.chunks,
-                        completed_chunks=row.chunks_comp,
-                        query_begin=datetime_from_db(row.submitted),
-                        last_update=datetime_from_db(row.updated),
-                    )
+                try:
+                    async for row in result:
+                        msg = "Saw running query"
+                        self._logger.debug(msg, query=row._asdict())
+                        processes[row.id] = AsyncQueryStatus(
+                            query_id=row.id,
+                            status=AsyncQueryPhase.EXECUTING,
+                            total_chunks=row.chunks,
+                            completed_chunks=row.chunks_comp,
+                            query_begin=datetime_from_db(row.submitted),
+                            last_update=datetime_from_db(row.updated),
+                        )
+                finally:
+                    await result.close()
         except SQLAlchemyError as e:
             raise QservApiSqlError.from_exception(e) from e
         self._logger.debug("Listed running queries", count=len(processes))
