@@ -287,6 +287,7 @@ class ResultProcessor:
             result_size=size.total_bytes,
             rate=size.data_bytes / (now - start).total_seconds(),
             result_rate=size.data_bytes / (now - result_start).total_seconds(),
+            upload_tables=len(job.upload_tables),
             immediate=initial,
         )
         await self._events.query_success.publish(event)

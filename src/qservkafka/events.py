@@ -15,6 +15,7 @@ __all__ = [
     "QueryAbortEvent",
     "QueryFailureEvent",
     "QuerySuccessEvent",
+    "TemporaryTableUploadEvent",
 ]
 
 
@@ -80,6 +81,12 @@ class QuerySuccessEvent(BaseQueryEvent):
         description="Encoded data bytes per second for result processing",
     )
 
+    upload_tables: int = Field(
+        ...,
+        title="Count of uploaded tables",
+        description="Number of uploaded tables provided as part of the query",
+    )
+
     immediate: bool = Field(
         False,
         title="Query finished immediately",
@@ -122,6 +129,16 @@ class QueryFailureEvent(BaseQueryEvent):
     )
 
 
+class TemporaryTableUploadEvent(BaseQueryEvent):
+    """Table uploaded for a query."""
+
+    size: int = Field(
+        ...,
+        title="Size of table",
+        description="Size of the CSV file holding the table data",
+    )
+
+
 class Events(EventMaker):
     """Event publishers for all possible events, used by workers and frontend.
 
@@ -144,4 +161,7 @@ class Events(EventMaker):
         )
         self.query_abort = await manager.create_publisher(
             "query_abort", QueryAbortEvent
+        )
+        self.temporary_table = await manager.create_publisher(
+            "temporary_table", TemporaryTableUploadEvent
         )

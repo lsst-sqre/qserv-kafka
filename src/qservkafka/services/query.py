@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
-from ..events import Events
+from ..events import Events, TemporaryTableUploadEvent
 from ..exceptions import QservApiError, TableUploadWebError
 from ..models.kafka import (
     JobCancel,
@@ -136,8 +136,12 @@ class QueryService:
         # Upload any tables.
         try:
             for upload in job.upload_tables:
-                await self._qserv.upload_table(upload)
+                size = await self._qserv.upload_table(upload)
                 logger.info("Uploaded table", table_name=upload.table_name)
+                event = TemporaryTableUploadEvent(
+                    username=job.owner, size=size
+                )
+                await self._events.temporary_table.publish(event)
         except (QservApiError, TableUploadWebError) as e:
             if isinstance(e, TableUploadWebError):
                 msg = "Unable to retrieve table to upload"

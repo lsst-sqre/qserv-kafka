@@ -213,13 +213,18 @@ class QservClient:
         result = await self._post("/query-async", request, AsyncSubmitResponse)
         return result.query_id
 
-    async def upload_table(self, upload: JobTableUpload) -> None:
+    async def upload_table(self, upload: JobTableUpload) -> int:
         """Upload a table to Qserv.
 
         Parameters
         ----------
         upload
             Table to upload.
+
+        Returns
+        -------
+        int
+            Size of the uploaded CSV data for the table in bytes.
 
         Raises
         ------
@@ -262,6 +267,7 @@ class QservClient:
             self._parse_response(url, r, BaseResponse)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
+        return len(source)
 
     async def _delete(self, route: str) -> None:
         """Send a DELETE request to the Qserv REST API.
