@@ -7,6 +7,19 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-0.5.0'></a>
+## 0.5.0 (2025-05-30)
+
+### New features
+
+- Add support for table uploads to Qserv before running a query. In this initial version, the table and schema are retrieved into memory rather than streaming them, and no attempt is made to delete the uploaded table after the query completes.
+
+### Bug fixes
+
+- Correctly update the query state in the result worker if Qserv unexpectedly reports it as still running to ensure that it will be checked again and not simply dropped.
+- When result processing fails, close the streaming response from MySQL before attempting to roll back the transaction, hopefully suppressing otherwise unintelligible SQLAlchemy errors about packet sequences.
+- Allow completed chunks as returned from the Qserv REST API to be `None` and treat that the same as 0.
+
 <a id='changelog-0.4.0'></a>
 ## 0.4.0 (2025-05-28)
 
