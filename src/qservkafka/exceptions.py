@@ -23,6 +23,7 @@ __all__ = [
     "QservApiSqlError",
     "QservApiWebError",
     "QueryError",
+    "TableUploadWebError",
     "UploadWebError",
 ]
 
@@ -150,6 +151,12 @@ class QservApiWebError(SlackWebException, QservApiError):
     """A web request to Qserv failed at the HTTP protocol level."""
 
     error = JobErrorCode.backend_request_error
+
+
+class TableUploadWebError(SlackWebException, QueryError):
+    """Retrieving an uploaded table failed."""
+
+    error = JobErrorCode.table_read
 
 
 class UploadWebError(SlackWebException, QueryError):

@@ -1,0 +1,14 @@
+{
+  "job_id": "uws123",
+  "execution_id": "1",
+  "timestamp": 1743540791,
+  "status": "EXECUTING",
+  "query_info": {
+    "start_time": 1743540791,
+    "total_chunks": 10,
+    "completed_chunks": 0
+  },
+  "metadata": {
+    "query": "SELECT TOP 10 * FROM user_username.table"
+  }
+}

@@ -49,6 +49,7 @@ dev = [
     "aiokafka>=0.12",
     "asgi-lifespan",
     "coverage[toml]",
+    "multipart",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",

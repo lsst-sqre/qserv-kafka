@@ -1,0 +1,30 @@
+{
+  "query": "SELECT TOP 10 * FROM user_username.table",
+  "jobID": "uws123",
+  "ownerID": "username",
+  "resultDestination": "https://gcs.example.com/upload",
+  "resultFormat": {
+    "format": {
+      "type": "VOTable",
+      "serialization": "BINARY2"
+    },
+    "envelope": {
+      "header": "<VOTable xmlns=\"http://www.ivoa.net/xml/VOTable/v1.3\" version=\"1.3\"><RESOURCE type=\"results\"><TABLE><FIELD ID=\"col_0\" arraysize=\"*\" datatype=\"char\" name=\"col1\"/>",
+      "footer": "</TABLE></RESOURCE></VOTable>"
+    },
+    "columnTypes": [
+      {
+        "name": "col_0",
+        "datatype": "char",
+        "arraysize": "*"
+      }
+    ]
+  },
+  "uploadTables": [
+    {
+      "tableName": "user_username.table",
+      "sourceUrl": "https://gcs.example.com/table.csv",
+      "schemaUrl": "https://gcs.example.com/table.json"
+    }
+  ]
+}

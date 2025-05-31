@@ -13,6 +13,7 @@ __all__ = [
     "read_test_data",
     "read_test_job_run",
     "read_test_job_status",
+    "read_test_job_status_json",
     "read_test_json",
 ]
 
@@ -101,4 +102,28 @@ def read_test_job_status(
             result.query_info.start_time = ANY
             if result.query_info.end_time:
                 result.query_info.end_time = ANY
+    return result
+
+
+def read_test_job_status_json(filename: str) -> dict[str, Any]:
+    """Read JSON for a Kafka job status message.
+
+    Parameters
+    ----------
+    filename
+        File to read relative to the test data directory, without the
+        ``.json`` suffix.
+
+    Returns
+    -------
+    JobStatus
+        Parsed contents of the file.
+    """
+    result_model = JobStatus.model_validate(read_test_json(filename))
+    result = result_model.model_dump(mode="json")
+    result["timestamp"] = ANY
+    if "queryInfo" in result:
+        result["queryInfo"]["startTime"] = ANY
+        if "endTime" in result["queryInfo"]:
+            result["queryInfo"]["endTime"] = ANY
     return result

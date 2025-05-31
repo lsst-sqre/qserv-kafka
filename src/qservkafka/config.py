@@ -132,6 +132,15 @@ class Config(BaseSettings):
 
     qserv_rest_url: HttpUrl = Field(..., title="Qserv REST API URL")
 
+    qserv_upload_timeout: HumanTimedelta = Field(
+        timedelta(minutes=5),
+        title="Qserv table upload timeout",
+        description=(
+            "Maximum timeout for a REST API call to Qserv to upload a table."
+            " This includes the time spent waiting for a free connection."
+        ),
+    )
+
     rewrite_base_url: HttpUrl = Field(
         ...,
         title="Base URL for rewrites",
