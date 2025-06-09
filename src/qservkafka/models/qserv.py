@@ -66,6 +66,16 @@ class AsyncQueryStatus(BaseModel):
         BeforeValidator(lambda v: 0 if v is None else v),
     ]
 
+    collected_bytes: Annotated[
+        int,
+        Field(
+            title="Size of results",
+            description="Size of results collected so far in bytes",
+            validation_alias="collectedBytes",
+        ),
+        BeforeValidator(lambda v: 0 if v is None else v),
+    ] = 0
+
     query_begin: Annotated[
         UtcDatetime,
         Field(title="Query start time", validation_alias="queryBeginEpoch"),

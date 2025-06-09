@@ -72,6 +72,7 @@ async def test_success(
                 status=AsyncQueryPhase.COMPLETED,
                 total_chunks=10,
                 completed_chunks=10,
+                collected_bytes=250,
                 query_begin=async_status.query_begin,
                 last_update=now,
             ),

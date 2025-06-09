@@ -57,6 +57,12 @@ class QuerySuccessEvent(BaseQueryEvent):
         ..., title="Row count", description="Number of rows in the output"
     )
 
+    qserv_size: int = Field(
+        ...,
+        title="Data size in Qserv",
+        description="Reported result size from Qserv in bytes",
+    )
+
     encoded_size: int = Field(
         ...,
         title="Encoded data size",
@@ -73,6 +79,15 @@ class QuerySuccessEvent(BaseQueryEvent):
         ...,
         title="Query rate",
         description="Encoded data bytes per second for the whole query",
+    )
+
+    qserv_rate: float | None = Field(
+        ...,
+        title="Qserv result rate",
+        description=(
+            "Qserv data bytes per second for Qserv query, or null if the"
+            " query completed too quickly to determine a meaningful rate"
+        ),
     )
 
     result_rate: float = Field(

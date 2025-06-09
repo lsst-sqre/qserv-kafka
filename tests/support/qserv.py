@@ -382,6 +382,7 @@ class MockQserv:
                 status=AsyncQueryPhase.COMPLETED,
                 total_chunks=10,
                 completed_chunks=10,
+                collected_bytes=250,
                 query_begin=now,
                 last_update=now,
             )
