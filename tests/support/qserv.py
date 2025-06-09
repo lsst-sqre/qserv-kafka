@@ -245,6 +245,28 @@ class MockQserv:
         status.last_update = datetime.now(tz=UTC)
         return Response(200, json={"success": 1}, request=request)
 
+    async def delete_results(
+        self, request: Request, query_id: str
+    ) -> Response:
+        """Delete the stored results from the database.
+
+        Parameters
+        ----------
+        request
+            Incoming request.
+
+        Returns
+        -------
+        httpx.Response
+            Returns 200 with the static schema string.
+        """
+        self._check_version(request)
+        assert self._results_stored
+        async with self._session.begin():
+            await self._session.execute(delete(_Result))
+        self._results_stored = False
+        return Response(200, json={"success": 1}, request=request)
+
     def get_upload_schema(self, request: Request) -> Response:
         """Return the stored schema for table upload.
 
@@ -322,15 +344,15 @@ class MockQserv:
         """
         url = str(job.result_url)
         self._respx_mock.put(url).mock(side_effect=self.upload)
-        if not self._results_stored:
-            data = read_test_json("results/data")
-            async with self._session.begin():
-                for row in data:
-                    if row["j"] is not None:
-                        row["j"] = datetime.fromisoformat(row["j"] + "Z")
-                    result = _Result(**row)
-                    self._session.add(result)
-            self._results_stored = True
+        assert not self._results_stored
+        data = read_test_json("results/data")
+        async with self._session.begin():
+            for row in data:
+                if row["j"] is not None:
+                    row["j"] = datetime.fromisoformat(row["j"] + "Z")
+                result = _Result(**row)
+                self._session.add(result)
+        self._results_stored = True
         self._expected_job = job
 
     async def submit(self, request: Request) -> Response:
@@ -432,6 +454,7 @@ class MockQserv:
         assert request.content.decode() == header + expected + footer
         if self._upload_delay:
             await asyncio.sleep(self._upload_delay.total_seconds())
+        self._expected_job = None
         return Response(201)
 
     async def upload_table(self, request: Request) -> Response:
@@ -517,10 +540,12 @@ async def register_mock_qserv(
     ingest_url = f"{base_url}/ingest/csv"
     respx_mock.post(ingest_url).mock(side_effect=mock.upload_table)
     base_escaped = re.escape(base_url)
-    url_regex = rf"{base_escaped}/query-async/(?P<query_id>[0-9]+)\?"
-    respx_mock.delete(url__regex=url_regex).mock(side_effect=mock.cancel)
-    url_regex = rf"{base_escaped}/query-async/status/(?P<query_id>[0-9]+)\?"
-    respx_mock.get(url__regex=url_regex).mock(side_effect=mock.status)
+    regex = rf"{base_escaped}/query-async/(?P<query_id>[0-9]+)\?"
+    respx_mock.delete(url__regex=regex).mock(side_effect=mock.cancel)
+    regex = rf"{base_escaped}/query-async/result/(?P<query_id>[0-9]+)\?"
+    respx_mock.delete(url__regex=regex).mock(side_effect=mock.delete_results)
+    regex = rf"{base_escaped}/query-async/status/(?P<query_id>[0-9]+)\?"
+    respx_mock.get(url__regex=regex).mock(side_effect=mock.status)
 
     upload_job = read_test_job_run("jobs/upload")
     for upload_table in upload_job.upload_tables:
