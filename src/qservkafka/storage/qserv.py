@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from copy import copy
+from datetime import timedelta
 from typing import Any
 
 from httpx import AsyncClient, HTTPError, Response
@@ -261,31 +262,22 @@ class QservClient:
             source = r.content
         except HTTPError as e:
             raise TableUploadWebError.from_exception(e) from e
-        url = str(config.qserv_rest_url).rstrip("/") + "/ingest/csv"
-        timeout = int(config.qserv_upload_timeout.total_seconds())
-        try:
-            r = await self._client.post(
-                url,
-                data={
-                    "database": upload.database,
-                    "table": upload.table,
-                    "fields_terminated_by": ",",
-                    "charset_name": "utf8",
-                    "timeout": timeout,
-                    "version": API_VERSION,
-                },
-                files=(
-                    ("schema", ("schema.json", schema, "application/json")),
-                    ("rows", ("table.csv", source, "text/csv")),
-                ),
-                timeout=timeout + 1,
-            )
-            self._logger.debug(
-                "Qserv API reply", method="POST", url=url, result=r.json()
-            )
-            self._parse_response(url, r, BaseResponse)
-        except HTTPError as e:
-            raise QservApiWebError.from_exception(e) from e
+        await self._post_multipart(
+            "/ingest/csv",
+            data={
+                "database": upload.database,
+                "table": upload.table,
+                "fields_terminated_by": ",",
+                "charset_name": "utf8",
+                "timeout": int(config.qserv_upload_timeout.total_seconds()),
+                "version": API_VERSION,
+            },
+            files=(
+                ("schema", ("schema.json", schema, "application/json")),
+                ("rows", ("table.csv", source, "text/csv")),
+            ),
+            timeout=config.qserv_upload_timeout,
+        )
         return len(source)
 
     async def _delete(self, route: str) -> None:
@@ -417,5 +409,49 @@ class QservClient:
                 "Qserv API reply", method="POST", url=url, result=r.json()
             )
             return self._parse_response(url, r, result_type)
+        except HTTPError as e:
+            raise QservApiWebError.from_exception(e) from e
+
+    async def _post_multipart(
+        self,
+        route: str,
+        *,
+        data: Mapping[str, str | int],
+        files: Sequence[tuple[str, tuple[str, str | bytes, str]]],
+        timeout: timedelta,
+    ) -> None:
+        """Send a POST request to the Qserv REST API.
+
+        Parameters
+        ----------
+        route
+            Route to which to send the request.
+        data
+            Key/value pairs to send.
+        files
+            Files to upload.
+        timeout
+            Timeout for the request.
+
+        Raises
+        ------
+        QservApiError
+            Raised if something failed when submitting the POST request.
+        """
+        params = dict(data)
+        params["version"] = API_VERSION
+        url = str(config.qserv_rest_url).rstrip("/") + route
+        try:
+            r = await self._client.post(
+                url,
+                data=params,
+                files=files,
+                timeout=(timeout + timedelta(seconds=1)).total_seconds(),
+            )
+            r.raise_for_status()
+            self._logger.debug(
+                "Qserv API reply", method="POST", url=url, result=r.json()
+            )
+            self._parse_response(url, r, BaseResponse)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
