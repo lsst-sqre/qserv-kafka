@@ -253,15 +253,8 @@ class QservClient:
         TableUploadWebError
             Raised if retrieving the uploaded table or schema failed.
         """
-        try:
-            r = await self._client.get(upload.schema_url)
-            r.raise_for_status()
-            schema = r.text
-            r = await self._client.get(upload.source_url)
-            r.raise_for_status()
-            source = r.content
-        except HTTPError as e:
-            raise TableUploadWebError.from_exception(e) from e
+        schema = await self._get_table(upload.schema_url)
+        source = await self._get_table(upload.source_url)
         await self._post_multipart(
             "/ingest/csv",
             data={
@@ -342,6 +335,32 @@ class QservClient:
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
 
+    async def _get_table(self, url: str) -> bytes:
+        """Retrieve user table upload data.
+
+        Parameters
+        ----------
+        url
+            Full URL to the data to retrieve.
+
+        Returns
+        -------
+        bytes
+            Contents of the file.
+
+        Raises
+        ------
+        TableUploadWebError
+            Raised if retrieving the file failed.
+        """
+        try:
+            r = await self._client.get(url)
+            r.raise_for_status()
+        except HTTPError as e:
+            raise TableUploadWebError.from_exception(e) from e
+        else:
+            return r.content
+
     def _parse_response[T: BaseResponse](
         self, url: str, response: Response, result_type: type[T]
     ) -> T:
@@ -417,7 +436,7 @@ class QservClient:
         route: str,
         *,
         data: Mapping[str, str | int],
-        files: Sequence[tuple[str, tuple[str, str | bytes, str]]],
+        files: Sequence[tuple[str, tuple[str, bytes, str]]],
         timeout: timedelta,
     ) -> None:
         """Send a POST request to the Qserv REST API.
