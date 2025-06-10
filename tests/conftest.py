@@ -141,13 +141,29 @@ async def kafka_broker(
         yield broker
 
 
-@pytest_asyncio.fixture(ids=["good", "flaky"], params=[False, True])
+@pytest_asyncio.fixture(ids=["good"], params=[False])
 async def mock_qserv(
     respx_mock: respx.Router,
     engine: AsyncEngine,
     request: pytest.FixtureRequest,
 ) -> AsyncGenerator[MockQserv]:
-    """Mock the Qserv REST API."""
+    """Mock the Qserv REST API.
+
+    This mock is designed for pytest indirect parameterization. Tests that
+    want to use flaky web services that fail ever other time should inject a
+    parameter of `True`.
+
+    Examples
+    --------
+    Add the following mark before tests that should repeat the test with a
+    flaky web service.
+
+    .. code-block:: python
+
+       @pytest.mark.parametrize(
+           "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+       )
+    """
     url = str(config.qserv_rest_url)
     async with register_mock_qserv(respx_mock, url, engine) as mock_qserv:
         if request.param:

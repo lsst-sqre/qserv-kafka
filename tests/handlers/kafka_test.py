@@ -264,13 +264,7 @@ async def test_job_cancel(
     expected["timestamp"] = ANY
     expected["queryInfo"]["startTime"] = ANY
     expected["queryInfo"]["endTime"] = ANY
-
-    # If we're testing flaky connections, there may be a 3s delay.
-    try:
-        status_publisher.mock.assert_called_once_with(expected)
-    except AssertionError:
-        await asyncio.sleep(3)
-        status_publisher.mock.assert_called_with(expected)
+    status_publisher.mock.assert_called_once_with(expected)
 
     assert context_dependency._process_context
     state = context_dependency._process_context.state

@@ -17,6 +17,9 @@ from ..support.qserv import MockQserv
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
 async def test_start(factory: Factory) -> None:
     job = read_test_job_run("jobs/simple")
     expected_status = read_test_job_status("status/simple-started")
@@ -32,6 +35,9 @@ async def test_start(factory: Factory) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
 async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     """Test a job that completes immediately."""
     query_service = factory.create_query_service()
@@ -59,6 +65,9 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
 async def test_start_cancel(factory: Factory) -> None:
     job = read_test_job_run("jobs/simple")
     started_status = read_test_job_status("status/simple-started")

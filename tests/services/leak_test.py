@@ -24,7 +24,6 @@ from ..support.qserv import MockQserv
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mock_qserv", [False], ids=["good"], indirect=True)
 async def test_success(
     *,
     factory: Factory,
