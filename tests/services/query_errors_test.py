@@ -216,8 +216,8 @@ async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
     now = datetime.now(tz=UTC)
 
     mock_qserv.set_immediate_success(job)
-    sql = "SELECT * FROM nonexistent"
-    with patch.object(qserv, "_QUERY_RESULTS_SQL_FORMAT", new=sql):
+    results_sql = "SELECT * FROM nonexistent"
+    with patch.object(qserv, "_query_results_sql", return_value=results_sql):
         status = await query_service.start_query(job)
 
     expected = JobStatus(

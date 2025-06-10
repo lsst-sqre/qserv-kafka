@@ -45,28 +45,44 @@ from ..models.qserv import (
 API_VERSION = 41
 """Version of the REST API that this client requests."""
 
-_QUERY_LIST_SQL = """
-    SELECT
-      ID AS id,
-      SUBMITTED AS submitted,
-      UPDATED AS updated,
-      CHUNKS AS chunks,
-      CHUNKS_COMP as chunks_comp
-    FROM information_schema.processlist
-"""
-"""SQL query to get a list of running queries.
-
-This is overridden by the test suite since it queries an internal MySQL
-namespace when talking to actual Qserv that's difficult to mock.
-"""
-
-_QUERY_RESULTS_SQL_FORMAT = "SELECT * FROM qserv_result({})"
-"""Format used to generate the SQL query to get Qserv query results.
-
-This format takes one parameter, the Qserv query ID.
-"""
-
 __all__ = ["API_VERSION", "QservClient"]
+
+
+def _query_list_sql() -> str:
+    """Generate SQL query to get a list of running queries.
+
+    This is overridden by the test suite since it queries an internal MySQL
+    namespace when talking to actual Qserv that's difficult to mock. It is
+    defined as a function so that it can be mocked in a way that alternates
+    successes and failures.
+    """
+    return """
+        SELECT
+          ID AS id,
+          SUBMITTED AS submitted,
+          UPDATED AS updated,
+          CHUNKS AS chunks,
+          CHUNKS_COMP as chunks_comp
+        FROM information_schema.processlist
+    """.strip()
+
+
+def _query_results_sql(query_id: int) -> str:
+    """Generate the SQL query to get Qserv query results.
+
+    Parameters
+    ----------
+    query_id
+        Qserv query ID.
+
+    Returns
+    -------
+    str
+        SQL that returns the results of that query.
+    """
+    if not isinstance(query_id, int):
+        raise TypeError(f'query_id "{query_id}" is not int')
+    return f"SELECT * FROM qserv_result({query_id!s})"  # noqa: S608
 
 
 @overload
@@ -227,7 +243,7 @@ class QservClient:
         QservApiSqlError
             Raised if there was some error retrieving results.
         """
-        stmt = text(_QUERY_RESULTS_SQL_FORMAT.format(query_id))
+        stmt = text(_query_results_sql(query_id))
         results = None
         try:
             async with self._session.begin():
@@ -273,7 +289,7 @@ class QservClient:
         """
         try:
             async with self._session.begin():
-                result = await self._session.stream(text(_QUERY_LIST_SQL))
+                result = await self._session.stream(text(_query_list_sql()))
                 processes = {}
                 try:
                     async for row in result:

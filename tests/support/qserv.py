@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import respx
@@ -112,6 +112,7 @@ class MockQserv:
         self._expected_job: JobRun | None
         self._immediate_success: JobRun | None
         self._intermittent_failure: int | None
+        self._mocks: list[MagicMock] = []
         self._next_query_id: int
         self._override_status: Response | None
         self._override_submit: Response | None
@@ -158,6 +159,13 @@ class MockQserv:
         """
         return self._uploaded_table
 
+    def register_mocks(self, mocks: list[MagicMock]) -> None:
+        """Register additional magic mocks to clear on `reset`.
+
+        This helps clean up memory usage for leak testing.
+        """
+        self._mocks = mocks
+
     def reset(self) -> None:
         """Reset the mock to its initial state."""
         self._expected_job = None
@@ -170,6 +178,8 @@ class MockQserv:
         self._results_stored = False
         self._upload_delay = None
         self._uploaded_table = None
+        for mock in self._mocks:
+            mock.reset_mock()
 
     def set_immediate_success(self, job: JobRun | None) -> None:
         """Configure whether to mark the job completed immediately.
@@ -583,7 +593,9 @@ async def register_mock_qserv(
         url = upload_table.schema_url
         respx.mock.get(url).mock(side_effect=mock.get_upload_schema)
 
-    sql = _QUERY_RESULT_SQL
-    with patch.object(qserv, "_QUERY_RESULTS_SQL_FORMAT", new=sql):
-        with patch.object(qserv, "_QUERY_LIST_SQL", new=_QUERY_LIST_SQL):
+    with patch.object(qserv, "_query_results_sql") as results_mock:
+        results_mock.return_value = _QUERY_RESULT_SQL
+        with patch.object(qserv, "_query_list_sql") as list_mock:
+            list_mock.return_value = _QUERY_LIST_SQL
+            mock.register_mocks([results_mock, list_mock])
             yield mock
