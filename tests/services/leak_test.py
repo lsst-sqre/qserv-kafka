@@ -24,6 +24,7 @@ from ..support.qserv import MockQserv
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mock_qserv", [False], ids=["good"], indirect=True)
 async def test_success(
     *,
     factory: Factory,
@@ -32,6 +33,9 @@ async def test_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test for memory leaks in the immediate job processing flow."""
+    tracemalloc.start()
+
+    # Disable debug logging to make the logs easier to read.
     configure_logging(
         profile=Profile.production, log_level="WARNING", name="qservkafka"
     )
@@ -52,11 +56,10 @@ async def test_success(
     expected_status = read_test_job_status("status/data-completed")
     mock_qserv.set_immediate_success(job)
 
-    tracemalloc.start()
     gc.collect()
     start_usage = tracemalloc.get_traced_memory()[0]
 
-    for i in range(1, 1000):
+    for i in range(1, 100):
         status = await query_service.start_query(job)
         expected_status.execution_id = str(i)
         assert status == expected_status

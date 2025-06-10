@@ -64,7 +64,8 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     # It should be possible to immediately run the same query again. This
     # tests that the results were deleted from the database, and thus can be
     # re-added.
-    expected_status.execution_id = "2"
+    assert expected_status.execution_id
+    expected_status.execution_id = str(int(expected_status.execution_id) + 1)
     mock_qserv.set_immediate_success(job)
     status = await query_service.start_query(job)
     assert status == expected_status
@@ -199,13 +200,9 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     expected.query_info = JobQueryInfo(
         start_time=now, end_time=now, total_chunks=10, completed_chunks=4
     )
-    expected.query_info.start_time = ANY
-    expected.query_info.end_time = ANY
     expected.error.code = JobErrorCode.backend_error
     expected.error.message = "Query failed in backend"
     assert status == expected
-    assert status.query_info
-    assert_approximately_now(status.query_info.start_time)
 
     assert await factory.query_state_store.get_active_queries() == set()
 
