@@ -141,13 +141,17 @@ async def kafka_broker(
         yield broker
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(ids=["good", "flaky"], params=[False, True])
 async def mock_qserv(
-    respx_mock: respx.Router, engine: AsyncEngine
+    respx_mock: respx.Router,
+    engine: AsyncEngine,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[MockQserv]:
     """Mock the Qserv REST API."""
     url = str(config.qserv_rest_url)
     async with register_mock_qserv(respx_mock, url, engine) as mock_qserv:
+        if request.param:
+            mock_qserv.set_intermittent_failure()
         yield mock_qserv
 
 

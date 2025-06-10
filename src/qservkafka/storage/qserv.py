@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Mapping, Sequence
+import asyncio
+from collections.abc import (
+    AsyncGenerator,
+    Callable,
+    Coroutine,
+    Mapping,
+    Sequence,
+)
 from copy import copy
 from datetime import timedelta
-from typing import Any
+from functools import wraps
+from typing import Any, Concatenate, overload
 
 from httpx import AsyncClient, HTTPError, Response
 from pydantic import BaseModel, ValidationError
 from safir.database import datetime_from_db
+from safir.slack.blockkit import SlackWebException
 from sqlalchemy import Row, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_scoped_session
@@ -60,6 +69,74 @@ This format takes one parameter, the Qserv query ID.
 __all__ = ["API_VERSION", "QservClient"]
 
 
+@overload
+def _retry_http[**P, T](
+    __func: Callable[Concatenate[QservClient, P], Coroutine[None, None, T]], /
+) -> Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]: ...
+
+
+@overload
+def _retry_http[**P, T](
+    *, delay: float = 1, max_tries: int = 3
+) -> Callable[
+    [Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]],
+    Callable[Concatenate[QservClient, P], Coroutine[None, None, T]],
+]: ...
+
+
+def _retry_http[**P, T](
+    __func: (
+        Callable[Concatenate[QservClient, P], Coroutine[None, None, T]] | None
+    ) = None,
+    /,
+    *,
+    delay: float = 1,
+    max_tries: int = 3,
+) -> (
+    Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]
+    | Callable[
+        [Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]],
+        Callable[Concatenate[QservClient, P], Coroutine[None, None, T]],
+    ]
+):
+    """Retry a failed HTTP action.
+
+    If the wrapped method fails with a transient error, retry it up to
+    ``max_tries`` times. Any method with this decorator must be idempotent,
+    since it may be re-run multiple times.
+
+    Parameters
+    ----------
+    delay
+        How long, in seconds, to wait between tries.
+    max_tries
+        Number of times to retry the transaction.
+    """
+
+    def retry_decorator(
+        f: Callable[Concatenate[QservClient, P], Coroutine[None, None, T]],
+    ) -> Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]:
+        @wraps(f)
+        async def retry_wrapper(
+            client: QservClient, *args: P.args, **kwargs: P.kwargs
+        ) -> T:
+            for _ in range(1, max_tries):
+                try:
+                    return await f(client, *args, **kwargs)
+                except SlackWebException:
+                    msg = f"Qserv API call failed, retrying after {delay}s"
+                    client.logger.exception(msg)
+                    await asyncio.sleep(delay)
+            return await f(client, *args, **kwargs)
+
+        return retry_wrapper
+
+    if __func is not None:
+        return retry_decorator(__func)
+    else:
+        return retry_decorator
+
+
 class QservClient:
     """Client for the Qserv API.
 
@@ -74,6 +151,12 @@ class QservClient:
         HTTP client to use.
     logger
         Logger to use.
+
+    Attributes
+    ----------
+    logger
+        Logger to use. This is a public attribute so that it can be used by
+        the retry decorators.
     """
 
     def __init__(
@@ -82,9 +165,9 @@ class QservClient:
         http_client: AsyncClient,
         logger: BoundLogger,
     ) -> None:
+        self.logger = logger
         self._session = session
         self._client = http_client
-        self._logger = logger
 
     async def cancel_query(self, query_id: int) -> None:
         """Cancel a running query.
@@ -195,7 +278,7 @@ class QservClient:
                 try:
                     async for row in result:
                         msg = "Saw running query"
-                        self._logger.debug(msg, query=row._asdict())
+                        self.logger.debug(msg, query=row._asdict())
                         processes[row.id] = AsyncQueryStatus(
                             query_id=row.id,
                             status=AsyncQueryPhase.EXECUTING,
@@ -208,7 +291,7 @@ class QservClient:
                     await result.close()
         except SQLAlchemyError as e:
             raise QservApiSqlError.from_exception(e) from e
-        self._logger.debug("Listed running queries", count=len(processes))
+        self.logger.debug("Listed running queries", count=len(processes))
         return processes
 
     async def submit_query(self, job: JobRun) -> int:
@@ -273,6 +356,7 @@ class QservClient:
         )
         return len(source)
 
+    @_retry_http
     async def _delete(self, route: str) -> None:
         """Send a DELETE request to the Qserv REST API.
 
@@ -291,13 +375,14 @@ class QservClient:
         try:
             r = await self._client.delete(url, params=params)
             r.raise_for_status()
-            self._logger.debug(
+            self.logger.debug(
                 "Qserv API reply", method="DELETE", url=url, result=r.json()
             )
             self._parse_response(url, r, BaseResponse)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
 
+    @_retry_http
     async def _get[T: BaseResponse](
         self, route: str, params: dict[str, str], result_type: type[T]
     ) -> T:
@@ -328,13 +413,14 @@ class QservClient:
         try:
             r = await self._client.get(url, params=params_with_version)
             r.raise_for_status()
-            self._logger.debug(
+            self.logger.debug(
                 "Qserv API reply", method="GET", url=url, result=r.json()
             )
             return self._parse_response(url, r, result_type)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
 
+    @_retry_http
     async def _get_table(self, url: str) -> bytes:
         """Retrieve user table upload data.
 
@@ -394,6 +480,7 @@ class QservClient:
         except ValidationError as e:
             raise QservApiProtocolError(url, str(e)) from e
 
+    @_retry_http
     async def _post[T: BaseResponse](
         self, route: str, body: BaseModel, result_type: type[T]
     ) -> T:
@@ -424,13 +511,14 @@ class QservClient:
         try:
             r = await self._client.post(url, json=body_dict)
             r.raise_for_status()
-            self._logger.debug(
+            self.logger.debug(
                 "Qserv API reply", method="POST", url=url, result=r.json()
             )
             return self._parse_response(url, r, result_type)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
 
+    @_retry_http
     async def _post_multipart(
         self,
         route: str,
@@ -468,7 +556,7 @@ class QservClient:
                 timeout=(timeout + timedelta(seconds=1)).total_seconds(),
             )
             r.raise_for_status()
-            self._logger.debug(
+            self.logger.debug(
                 "Qserv API reply", method="POST", url=url, result=r.json()
             )
             self._parse_response(url, r, BaseResponse)

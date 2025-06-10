@@ -111,6 +111,7 @@ class MockQserv:
 
         self._expected_job: JobRun | None
         self._immediate_success: JobRun | None
+        self._intermittent_failure: int | None
         self._next_query_id: int
         self._override_status: Response | None
         self._override_submit: Response | None
@@ -161,6 +162,7 @@ class MockQserv:
         """Reset the mock to its initial state."""
         self._expected_job = None
         self._immediate_success = None
+        self._intermittent_failure = None
         self._next_query_id = 1
         self._override_status = None
         self._override_submit = None
@@ -179,6 +181,10 @@ class MockQserv:
             behavior.
         """
         self._immediate_success = job
+
+    def set_intermittent_failure(self) -> None:
+        """Cause all HTTP requests to fail the first time and then succeed."""
+        self._intermittent_failure = 0
 
     def set_status_response(self, response: Response | None) -> None:
         """Override the normal status reponse handling.
@@ -227,6 +233,8 @@ class MockQserv:
         httpx.Response
             Returns 200 with the results of canceling the query.
         """
+        if self._should_fail():
+            return Response(500, text="Soemthing failed")
         self._check_version(request)
         status = self._queries.get(int(query_id))
         if not status:
@@ -260,6 +268,8 @@ class MockQserv:
         httpx.Response
             Returns 200 with the static schema string.
         """
+        if self._should_fail():
+            return Response(500, text="Soemthing failed")
         self._check_version(request)
         assert self._results_stored
         async with self._session.begin():
@@ -280,6 +290,8 @@ class MockQserv:
         httpx.Response
             Returns 200 with the static schema string.
         """
+        if self._should_fail():
+            return Response(500, text="Soemthing failed")
         return Response(200, content=self._UPLOAD_SCHEMA.encode())
 
     def get_upload_source(self, request: Request) -> Response:
@@ -295,6 +307,8 @@ class MockQserv:
         httpx.Response
             Returns 200 with the static data string.
         """
+        if self._should_fail():
+            return Response(500, text="Soemthing failed")
         return Response(200, content=self._UPLOAD_CSV.encode())
 
     def status(self, request: Request, *, query_id: str) -> Response:
@@ -315,6 +329,8 @@ class MockQserv:
         self._check_version(request)
         if self._override_status:
             return self._override_status
+        if self._should_fail():
+            return Response(500, text="Soemthing failed")
         status = self._queries.get(int(query_id))
         if not status:
             return Response(
@@ -373,6 +389,8 @@ class MockQserv:
         AsyncSubmitRequest.model_validate(body_raw)
         if self._override_submit:
             return self._override_submit
+        if self._should_fail():
+            return Response(500, text="Soemthing failed")
         query_id = self._next_query_id
         self._next_query_id += 1
         now = current_datetime()
@@ -471,6 +489,8 @@ class MockQserv:
         httpx.Response
             Returns 200 with the details of the query.
         """
+        if self._should_fail():
+            return Response(500, text="Soemthing failed")
         body = BytesIO(request.content)
         content_type_header = request.headers["Content-Type"]
         content_type, options = parse_options_header(content_type_header)
@@ -514,6 +534,14 @@ class MockQserv:
         url = urlparse(str(request.url))
         query = parse_qs(url.query)
         assert query["version"] == [str(API_VERSION)]
+
+    def _should_fail(self) -> bool:
+        """Check whether to return an intermittent failure."""
+        if self._intermittent_failure is not None:
+            self._intermittent_failure += 1
+            return self._intermittent_failure % 2 == 0
+        else:
+            return False
 
 
 @asynccontextmanager
