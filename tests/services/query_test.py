@@ -181,6 +181,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
         status=AsyncQueryPhase.FAILED,
         total_chunks=10,
         completed_chunks=4,
+        collected_bytes=150,
         query_begin=now,
         last_update=now,
     )

@@ -210,6 +210,9 @@ class ResultProcessor:
             job_id=job.job_id,
             qserv_id=str(status.query_id),
             username=job.owner,
+            total_chunks=status.total_chunks,
+            completed_chunks=status.completed_chunks,
+            result_bytes=status.collected_bytes,
         )
         timestamp = status.last_update or datetime.now(tz=UTC)
         event = QueryAbortEvent(username=job.owner, elapsed=timestamp - start)
@@ -277,15 +280,22 @@ class ResultProcessor:
         # Send a metrics event for the job completion and log it.
         now = datetime.now(tz=UTC)
         qserv_end = status.last_update or now
+        qserv_elapsed = qserv_end - status.query_begin
+        if qserv_elapsed.total_seconds() > 0:
+            qserv_rate = status.collected_bytes / qserv_elapsed.total_seconds()
+        else:
+            qserv_rate = None
         event = QuerySuccessEvent(
             username=job.owner,
             elapsed=now - start,
-            qserv_elapsed=qserv_end - status.query_begin,
+            qserv_elapsed=qserv_elapsed,
             result_elapsed=now - result_start,
             rows=size.rows,
+            qserv_size=status.collected_bytes,
             encoded_size=size.data_bytes,
             result_size=size.total_bytes,
             rate=size.data_bytes / (now - start).total_seconds(),
+            qserv_rate=qserv_rate,
             result_rate=size.data_bytes / (now - result_start).total_seconds(),
             upload_tables=len(job.upload_tables),
             immediate=initial,
@@ -421,6 +431,9 @@ class ResultProcessor:
             username=job.owner,
             query=metadata.model_dump(mode="json", exclude_none=True),
             status=status.model_dump(mode="json", exclude_none=True),
+            total_chunks=status.total_chunks,
+            completed_chunks=status.completed_chunks,
+            result_bytes=status.collected_bytes,
         )
         event = QueryFailureEvent(
             username=job.owner,
