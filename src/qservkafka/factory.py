@@ -219,7 +219,10 @@ class Factory:
             Client for the Qserv API.
         """
         return QservClient(
-            self._session, self._context.http_client, self._logger
+            session=self._session,
+            http_client=self._context.http_client,
+            events=self._context.events,
+            logger=self._logger,
         )
 
     async def create_query_monitor(self) -> QueryMonitor:

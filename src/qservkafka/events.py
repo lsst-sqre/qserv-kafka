@@ -12,11 +12,22 @@ from .models.kafka import JobErrorCode
 
 __all__ = [
     "Events",
+    "QservRetryEvent",
     "QueryAbortEvent",
     "QueryFailureEvent",
     "QuerySuccessEvent",
     "TemporaryTableUploadEvent",
 ]
+
+
+class QservRetryEvent(EventPayload):
+    """Number of retries for a successful Qserv API request.
+
+    This event will only be logged if the API call eventually succeeds but had
+    to be tried more than once.
+    """
+
+    retries: int = Field(..., title="Number of retries")
 
 
 class BaseQueryEvent(EventPayload):
@@ -159,6 +170,8 @@ class Events(EventMaker):
 
     Attributes
     ----------
+    qserv_retry
+        Qserv API call succeeded with retries.
     query_success
         Successful query execution.
     query_failure
@@ -168,6 +181,9 @@ class Events(EventMaker):
     """
 
     async def initialize(self, manager: EventManager) -> None:
+        self.qserv_retry = await manager.create_publisher(
+            "qserv_retry", QservRetryEvent
+        )
         self.query_success = await manager.create_publisher(
             "query_success", QuerySuccessEvent
         )

@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import async_scoped_session
 from structlog.stdlib import BoundLogger
 
 from ..config import config
+from ..events import Events, QservRetryEvent
 from ..exceptions import (
     QservApiFailedError,
     QservApiProtocolError,
@@ -136,14 +137,22 @@ def _retry_http[**P, T](
         async def retry_wrapper(
             client: QservClient, *args: P.args, **kwargs: P.kwargs
         ) -> T:
+            retries = 0
             for _ in range(1, max_tries):
                 try:
-                    return await f(client, *args, **kwargs)
+                    result = await f(client, *args, **kwargs)
+                    break
                 except SlackWebException:
                     msg = f"Qserv API call failed, retrying after {delay}s"
                     client.logger.exception(msg)
                     await asyncio.sleep(delay)
-            return await f(client, *args, **kwargs)
+                    retries += 1
+            else:
+                result = await f(client, *args, **kwargs)
+            if retries > 0:
+                event = QservRetryEvent(retries=retries)
+                await client.events.qserv_retry.publish(event)
+            return result
 
         return retry_wrapper
 
@@ -165,23 +174,32 @@ class QservClient:
         Database session.
     http_client
         HTTP client to use.
+    events
+        Metrics events publishers.
     logger
         Logger to use.
 
     Attributes
     ----------
+    events
+        Metrics events publishers. This is a public attribute so that it can
+        be used by the retry decorator.
     logger
         Logger to use. This is a public attribute so that it can be used by
-        the retry decorators.
+        the retry decorator.
     """
 
     def __init__(
         self,
+        *,
         session: async_scoped_session,
         http_client: AsyncClient,
+        events: Events,
         logger: BoundLogger,
     ) -> None:
+        self.events = events
         self.logger = logger
+
         self._session = session
         self._client = http_client
 
