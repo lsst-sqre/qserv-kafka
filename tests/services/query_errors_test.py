@@ -20,7 +20,7 @@ from qservkafka.models.kafka import (
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 from qservkafka.storage import qserv
 
-from ..support.data import read_test_job_run
+from ..support.data import read_test_job_cancel, read_test_job_run
 from ..support.datetime import assert_approximately_now
 from ..support.qserv import MockQserv
 
@@ -260,3 +260,12 @@ async def test_upload_timeout(
     assert_approximately_now(status.timestamp)
 
     assert await factory.query_state_store.get_active_queries() == set()
+
+
+@pytest.mark.asyncio
+async def test_cancel_unknown(factory: Factory) -> None:
+    """Test canceling an unknown job."""
+    query_service = factory.create_query_service()
+    cancel = read_test_job_cancel("cancel/simple")
+
+    assert await query_service.cancel_query(cancel) is None
