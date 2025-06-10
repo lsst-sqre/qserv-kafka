@@ -26,6 +26,9 @@ from ..support.qserv import MockQserv
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
 async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     job = read_test_job_run("jobs/simple")
     query_service = factory.create_query_service()
@@ -71,6 +74,9 @@ async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
 async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     job = read_test_job_run("jobs/simple")
     query_service = factory.create_query_service()
@@ -201,6 +207,9 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
 async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
     query_service = factory.create_query_service()
     job = read_test_job_run("jobs/data")
