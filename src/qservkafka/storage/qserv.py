@@ -100,6 +100,25 @@ class QservClient:
         """
         await self._delete(f"/query-async/{query_id}")
 
+    async def delete_result(self, query_id: int) -> None:
+        """Delete the results of a query.
+
+        This should be called after the results have been successfully
+        retrieved, although it is not a disaster if it's not called. The
+        results will be automatically garbage-collected after some time.
+
+        Parameters
+        ----------
+        query_id
+            Identifier of the query.
+
+        Raises
+        ------
+        QservApiError
+            Raised if there was some error deleting the results.
+        """
+        await self._delete(f"/query-async/result/{query_id}")
+
     async def get_query_results_gen(
         self, query_id: int
     ) -> AsyncGenerator[Row[Any]]:

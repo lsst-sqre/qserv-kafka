@@ -299,10 +299,16 @@ class ResultProcessor:
             elapsed=(now - result_start).total_seconds(),
         )
 
+        # Delete the results.
+        try:
+            await self._qserv.delete_result(query_id)
+        except QservApiError:
+            logger.exception("Cannot delete results")
+
         # Return the resulting status.
         return JobStatus(
             job_id=job.job_id,
-            execution_id=str(status.query_id),
+            execution_id=str(query_id),
             timestamp=status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.COMPLETED,
             query_info=JobQueryInfo.from_query_status(status),

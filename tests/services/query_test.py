@@ -61,6 +61,14 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     assert_approximately_now(status.query_info.start_time)
     assert_approximately_now(status.query_info.end_time)
 
+    # It should be possible to immediately run the same query again. This
+    # tests that the results were deleted from the database, and thus can be
+    # re-added.
+    expected_status.execution_id = "2"
+    mock_qserv.set_immediate_success(job)
+    status = await query_service.start_query(job)
+    assert status == expected_status
+
     assert await factory.query_state_store.get_active_queries() == set()
 
 
