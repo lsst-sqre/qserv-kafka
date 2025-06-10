@@ -94,7 +94,7 @@ def _retry_http[**P, T](
 
 @overload
 def _retry_http[**P, T](
-    *, delay: float = 1, max_tries: int = 3
+    *, delay: float = 1, max_tries: int = 3, qserv: bool = True
 ) -> Callable[
     [Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]],
     Callable[Concatenate[QservClient, P], Coroutine[None, None, T]],
@@ -109,6 +109,7 @@ def _retry_http[**P, T](
     *,
     delay: float = 1,
     max_tries: int = 3,
+    qserv: bool = True,
 ) -> (
     Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]
     | Callable[
@@ -128,6 +129,9 @@ def _retry_http[**P, T](
         How long, in seconds, to wait between tries.
     max_tries
         Number of times to retry the transaction.
+    qserv
+        Set to `False` if this call is not a call to Qserv and therefore
+        should not generate metrics events.
     """
 
     def retry_decorator(
@@ -149,7 +153,7 @@ def _retry_http[**P, T](
                     retries += 1
             else:
                 result = await f(client, *args, **kwargs)
-            if retries > 0:
+            if qserv and retries > 0:
                 event = QservRetryEvent(retries=retries)
                 await client.events.qserv_retry.publish(event)
             return result
@@ -454,7 +458,7 @@ class QservClient:
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
 
-    @_retry_http
+    @_retry_http(qserv=False)
     async def _get_table(self, url: str) -> bytes:
         """Retrieve user table upload data.
 
