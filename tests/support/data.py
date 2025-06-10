@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import ANY
 
-from qservkafka.models.kafka import JobRun, JobStatus
+from qservkafka.models.kafka import JobCancel, JobRun, JobStatus
 
 __all__ = [
     "read_test_data",
@@ -58,6 +58,23 @@ def read_test_json(filename: str) -> Any:
     path = Path(__file__).parent.parent / "data" / (filename + ".json")
     with path.open("r") as f:
         return json.load(f)
+
+
+def read_test_job_cancel(filename: str) -> JobCancel:
+    """Read test data parsed as a Kafka message to cancel a query.
+
+    Parameters
+    ----------
+    filename
+        File to read relative to the test data directory, without the
+        ``.json`` suffix.
+
+    Returns
+    -------
+    JobCancel
+        Parsed contents of the file.
+    """
+    return JobCancel.model_validate(read_test_json(filename))
 
 
 def read_test_job_run(filename: str) -> JobRun:
