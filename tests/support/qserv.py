@@ -406,7 +406,10 @@ class MockQserv:
             Returns 200 with the details of the query.
         """
         body_raw = json.loads(request.content.decode())
-        assert body_raw["version"] == API_VERSION
+        if config.qserv_rest_send_api_version:
+            assert body_raw["version"] == API_VERSION
+        else:
+            assert "version" not in body_raw
         AsyncSubmitRequest.model_validate(body_raw)
         if self._override_submit:
             return self._override_submit
@@ -538,14 +541,16 @@ class MockQserv:
         # Check the request is correct.
         expected_job = read_test_job_run("jobs/upload")
         upload_table = expected_job.upload_tables[0]
-        assert data == {
+        expected = {
             "database": upload_table.table_name.split(".", 1)[0],
             "table": upload_table.table_name.split(".", 1)[1],
             "fields_terminated_by": ",",
             "charset_name": "utf8",
             "timeout": str(int(config.qserv_upload_timeout.total_seconds())),
-            "version": str(API_VERSION),
         }
+        if config.qserv_rest_send_api_version:
+            expected["version"] = str(API_VERSION)
+        assert data == expected
         assert files == [
             (
                 "schema",
@@ -561,7 +566,10 @@ class MockQserv:
         """Check that the correct API version was added to the parameters."""
         url = urlparse(str(request.url))
         query = parse_qs(url.query)
-        assert query["version"] == [str(API_VERSION)]
+        if config.qserv_rest_send_api_version:
+            assert query["version"] == [str(API_VERSION)]
+        else:
+            assert "version" not in query
 
     def _should_fail(self) -> bool:
         """Check whether to return an intermittent failure."""
@@ -606,11 +614,11 @@ async def register_mock_qserv(
     ingest_url = f"{base_url}/ingest/csv"
     respx_mock.post(ingest_url).mock(side_effect=mock.upload_table)
     base_escaped = re.escape(base_url)
-    regex = rf"{base_escaped}/query-async/(?P<query_id>[0-9]+)\?"
+    regex = rf"{base_escaped}/query-async/(?P<query_id>[0-9]+)"
     respx_mock.delete(url__regex=regex).mock(side_effect=mock.cancel)
-    regex = rf"{base_escaped}/query-async/result/(?P<query_id>[0-9]+)\?"
+    regex = rf"{base_escaped}/query-async/result/(?P<query_id>[0-9]+)"
     respx_mock.delete(url__regex=regex).mock(side_effect=mock.delete_results)
-    regex = rf"{base_escaped}/query-async/status/(?P<query_id>[0-9]+)\?"
+    regex = rf"{base_escaped}/query-async/status/(?P<query_id>[0-9]+)"
     respx_mock.get(url__regex=regex).mock(side_effect=mock.status)
 
     upload_job = read_test_job_run("jobs/upload")
