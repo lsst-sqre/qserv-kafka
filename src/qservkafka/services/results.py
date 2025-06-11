@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import assert_never
 
@@ -13,11 +14,13 @@ from vo_models.uws.types import ExecutionPhase
 from ..config import config
 from ..events import (
     Events,
+    QservProtocol,
+    QservRetryEvent,
     QueryAbortEvent,
     QueryFailureEvent,
     QuerySuccessEvent,
 )
-from ..exceptions import QservApiError, UploadWebError
+from ..exceptions import QservApiError, QservApiSqlError, UploadWebError
 from ..models.kafka import (
     JobError,
     JobErrorCode,
@@ -27,6 +30,7 @@ from ..models.kafka import (
     JobStatus,
 )
 from ..models.qserv import AsyncQueryPhase, AsyncQueryStatus
+from ..models.votable import UploadStats
 from ..storage.qserv import QservClient
 from ..storage.state import QueryStateStore
 from ..storage.votable import VOTableWriter
@@ -264,14 +268,10 @@ class ResultProcessor:
         logger.debug("Processing job completion")
 
         # Retrieve and upload the results.
-        result_start = datetime.now(tz=UTC)
-        timeout = config.result_timeout.total_seconds()
-        results = self._qserv.get_query_results_gen(query_id)
         try:
-            async with asyncio.timeout(timeout):
-                size = await self._votable.store(
-                    job.result_url, job.result_format, results
-                )
+            stats = await self._upload_results_with_retry(
+                query_id, job, start, logger=logger
+            )
         except (QservApiError, UploadWebError, TimeoutError) as e:
             return await self._build_exception_status(
                 query_id, job, e, start=start
@@ -289,24 +289,24 @@ class ResultProcessor:
             username=job.owner,
             elapsed=now - start,
             qserv_elapsed=qserv_elapsed,
-            result_elapsed=now - result_start,
-            rows=size.rows,
+            result_elapsed=stats.elapsed,
+            rows=stats.rows,
             qserv_size=status.collected_bytes,
-            encoded_size=size.data_bytes,
-            result_size=size.total_bytes,
-            rate=size.data_bytes / (now - start).total_seconds(),
+            encoded_size=stats.data_bytes,
+            result_size=stats.total_bytes,
+            rate=stats.data_bytes / (now - start).total_seconds(),
             qserv_rate=qserv_rate,
-            result_rate=size.data_bytes / (now - result_start).total_seconds(),
+            result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
             upload_tables=len(job.upload_tables),
             immediate=initial,
         )
         await self._events.query_success.publish(event)
         logger.info(
             "Job complete and results uploaded",
-            rows=size.rows,
-            data_size=size.data_bytes,
-            total_size=size.total_bytes,
-            elapsed=(now - result_start).total_seconds(),
+            rows=stats.rows,
+            data_size=stats.data_bytes,
+            total_size=stats.total_bytes,
+            elapsed=stats.elapsed.total_seconds(),
         )
 
         # Delete the results.
@@ -323,7 +323,7 @@ class ResultProcessor:
             status=ExecutionPhase.COMPLETED,
             query_info=JobQueryInfo.from_query_status(status),
             result_info=JobResultInfo(
-                total_rows=size.rows,
+                total_rows=stats.rows,
                 result_location=job.result_location,
                 format=job.result_format.format,
             ),
@@ -453,3 +453,109 @@ class ResultProcessor:
             ),
             metadata=metadata,
         )
+
+    async def _upload_results(self, query_id: int, job: JobRun) -> UploadStats:
+        """Retrieve and upload the results.
+
+        Parameters
+        ----------
+        query_id
+            Qserv query ID.
+        job
+            Original query request.
+
+        Returns
+        -------
+        UploadStats
+            Statistics about the upload.
+
+        Raises
+        ------
+        QservApiSqlError
+            Raised if there was a failure retrieving the results via the
+            SQL database connection.
+        UploadWebError
+            Raised if there was a failure to upload the results.
+        TimeoutError
+            Raised if the processing and upload did not complete within the
+            configured timeout.
+        """
+        result_start = datetime.now(tz=UTC)
+        results = self._qserv.get_query_results_gen(query_id)
+        timeout = config.result_timeout.total_seconds()
+        async with asyncio.timeout(timeout):
+            size = await self._votable.store(
+                job.result_url, job.result_format, results
+            )
+            return UploadStats(
+                elapsed=datetime.now(tz=UTC) - result_start, **asdict(size)
+            )
+
+    async def _upload_results_with_retry(
+        self,
+        query_id: int,
+        job: JobRun,
+        start: datetime,
+        *,
+        logger: BoundLogger,
+        delay: float = 1,
+        max_tries: int = 3,
+    ) -> UploadStats:
+        """Retrieve and upload the results, with retries.
+
+        Retry the attempt to retrieve and upload the results on SQL or HTTP
+        error to work around flaky connections to Qserv (and the occasional
+        GCS hiccup). This cannot use the retry logic at the storage level
+        since the SQL call and the HTTP call have to be coordinated.
+
+        Parameters
+        ----------
+        query_id
+            Qserv query ID.
+        job
+            Original query request.
+        start
+            When the query was started.
+        logger
+            Logger to use.
+        delay
+            How long, in seconds, to wait between tries.
+        max_tries
+            Number of times to retry the transaction.
+
+        Returns
+        -------
+        UploadStats
+            Statistics about the upload.
+
+        Raises
+        ------
+        QservApiSqlError
+            Raised if there was a failure retrieving the results via the
+            SQL database connection.
+        UploadWebError
+            Raised if there was a failure to upload the results.
+        TimeoutError
+            Raised if the processing and upload did not complete within the
+            configured timeout.
+        """
+        retries = 0
+        for _ in range(1, max_tries):
+            try:
+                stats = await self._upload_results(query_id, job)
+                break
+            except (QservApiSqlError, UploadWebError) as e:
+                if isinstance(e, QservApiSqlError):
+                    msg = f"SQL call to Qserv failed, retrying after {delay}s"
+                    retries += 1
+                else:
+                    msg = f"Upload of results failed, retrying after {delay}s"
+                logger.exception(msg)
+                await asyncio.sleep(delay)
+        else:
+            stats = await self._upload_results(query_id, job)
+        if retries > 0:
+            protocol = QservProtocol.SQL
+            event = QservRetryEvent(retries=retries, protocol=protocol)
+            await self._events.qserv_retry.publish(event)
+        return stats

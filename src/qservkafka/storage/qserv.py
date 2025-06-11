@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import async_scoped_session
 from structlog.stdlib import BoundLogger
 
 from ..config import config
-from ..events import Events, QservRetryEvent
+from ..events import Events, QservProtocol, QservRetryEvent
 from ..exceptions import (
     QservApiFailedError,
     QservApiProtocolError,
@@ -87,21 +87,25 @@ def _query_results_sql(query_id: int) -> str:
 
 
 @overload
-def _retry_http[**P, T](
+def _retry[**P, T](
     __func: Callable[Concatenate[QservClient, P], Coroutine[None, None, T]], /
 ) -> Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]: ...
 
 
 @overload
-def _retry_http[**P, T](
-    *, delay: float = 1, max_tries: int = 3, qserv: bool = True
+def _retry[**P, T](
+    *,
+    delay: float = 1,
+    max_tries: int = 3,
+    qserv: bool = True,
+    qserv_protocol: QservProtocol = QservProtocol.HTTP,
 ) -> Callable[
     [Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]],
     Callable[Concatenate[QservClient, P], Coroutine[None, None, T]],
 ]: ...
 
 
-def _retry_http[**P, T](
+def _retry[**P, T](
     __func: (
         Callable[Concatenate[QservClient, P], Coroutine[None, None, T]] | None
     ) = None,
@@ -110,6 +114,7 @@ def _retry_http[**P, T](
     delay: float = 1,
     max_tries: int = 3,
     qserv: bool = True,
+    qserv_protocol: QservProtocol = QservProtocol.HTTP,
 ) -> (
     Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]
     | Callable[
@@ -154,7 +159,9 @@ def _retry_http[**P, T](
             else:
                 result = await f(client, *args, **kwargs)
             if qserv and retries > 0:
-                event = QservRetryEvent(retries=retries)
+                event = QservRetryEvent(
+                    retries=retries, protocol=qserv_protocol
+                )
                 await client.events.qserv_retry.publish(event)
             return result
 
@@ -296,6 +303,7 @@ class QservClient:
         result = await self._get(url, {}, AsyncStatusResponse)
         return result.status
 
+    @_retry(qserv_protocol=QservProtocol.SQL)
     async def list_running_queries(self) -> dict[int, AsyncQueryStatus]:
         """Return information about all running queries.
 
@@ -394,7 +402,7 @@ class QservClient:
         )
         return len(source)
 
-    @_retry_http
+    @_retry
     async def _delete(self, route: str) -> None:
         """Send a DELETE request to the Qserv REST API.
 
@@ -420,7 +428,7 @@ class QservClient:
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
 
-    @_retry_http
+    @_retry
     async def _get[T: BaseResponse](
         self, route: str, params: dict[str, str], result_type: type[T]
     ) -> T:
@@ -458,7 +466,7 @@ class QservClient:
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
 
-    @_retry_http(qserv=False)
+    @_retry(qserv=False)
     async def _get_table(self, url: str) -> bytes:
         """Retrieve user table upload data.
 
@@ -518,7 +526,7 @@ class QservClient:
         except ValidationError as e:
             raise QservApiProtocolError(url, str(e)) from e
 
-    @_retry_http
+    @_retry
     async def _post[T: BaseResponse](
         self, route: str, body: BaseModel, result_type: type[T]
     ) -> T:
@@ -556,7 +564,7 @@ class QservClient:
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
 
-    @_retry_http
+    @_retry
     async def _post_multipart(
         self,
         route: str,

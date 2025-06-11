@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import struct
 from dataclasses import dataclass
+from datetime import timedelta
 from enum import Enum
 from typing import Annotated, Any, Self
 
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field, PlainSerializer, PlainValidator
 
 __all__ = [
     "EncodedSize",
+    "UploadStats",
     "VOTableArraySize",
     "VOTablePrimitive",
     "VOTableSize",
@@ -30,6 +32,14 @@ class EncodedSize:
 
     total_bytes: int
     """Total size of the result in bytes, including the XML wrapper."""
+
+
+@dataclass
+class UploadStats(EncodedSize):
+    """Statistics about the uploaded result VOTable."""
+
+    elapsed: timedelta
+    """Time required to process and upload the results."""
 
 
 class VOTableSize(BaseModel):
