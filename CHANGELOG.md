@@ -7,6 +7,26 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-0.6.0'></a>
+## 0.6.0 (2025-06-11)
+
+### Backwards-incompatible changes
+
+- Request version 41 of the Qserv REST API instead of version 39.
+
+### New features
+
+- Correctly handle queries with `MAXREC` set by truncating the results at at `MAXREC` and using the overflow XML footer rather than the regular XML footer if truncation was necessary.
+- Explicitly delete results from Qserv after they have been successfully retrieved.
+- Retry HTTP requests to Qserv, and to retrieve user table uploads, up to three times on HTTP request failure, pausing for one second between requests. This will hopefully work around ongoing network instability.
+- Retry SQL requests to Qserv and result uploads up to three times, pausing for one second between attempts. This will hopefully work around ongoing network instability.
+- Allow disabling the sending of the expected Qserv REST API version on each request. This allows the Qserv Kafka bridge to work with newer Qserv REST API versions without modification, provided that the new REST API is backwards-compatible.
+
+### Other changes
+
+- Add `qserv_size` and `qserv_rate` to the metrics events for success, tracking the Qserv-reported result size and the bytes per second rate of the Qserv execution.
+- Add more metadata from Qserv to the log messages for successful and failed queries.
+
 <a id='changelog-0.5.0'></a>
 ## 0.5.0 (2025-05-30)
 
