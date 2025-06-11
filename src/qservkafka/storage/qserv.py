@@ -392,7 +392,6 @@ class QservClient:
                 "fields_terminated_by": ",",
                 "charset_name": "utf8",
                 "timeout": int(config.qserv_upload_timeout.total_seconds()),
-                "version": API_VERSION,
             },
             files=(
                 ("schema", ("schema.json", schema, "application/json")),
@@ -416,7 +415,10 @@ class QservClient:
         QservApiError
             Raised if something failed when issuing the DELETE request.
         """
-        params = {"version": str(API_VERSION)}
+        if config.qserv_rest_send_api_version:
+            params = {"version": str(API_VERSION)}
+        else:
+            params = None
         url = str(config.qserv_rest_url).rstrip("/") + route
         try:
             r = await self._client.delete(url, params=params)
@@ -454,7 +456,8 @@ class QservClient:
             Raised if something failed when issuing the GET request.
         """
         params_with_version = copy(params)
-        params_with_version["version"] = str(API_VERSION)
+        if config.qserv_rest_send_api_version:
+            params_with_version["version"] = str(API_VERSION)
         url = str(config.qserv_rest_url).rstrip("/") + route
         try:
             r = await self._client.get(url, params=params_with_version)
@@ -552,7 +555,8 @@ class QservClient:
             Raised if something failed when submitting the POST request.
         """
         body_dict = body.model_dump(mode="json", exclude_none=True)
-        body_dict["version"] = API_VERSION
+        if config.qserv_rest_send_api_version:
+            body_dict["version"] = API_VERSION
         url = str(config.qserv_rest_url).rstrip("/") + route
         try:
             r = await self._client.post(url, json=body_dict)
@@ -592,7 +596,8 @@ class QservClient:
             Raised if something failed when submitting the POST request.
         """
         params = dict(data)
-        params["version"] = API_VERSION
+        if config.qserv_rest_send_api_version:
+            params["version"] = API_VERSION
         url = str(config.qserv_rest_url).rstrip("/") + route
         try:
             r = await self._client.post(

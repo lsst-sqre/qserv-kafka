@@ -121,6 +121,16 @@ class Config(BaseSettings):
         ),
     )
 
+    qserv_rest_send_api_version: bool = Field(
+        True,
+        title="Send Qserv REST API version",
+        description=(
+            "If true, send the expected Qserv REST API version as part of"
+            " each request, which will cause Qserv to reject the request if"
+            " the API version is not known"
+        ),
+    )
+
     qserv_rest_timeout: HumanTimedelta = Field(
         timedelta(seconds=30),
         title="Qserv REST timeout",
