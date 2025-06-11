@@ -42,6 +42,10 @@ def test_job_run() -> None:
                         'datatype="char" name="col1"/>'
                     ),
                     "footer": "</TABLE></RESOURCE></VOTable>",
+                    "footerOverflow": (
+                        '</TABLE><INFO name="QUERY_STATUS"'
+                        ' value="OVERFLOW"/></RESOURCE></VOTABLE>'
+                    ),
                 },
                 "columnTypes": [
                     {"name": "col_0", "datatype": "char", "arraysize": "*"}

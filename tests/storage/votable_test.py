@@ -49,7 +49,7 @@ async def assert_encoded_value(
             serialization=JobResultSerialization.BINARY2,
         ),
         column_types=[JobResultColumnType.model_validate(column)],
-        envelope=JobResultEnvelope(header="", footer=""),
+        envelope=JobResultEnvelope(header="", footer="", footer_overflow=""),
     )
     rows = [(data,)]
     logger = get_logger(__name__)

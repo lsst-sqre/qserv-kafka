@@ -101,6 +101,18 @@ class JobResultEnvelope(BaseModel):
         ),
     ]
 
+    footer_overflow: Annotated[
+        str,
+        Field(
+            title="Result XML overflow footer",
+            description=(
+                "VOTable XML footer to use for results that overflow a MAXREC"
+                " setting"
+            ),
+            validation_alias="footerOverflow",
+        ),
+    ]
+
 
 class JobResultType(StrEnum):
     """Possible types for the output format of results."""
@@ -301,6 +313,17 @@ class JobRun(BaseModel):
         Field(
             title="Database to query",
             description="Database to query if not specified in the query",
+        ),
+    ] = None
+
+    maxrec: Annotated[
+        int | None,
+        Field(
+            title="Maximum records",
+            description=(
+                "Truncate and report overflow if the query returns more than"
+                " this number of rows"
+            ),
         ),
     ] = None
 

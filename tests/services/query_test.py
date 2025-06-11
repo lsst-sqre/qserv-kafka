@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 from qservkafka.factory import Factory
-from qservkafka.models.kafka import JobStatus
+from qservkafka.models.kafka import JobRun, JobStatus
+from qservkafka.services.query import QueryService
 
 from ..support.data import (
     read_test_job_cancel,
@@ -14,6 +15,35 @@ from ..support.data import (
 )
 from ..support.datetime import assert_approximately_now
 from ..support.qserv import MockQserv
+
+
+async def assert_query_successful(
+    *,
+    query_service: QueryService,
+    mock_qserv: MockQserv,
+    job: JobRun,
+    expected_status: JobStatus,
+) -> None:
+    """Run a query to completion with immediate results.
+
+    Parameters
+    ----------
+    query_service
+        Query service to test.
+    mock_qserv
+        Qserv mock.
+    job
+        Model of job to run.
+    expected_status
+        Model of status to expect.
+    """
+    mock_qserv.set_immediate_success(job)
+    status = await query_service.start_query(job)
+    assert status == expected_status
+    assert_approximately_now(status.timestamp)
+    assert status.query_info
+    assert_approximately_now(status.query_info.start_time)
+    assert_approximately_now(status.query_info.end_time)
 
 
 @pytest.mark.asyncio
@@ -44,22 +74,24 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     job = read_test_job_run("jobs/data")
     expected_status = read_test_job_status("status/data-completed")
 
-    mock_qserv.set_immediate_success(job)
-    status = await query_service.start_query(job)
-    assert status == expected_status
-    assert_approximately_now(status.timestamp)
-    assert status.query_info
-    assert_approximately_now(status.query_info.start_time)
-    assert_approximately_now(status.query_info.end_time)
+    await assert_query_successful(
+        query_service=query_service,
+        mock_qserv=mock_qserv,
+        job=job,
+        expected_status=expected_status,
+    )
 
     # It should be possible to immediately run the same query again. This
     # tests that the results were deleted from the database, and thus can be
     # re-added.
     assert expected_status.execution_id
     expected_status.execution_id = str(int(expected_status.execution_id) + 1)
-    mock_qserv.set_immediate_success(job)
-    status = await query_service.start_query(job)
-    assert status == expected_status
+    await assert_query_successful(
+        query_service=query_service,
+        mock_qserv=mock_qserv,
+        job=job,
+        expected_status=expected_status,
+    )
 
     assert await factory.query_state_store.get_active_queries() == set()
 
@@ -68,7 +100,7 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
-async def test_start_cancel(factory: Factory) -> None:
+async def test_cancel(factory: Factory) -> None:
     job = read_test_job_run("jobs/simple")
     started_status = read_test_job_status("status/simple-started")
     cancel = read_test_job_cancel("cancel/simple")
@@ -90,3 +122,38 @@ async def test_start_cancel(factory: Factory) -> None:
     assert status.query_info
     assert status.query_info.start_time == start_time
     assert_approximately_now(status.query_info.end_time)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
+async def test_maxrec(factory: Factory, mock_qserv: MockQserv) -> None:
+    query_service = factory.create_query_service()
+    job = read_test_job_run("jobs/data-maxrec")
+    expected_status = read_test_job_status("status/data-maxrec-completed")
+
+    await assert_query_successful(
+        query_service=query_service,
+        mock_qserv=mock_qserv,
+        job=job,
+        expected_status=expected_status,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
+async def test_maxrec_zero(factory: Factory, mock_qserv: MockQserv) -> None:
+    """Test a query with MAXREC set to zero."""
+    query_service = factory.create_query_service()
+    job = read_test_job_run("jobs/data-zero")
+    expected_status = read_test_job_status("status/data-zero-completed")
+
+    await assert_query_successful(
+        query_service=query_service,
+        mock_qserv=mock_qserv,
+        job=job,
+        expected_status=expected_status,
+    )

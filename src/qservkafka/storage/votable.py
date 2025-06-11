@@ -68,7 +68,10 @@ class VOTableEncoder:
         return self._encoded_size + self._wrapper_size
 
     async def encode(
-        self, results: AsyncGenerator[Row[Any] | tuple[Any]]
+        self,
+        results: AsyncGenerator[Row[Any] | tuple[Any]],
+        *,
+        maxrec: int | None = None,
     ) -> AsyncGenerator[bytes]:
         """Encode results into a VOTable with BINARY2 encoding.
 
@@ -76,6 +79,8 @@ class VOTableEncoder:
         ----------
         results
             Async generator that yields one result row at a time.
+        maxrec
+            Maximum record limit, if not `None`.
 
         Yields
         ------
@@ -86,12 +91,18 @@ class VOTableEncoder:
         header = self._config.envelope.header.encode()
         self._wrapper_size += len(header)
         yield header
+
+        # Encode the result data.
         encoded = BytesIO()
         input_line_length = _BASE64_LINE_LENGTH * 3 // 4
         output_lines = UPLOAD_BUFFER_SIZE // (_BASE64_LINE_LENGTH + 1)
         threshold = input_line_length * output_lines
+        overflow = False
         try:
             async for row in results:
+                if maxrec is not None and self._total_rows == maxrec:
+                    overflow = True
+                    break
                 encoded_row = self._encode_row(self._config.column_types, row)
                 self._total_rows += 1
                 self._encoded_size += len(encoded_row)
@@ -106,7 +117,12 @@ class VOTableEncoder:
         finally:
             encoded.close()
             await results.aclose()
-        footer = self._config.envelope.footer.encode()
+
+        # Add the footer, which varies if the results overflowed.
+        if overflow:
+            footer = self._config.envelope.footer_overflow.encode()
+        else:
+            footer = self._config.envelope.footer.encode()
         self._wrapper_size += len(footer)
         yield footer
 
@@ -277,6 +293,8 @@ class VOTableWriter:
         url: str | HttpUrl,
         config: JobResultConfig,
         results: AsyncGenerator[Row[Any]],
+        *,
+        maxrec: int | None = None,
     ) -> EncodedSize:
         """Store the encoded VOTable via an HTTP PUT.
 
@@ -290,6 +308,8 @@ class VOTableWriter:
             columns of the results. This is not checked.
         results
             Async generator that yields one result row at a time.
+        maxrec
+            Maximum record limit, if not `None`.
 
         Returns
         -------
@@ -302,7 +322,7 @@ class VOTableWriter:
             Raised if there was a failure to upload the results.
         """
         encoder = VOTableEncoder(config, self._logger)
-        generator = encoder.encode(results)
+        generator = encoder.encode(results, maxrec=maxrec)
         try:
             mime_type = "application/x-votable+xml; serialization=binary2"
             r = await self._client.put(
