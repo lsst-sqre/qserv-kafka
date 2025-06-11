@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from enum import StrEnum
 
 from pydantic import Field
 from safir.dependencies.metrics import EventMaker
@@ -12,6 +13,7 @@ from .models.kafka import JobErrorCode
 
 __all__ = [
     "Events",
+    "QservProtocol",
     "QservRetryEvent",
     "QueryAbortEvent",
     "QueryFailureEvent",
@@ -20,12 +22,21 @@ __all__ = [
 ]
 
 
+class QservProtocol(StrEnum):
+    """Protocol of Qserv API used."""
+
+    HTTP = "HTTP"
+    SQL = "SQL"
+
+
 class QservRetryEvent(EventPayload):
     """Number of retries for a successful Qserv API request.
 
     This event will only be logged if the API call eventually succeeds but had
     to be tried more than once.
     """
+
+    protocol: QservProtocol = Field(..., title="Protocol of Qserv API")
 
     retries: int = Field(..., title="Number of retries")
 

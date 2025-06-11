@@ -16,6 +16,7 @@ from faststream.kafka.publisher.asyncapi import AsyncAPIDefaultPublisher
 from httpx import ASGITransport, AsyncClient
 from pydantic import MySQLDsn, RedisDsn, SecretStr
 from safir.database import create_async_session, create_database_engine
+from safir.logging import LogLevel, Profile, configure_logging
 from sqlalchemy.ext.asyncio import AsyncEngine
 from structlog import get_logger
 from structlog.stdlib import BoundLogger
@@ -122,6 +123,12 @@ def kafka_router(logger: BoundLogger) -> KafkaRouter:
 
 @pytest.fixture
 def logger() -> BoundLogger:
+    configure_logging(
+        profile=Profile.production,
+        log_level=LogLevel.DEBUG,
+        name="qservkafka",
+        add_timestamp=True,
+    )
     return get_logger("qservkafka")
 
 
@@ -166,9 +173,9 @@ async def mock_qserv(
        )
     """
     url = str(config.qserv_rest_url)
-    async with register_mock_qserv(respx_mock, url, engine) as mock_qserv:
-        if request.param:
-            mock_qserv.set_intermittent_failure()
+    async with register_mock_qserv(
+        respx_mock, url, engine, flaky=request.param
+    ) as mock_qserv:
         yield mock_qserv
 
 

@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
+from itertools import cycle
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
@@ -95,7 +96,17 @@ class _Result(_SchemaBase):
 
 
 class MockQserv:
-    """Mock Qserv that simulates the REST API."""
+    """Mock Qserv that simulates the REST API.
+
+    Parameters
+    ----------
+    session
+        Database session.
+    respx_mock
+        Router for HTTP mocks.
+    flaky
+        Whether to fail every other request.
+    """
 
     _UPLOAD_CSV = "one\ntwo\n"
     """Static table data to return for user table upload."""
@@ -104,14 +115,18 @@ class MockQserv:
     """Static schema to return for user table upload."""
 
     def __init__(
-        self, session: async_scoped_session, respx_mock: respx.Router
+        self,
+        session: async_scoped_session,
+        respx_mock: respx.Router,
+        *,
+        flaky: bool = False,
     ) -> None:
         self._session = session
         self._respx_mock = respx_mock
 
         self._expected_job: JobRun | None
         self._immediate_success: JobRun | None
-        self._intermittent_failure: int | None
+        self._intermittent_failure: int | None = 0 if flaky else None
         self._mocks: list[MagicMock] = []
         self._next_query_id: int
         self._override_status: Response | None
@@ -191,10 +206,6 @@ class MockQserv:
             behavior.
         """
         self._immediate_success = job
-
-    def set_intermittent_failure(self) -> None:
-        """Cause all HTTP requests to fail the first time and then succeed."""
-        self._intermittent_failure = 0
 
     def set_status_response(self, response: Response | None) -> None:
         """Override the normal status reponse handling.
@@ -556,7 +567,11 @@ class MockQserv:
 
 @asynccontextmanager
 async def register_mock_qserv(
-    respx_mock: respx.Router, base_url: str, engine: AsyncEngine
+    respx_mock: respx.Router,
+    base_url: str,
+    engine: AsyncEngine,
+    *,
+    flaky: bool = False,
 ) -> AsyncGenerator[MockQserv]:
     """Mock out the Qserv REST API.
 
@@ -566,6 +581,11 @@ async def register_mock_qserv(
         Mock router.
     base_url
         Base URL on which the mock API should appear to listen.
+    engine
+        Database engine.
+    flaky
+        Whether to simulate a flaky Qserv by returning SQL or HTTP errors
+        every other request.
 
     Returns
     -------
@@ -573,7 +593,7 @@ async def register_mock_qserv(
         Mock Qserv API object.
     """
     session = await create_async_session(engine, get_logger("qservkafka"))
-    mock = MockQserv(session, respx_mock)
+    mock = MockQserv(session, respx_mock, flaky=flaky)
     base_url = str(base_url).rstrip("/")
     respx_mock.post(f"{base_url}/query-async").mock(side_effect=mock.submit)
     ingest_url = f"{base_url}/ingest/csv"
@@ -593,9 +613,16 @@ async def register_mock_qserv(
         url = upload_table.schema_url
         respx.mock.get(url).mock(side_effect=mock.get_upload_schema)
 
+    bad_sql = "SELECT * FROM nonexistent"
     with patch.object(qserv, "_query_results_sql") as results_mock:
-        results_mock.return_value = _QUERY_RESULT_SQL
+        if flaky:
+            results_mock.side_effect = cycle((bad_sql, _QUERY_RESULT_SQL))
+        else:
+            results_mock.return_value = _QUERY_RESULT_SQL
         with patch.object(qserv, "_query_list_sql") as list_mock:
-            list_mock.return_value = _QUERY_LIST_SQL
+            if flaky:
+                list_mock.side_effect = cycle((bad_sql, _QUERY_LIST_SQL))
+            else:
+                list_mock.return_value = _QUERY_LIST_SQL
             mock.register_mocks([results_mock, list_mock])
             yield mock
