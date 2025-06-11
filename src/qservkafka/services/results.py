@@ -485,7 +485,7 @@ class ResultProcessor:
         timeout = config.result_timeout.total_seconds()
         async with asyncio.timeout(timeout):
             size = await self._votable.store(
-                job.result_url, job.result_format, results
+                job.result_url, job.result_format, results, maxrec=job.maxrec
             )
             return UploadStats(
                 elapsed=datetime.now(tz=UTC) - result_start, **asdict(size)

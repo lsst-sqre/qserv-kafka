@@ -1,5 +1,6 @@
 {
   "query": "SELECT TOP 10 * FROM table",
+  "maxrec": 0,
   "database": "dp1",
   "jobID": "uws123",
   "ownerID": "username",

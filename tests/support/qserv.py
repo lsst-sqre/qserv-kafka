@@ -487,10 +487,17 @@ class MockQserv:
         httpx.Response
             Returns 200 with the details of the query.
         """
-        expected = read_test_data("results/data.binary2")
         assert self._expected_job
         header = self._expected_job.result_format.envelope.header
-        footer = self._expected_job.result_format.envelope.footer
+        if self._expected_job.maxrec == 1:
+            expected = read_test_data("results/data-maxrec.binary2")
+            footer = self._expected_job.result_format.envelope.footer_overflow
+        elif self._expected_job.maxrec == 0:
+            expected = "\n"
+            footer = self._expected_job.result_format.envelope.footer_overflow
+        else:
+            expected = read_test_data("results/data.binary2")
+            footer = self._expected_job.result_format.envelope.footer
         assert request.content.decode() == header + expected + footer
         if self._upload_delay:
             await asyncio.sleep(self._upload_delay.total_seconds())

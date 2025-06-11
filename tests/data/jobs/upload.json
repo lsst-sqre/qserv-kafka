@@ -10,7 +10,8 @@
     },
     "envelope": {
       "header": "<VOTable xmlns=\"http://www.ivoa.net/xml/VOTable/v1.3\" version=\"1.3\"><RESOURCE type=\"results\"><TABLE><FIELD ID=\"col_0\" arraysize=\"*\" datatype=\"char\" name=\"col1\"/>",
-      "footer": "</TABLE></RESOURCE></VOTable>"
+      "footer": "</TABLE></RESOURCE></VOTable>",
+      "footerOverflow": "</TABLE><INFO name=\"QUERY_STATUS\" value=\"OVERFLOW\"/></RESOURCE></VOTABLE>"
     },
     "columnTypes": [
       {

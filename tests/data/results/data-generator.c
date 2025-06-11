@@ -1,7 +1,12 @@
 /*
- * Small C program to generate BINARY2-encoded results. Pipe through base64 -w
- * 64 to create (hopefully) the same output as the BINARY2-encoder being
- * tested. Must be updated and rerun whenever the data in data.json changes.
+ * Small C program to generate BINARY2-encoded results. To generate the
+ * results used for comparison, run:
+ *
+ *     ./data-generator | base64 -w 64 >| data.binary2
+ *     ./data-generator maxrec | base64 -w 64 >| data-maxrec.binary2
+ *
+ * Must be updated to match and then rerun whenever the data in data.json
+ * changes.
  */
 
 #include <arpa/inet.h>
@@ -14,7 +19,7 @@
 
 
 int
-main(void)
+main(int argc, char *argv[])
 {
     uint16_t bits, h;
     uint32_t i;
@@ -63,6 +68,10 @@ main(void)
     fwrite("2025-05-23T17:00:35.025", 1, len, stdout); /* j */
     h = 0;
     fwrite(&h, sizeof(h), 1, stdout);       /* k */
+
+    /* Exit here if told to generate the maxrec output. */
+    if (argc > 1 && strcmp(argv[1], "maxrec") == 0)
+        exit(0);
 
     /* Null bitmap for second line. */
     bits = htons(0x2AA0);

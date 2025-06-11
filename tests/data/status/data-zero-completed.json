@@ -1,0 +1,24 @@
+{
+  "job_id": "uws123",
+  "execution_id": "1",
+  "timestamp": 1743540791,
+  "status": "COMPLETED",
+  "query_info": {
+    "start_time": 1743540791,
+    "end_time": 1743540791,
+    "total_chunks": 10,
+    "completed_chunks": 10
+  },
+  "result_info": {
+    "total_rows": 0,
+    "result_location": "https://gcs.example.com/upload",
+    "format": {
+      "type": "VOTable",
+      "serialization": "BINARY2"
+    }
+  },
+  "metadata": {
+    "query": "SELECT TOP 10 * FROM table",
+    "database": "dp1"
+  }
+}
