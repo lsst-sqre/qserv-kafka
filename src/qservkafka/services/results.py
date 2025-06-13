@@ -14,8 +14,8 @@ from vo_models.uws.types import ExecutionPhase
 from ..config import config
 from ..events import (
     Events,
+    QservFailureEvent,
     QservProtocol,
-    QservRetryEvent,
     QueryAbortEvent,
     QueryFailureEvent,
     QuerySuccessEvent,
@@ -539,23 +539,24 @@ class ResultProcessor:
             Raised if the processing and upload did not complete within the
             configured timeout.
         """
-        retries = 0
         for _ in range(1, max_tries):
             try:
-                stats = await self._upload_results(query_id, job)
-                break
+                return await self._upload_results(query_id, job)
             except (QservApiSqlError, UploadWebError) as e:
                 if isinstance(e, QservApiSqlError):
                     msg = f"SQL call to Qserv failed, retrying after {delay}s"
-                    retries += 1
+                    event = QservFailureEvent(protocol=QservProtocol.SQL)
+                    await self._events.qserv_failure.publish(event)
                 else:
                     msg = f"Upload of results failed, retrying after {delay}s"
                 logger.exception(msg)
                 await asyncio.sleep(delay)
-        else:
-            stats = await self._upload_results(query_id, job)
-        if retries > 0:
-            protocol = QservProtocol.SQL
-            event = QservRetryEvent(retries=retries, protocol=protocol)
-            await self._events.qserv_retry.publish(event)
-        return stats
+
+        # Fell through, so failed max_tries - 1 times. Try one more time,
+        # re-raising the exception.
+        try:
+            return await self._upload_results(query_id, job)
+        except QservApiSqlError:
+            event = QservFailureEvent(protocol=QservProtocol.SQL)
+            await self._events.qserv_failure.publish(event)
+            raise
