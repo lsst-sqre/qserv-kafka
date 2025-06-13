@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import SecretStr
 
 from qservkafka.config import config
 from qservkafka.factory import Factory
@@ -181,7 +182,44 @@ async def test_no_api_version(
     )
 
     # Also test starting a job with table upload, since that tests an
-    # additional API endpoints.
+    # additional API endpoint.
+    job = read_test_job_run("jobs/upload")
+    expected_status = read_test_job_status("status/upload-started")
+    expected_status.execution_id = "2"
+
+    mock_qserv.set_immediate_success(None)
+    status = await query_service.start_query(job)
+    assert status == expected_status
+    assert_approximately_now(status.timestamp)
+    assert status.query_info
+    assert_approximately_now(status.query_info.start_time)
+
+    assert await factory.query_state_store.get_active_queries() == {2}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
+async def test_auth(
+    factory: Factory, mock_qserv: MockQserv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test authenticating to the Qserv REST API."""
+    monkeypatch.setattr(config, "qserv_rest_username", "someuser")
+    monkeypatch.setattr(config, "qserv_rest_password", SecretStr("password"))
+    query_service = factory.create_query_service()
+    job = read_test_job_run("jobs/data")
+    expected_status = read_test_job_status("status/data-completed")
+
+    await assert_query_successful(
+        query_service=query_service,
+        mock_qserv=mock_qserv,
+        job=job,
+        expected_status=expected_status,
+    )
+
+    # Also test starting a job with table upload, since that tests an
+    # additional API endpoint.
     job = read_test_job_run("jobs/upload")
     expected_status = read_test_job_status("status/upload-started")
     expected_status.execution_id = "2"
