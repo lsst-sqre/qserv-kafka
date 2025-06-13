@@ -421,7 +421,9 @@ class QservClient:
             params = None
         url = str(config.qserv_rest_url).rstrip("/") + route
         try:
-            r = await self._client.delete(url, params=params)
+            r = await self._client.delete(
+                url, params=params, auth=config.rest_authentication
+            )
             r.raise_for_status()
             self.logger.debug(
                 "Qserv API reply", method="DELETE", url=url, result=r.json()
@@ -460,7 +462,11 @@ class QservClient:
             params_with_version["version"] = str(API_VERSION)
         url = str(config.qserv_rest_url).rstrip("/") + route
         try:
-            r = await self._client.get(url, params=params_with_version)
+            r = await self._client.get(
+                url,
+                params=params_with_version,
+                auth=config.rest_authentication,
+            )
             r.raise_for_status()
             self.logger.debug(
                 "Qserv API reply", method="GET", url=url, result=r.json()
@@ -559,7 +565,9 @@ class QservClient:
             body_dict["version"] = API_VERSION
         url = str(config.qserv_rest_url).rstrip("/") + route
         try:
-            r = await self._client.post(url, json=body_dict)
+            r = await self._client.post(
+                url, json=body_dict, auth=config.rest_authentication
+            )
             r.raise_for_status()
             self.logger.debug(
                 "Qserv API reply", method="POST", url=url, result=r.json()
@@ -605,6 +613,7 @@ class QservClient:
                 data=params,
                 files=files,
                 timeout=(timeout + timedelta(seconds=1)).total_seconds(),
+                auth=config.rest_authentication,
             )
             r.raise_for_status()
             self.logger.debug(

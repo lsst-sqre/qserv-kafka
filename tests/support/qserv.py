@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from base64 import b64encode
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -256,6 +257,7 @@ class MockQserv:
         """
         if self._should_fail():
             return Response(500, text="Soemthing failed")
+        self._check_auth(request)
         self._check_version(request)
         status = self._queries.get(int(query_id))
         if not status:
@@ -291,6 +293,7 @@ class MockQserv:
         """
         if self._should_fail():
             return Response(500, text="Soemthing failed")
+        self._check_auth(request)
         self._check_version(request)
         assert self._results_stored
         async with self._session.begin():
@@ -347,6 +350,7 @@ class MockQserv:
         httpx.Response
             Returns 200 with the details of the query.
         """
+        self._check_auth(request)
         self._check_version(request)
         if self._override_status:
             return self._override_status
@@ -405,6 +409,7 @@ class MockQserv:
         httpx.Response
             Returns 200 with the details of the query.
         """
+        self._check_auth(request)
         body_raw = json.loads(request.content.decode())
         if config.qserv_rest_send_api_version:
             assert body_raw["version"] == API_VERSION
@@ -520,6 +525,7 @@ class MockQserv:
         httpx.Response
             Returns 200 with the details of the query.
         """
+        self._check_auth(request)
         if self._should_fail():
             return Response(500, text="Soemthing failed")
         body = BytesIO(request.content)
@@ -561,6 +567,16 @@ class MockQserv:
         assert not self._uploaded_table, "Too many tables uploaded"
         self._uploaded_table = upload_table.table_name
         return Response(200, json=BaseResponse(success=1).model_dump())
+
+    def _check_auth(self, request: Request) -> None:
+        """Check that authentication credentials were added, if configured."""
+        if config.qserv_rest_username and config.qserv_rest_password:
+            password = config.qserv_rest_password.get_secret_value()
+            auth = f"{config.qserv_rest_username}:{password}"
+            expected = b64encode(auth.encode()).decode()
+            method, seen = request.headers["Authorization"].split(" ", 1)
+            assert method.lower() == "basic"
+            assert seen == expected
 
     def _check_version(self, request: Request) -> None:
         """Check that the correct API version was added to the parameters."""

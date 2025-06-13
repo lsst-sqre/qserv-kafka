@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any, Self
 
 from arq.connections import RedisSettings
-from pydantic import Field, HttpUrl, MySQLDsn, SecretStr, field_validator
+from httpx import USE_CLIENT_DEFAULT, BasicAuth
+from pydantic import (
+    Field,
+    HttpUrl,
+    MySQLDsn,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from safir.arq import ArqMode, build_arq_redis_settings
 from safir.kafka import KafkaConnectionSettings
@@ -121,6 +130,15 @@ class Config(BaseSettings):
         ),
     )
 
+    qserv_rest_password: SecretStr | None = Field(
+        None,
+        title="Qserv REST API password",
+        description=(
+            "HTTP Basic Authentication password. If set, the REST API username"
+            " must also be set."
+        ),
+    )
+
     qserv_rest_send_api_version: bool = Field(
         True,
         title="Send Qserv REST API version",
@@ -141,6 +159,15 @@ class Config(BaseSettings):
     )
 
     qserv_rest_url: HttpUrl = Field(..., title="Qserv REST API URL")
+
+    qserv_rest_username: str | None = Field(
+        None,
+        title="Qserv REST API username",
+        description=(
+            "HTTP Basic Authentication username. If set, the REST API username"
+            " must also be set."
+        ),
+    )
 
     qserv_upload_timeout: HumanTimedelta = Field(
         timedelta(minutes=5),
@@ -178,6 +205,17 @@ class Config(BaseSettings):
         """Redis settings for arq."""
         return build_arq_redis_settings(self.redis_url, self.redis_password)
 
+    @property
+    def rest_authentication(self) -> Any:
+        """Authentication setting for Qserv REST API client."""
+        if self.qserv_rest_username and self.qserv_rest_password:
+            return BasicAuth(
+                username=self.qserv_rest_username,
+                password=self.qserv_rest_password.get_secret_value(),
+            )
+        else:
+            return USE_CLIENT_DEFAULT
+
     @field_validator("qserv_database_url")
     @classmethod
     def _validate_qserv_database_url(cls, v: MySQLDsn) -> MySQLDsn:
@@ -186,6 +224,15 @@ class Config(BaseSettings):
             msg = "Only mysql or mysql+asyncmy DSN schemes are supported"
             raise ValueError(msg)
         return v
+
+    @model_validator(mode="after")
+    def _validate_qserv_rest_authentication(self) -> Self:
+        have_username = self.qserv_rest_username is not None
+        have_password = self.qserv_rest_password is not None
+        if have_username != have_password:
+            msg = "Set both or neither of REST API username and password"
+            raise ValueError(msg)
+        return self
 
 
 config = Config()
