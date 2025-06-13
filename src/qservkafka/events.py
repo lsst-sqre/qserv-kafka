@@ -13,8 +13,8 @@ from .models.kafka import JobErrorCode
 
 __all__ = [
     "Events",
+    "QservFailureEvent",
     "QservProtocol",
-    "QservRetryEvent",
     "QueryAbortEvent",
     "QueryFailureEvent",
     "QuerySuccessEvent",
@@ -29,16 +29,14 @@ class QservProtocol(StrEnum):
     SQL = "SQL"
 
 
-class QservRetryEvent(EventPayload):
-    """Number of retries for a successful Qserv API request.
+class QservFailureEvent(EventPayload):
+    """Unexpected failure sending a Qserv API request.
 
-    This event will only be logged if the API call eventually succeeds but had
-    to be tried more than once.
+    This event will be logged for each low-level API failure (either HTTP or
+    SQL).
     """
 
     protocol: QservProtocol = Field(..., title="Protocol of Qserv API")
-
-    retries: int = Field(..., title="Number of retries")
 
 
 class BaseQueryEvent(EventPayload):
@@ -181,8 +179,8 @@ class Events(EventMaker):
 
     Attributes
     ----------
-    qserv_retry
-        Qserv API call succeeded with retries.
+    qserv_failure
+        Qserv API call failed with a protocol error.
     query_success
         Successful query execution.
     query_failure
@@ -192,8 +190,8 @@ class Events(EventMaker):
     """
 
     async def initialize(self, manager: EventManager) -> None:
-        self.qserv_retry = await manager.create_publisher(
-            "qserv_retry", QservRetryEvent
+        self.qserv_failure = await manager.create_publisher(
+            "qserv_failure", QservFailureEvent
         )
         self.query_success = await manager.create_publisher(
             "query_success", QuerySuccessEvent

@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import async_scoped_session
 from structlog.stdlib import BoundLogger
 
 from ..config import config
-from ..events import Events, QservProtocol, QservRetryEvent
+from ..events import Events, QservFailureEvent, QservProtocol
 from ..exceptions import (
     QservApiFailedError,
     QservApiProtocolError,
@@ -146,24 +146,24 @@ def _retry[**P, T](
         async def retry_wrapper(
             client: QservClient, *args: P.args, **kwargs: P.kwargs
         ) -> T:
-            retries = 0
             for _ in range(1, max_tries):
                 try:
-                    result = await f(client, *args, **kwargs)
-                    break
-                except SlackWebException:
+                    return await f(client, *args, **kwargs)
+                except (QservApiSqlError, SlackWebException):
                     msg = f"Qserv API call failed, retrying after {delay}s"
                     client.logger.exception(msg)
+                    event = QservFailureEvent(protocol=qserv_protocol)
+                    await client.events.qserv_failure.publish(event)
                     await asyncio.sleep(delay)
-                    retries += 1
-            else:
-                result = await f(client, *args, **kwargs)
-            if qserv and retries > 0:
-                event = QservRetryEvent(
-                    retries=retries, protocol=qserv_protocol
-                )
-                await client.events.qserv_retry.publish(event)
-            return result
+
+            # Fell through so failed max_tries - 1 times. Try one last time,
+            # re-raising the exception.
+            try:
+                return await f(client, *args, **kwargs)
+            except (QservApiSqlError, SlackWebException):
+                event = QservFailureEvent(protocol=qserv_protocol)
+                await client.events.qserv_failure.publish(event)
+                raise
 
         return retry_wrapper
 
