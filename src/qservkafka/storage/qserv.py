@@ -43,7 +43,7 @@ from ..models.qserv import (
     BaseResponse,
 )
 
-API_VERSION = 41
+API_VERSION = 43
 """Version of the REST API that this client requests."""
 
 __all__ = ["API_VERSION", "QservClient"]
