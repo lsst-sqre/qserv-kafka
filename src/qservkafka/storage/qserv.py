@@ -397,7 +397,7 @@ class QservClient:
                 ("schema", ("schema.json", schema, "application/json")),
                 ("rows", ("table.csv", source, "text/csv")),
             ),
-            timeout=config.qserv_upload_timeout,
+            timeout=config.qserv_upload_timeout + timedelta(seconds=1),
         )
         return len(source)
 
@@ -617,7 +617,7 @@ class QservClient:
                 params=params,
                 data=data,
                 files=files,
-                timeout=(timeout + timedelta(seconds=1)).total_seconds(),
+                timeout=timeout.total_seconds(),
                 auth=config.rest_authentication,
             )
             r.raise_for_status()
