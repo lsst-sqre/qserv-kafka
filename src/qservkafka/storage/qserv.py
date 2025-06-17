@@ -560,13 +560,17 @@ class QservClient:
         QservApiError
             Raised if something failed when submitting the POST request.
         """
-        body_dict = body.model_dump(mode="json", exclude_none=True)
+        params = {}
         if config.qserv_rest_send_api_version:
-            body_dict["version"] = API_VERSION
+            params["version"] = str(API_VERSION)
+        body_dict = body.model_dump(mode="json", exclude_none=True)
         url = str(config.qserv_rest_url).rstrip("/") + route
         try:
             r = await self._client.post(
-                url, json=body_dict, auth=config.rest_authentication
+                url,
+                params=params,
+                json=body_dict,
+                auth=config.rest_authentication,
             )
             r.raise_for_status()
             self.logger.debug(
@@ -603,14 +607,15 @@ class QservClient:
         QservApiError
             Raised if something failed when submitting the POST request.
         """
-        params = dict(data)
+        params = {}
         if config.qserv_rest_send_api_version:
-            params["version"] = API_VERSION
+            params["version"] = str(API_VERSION)
         url = str(config.qserv_rest_url).rstrip("/") + route
         try:
             r = await self._client.post(
                 url,
-                data=params,
+                params=params,
+                data=data,
                 files=files,
                 timeout=(timeout + timedelta(seconds=1)).total_seconds(),
                 auth=config.rest_authentication,

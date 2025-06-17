@@ -256,7 +256,7 @@ class MockQserv:
             Returns 200 with the results of canceling the query.
         """
         if self._should_fail():
-            return Response(500, text="Soemthing failed")
+            return Response(500, text="Something failed")
         self._check_auth(request)
         self._check_version(request)
         status = self._queries.get(int(query_id))
@@ -292,7 +292,7 @@ class MockQserv:
             Returns 200 with the static schema string.
         """
         if self._should_fail():
-            return Response(500, text="Soemthing failed")
+            return Response(500, text="Something failed")
         self._check_auth(request)
         self._check_version(request)
         assert self._results_stored
@@ -315,7 +315,7 @@ class MockQserv:
             Returns 200 with the static schema string.
         """
         if self._should_fail():
-            return Response(500, text="Soemthing failed")
+            return Response(500, text="Something failed")
         return Response(200, content=self._UPLOAD_SCHEMA.encode())
 
     def get_upload_source(self, request: Request) -> Response:
@@ -332,7 +332,7 @@ class MockQserv:
             Returns 200 with the static data string.
         """
         if self._should_fail():
-            return Response(500, text="Soemthing failed")
+            return Response(500, text="Something failed")
         return Response(200, content=self._UPLOAD_CSV.encode())
 
     def status(self, request: Request, *, query_id: str) -> Response:
@@ -355,7 +355,7 @@ class MockQserv:
         if self._override_status:
             return self._override_status
         if self._should_fail():
-            return Response(500, text="Soemthing failed")
+            return Response(500, text="Something failed")
         status = self._queries.get(int(query_id))
         if not status:
             return Response(
@@ -410,16 +410,13 @@ class MockQserv:
             Returns 200 with the details of the query.
         """
         self._check_auth(request)
+        self._check_version(request)
         body_raw = json.loads(request.content.decode())
-        if config.qserv_rest_send_api_version:
-            assert body_raw["version"] == API_VERSION
-        else:
-            assert "version" not in body_raw
         AsyncSubmitRequest.model_validate(body_raw)
         if self._override_submit:
             return self._override_submit
         if self._should_fail():
-            return Response(500, text="Soemthing failed")
+            return Response(500, text="Something failed")
         query_id = self._next_query_id
         self._next_query_id += 1
         now = current_datetime()
@@ -526,8 +523,9 @@ class MockQserv:
             Returns 200 with the details of the query.
         """
         self._check_auth(request)
+        self._check_version(request)
         if self._should_fail():
-            return Response(500, text="Soemthing failed")
+            return Response(500, text="Something failed")
         body = BytesIO(request.content)
         content_type_header = request.headers["Content-Type"]
         content_type, options = parse_options_header(content_type_header)
@@ -554,8 +552,6 @@ class MockQserv:
             "charset_name": "utf8",
             "timeout": str(int(config.qserv_upload_timeout.total_seconds())),
         }
-        if config.qserv_rest_send_api_version:
-            expected["version"] = str(API_VERSION)
         assert data == expected
         assert files == [
             (
@@ -626,10 +622,11 @@ async def register_mock_qserv(
     session = await create_async_session(engine, get_logger("qservkafka"))
     mock = MockQserv(session, respx_mock, flaky=flaky)
     base_url = str(base_url).rstrip("/")
-    respx_mock.post(f"{base_url}/query-async").mock(side_effect=mock.submit)
-    ingest_url = f"{base_url}/ingest/csv"
-    respx_mock.post(ingest_url).mock(side_effect=mock.upload_table)
     base_escaped = re.escape(base_url)
+    regex = rf"{base_escaped}/query-async"
+    respx_mock.post(url__regex=regex).mock(side_effect=mock.submit)
+    regex = rf"{base_escaped}/ingest/csv"
+    respx_mock.post(url__regex=regex).mock(side_effect=mock.upload_table)
     regex = rf"{base_escaped}/query-async/(?P<query_id>[0-9]+)"
     respx_mock.delete(url__regex=regex).mock(side_effect=mock.cancel)
     regex = rf"{base_escaped}/query-async/result/(?P<query_id>[0-9]+)"
