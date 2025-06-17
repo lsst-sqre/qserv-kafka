@@ -7,6 +7,26 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-0.7.0'></a>
+## 0.7.0 (2025-06-17)
+
+### Backwards-incompatible changes
+
+- Request version 43 of the Qserv REST API instead of version 41.
+- When sending the API version to Qserv's REST API, always send it as a query parameter and never in the request body. The Qserv version 43 API supports this and it's simpler and more consistent.
+
+### New features
+
+- Optionally support HTTP Basic Authentication for Qserv REST API calls.
+
+### Bug fixes
+
+- Fix retries of SQL connection failures when getting the list of active queries.
+
+### Other changes
+
+- Log metrics events for protocol errors when talking to Qserv with separate events for each failed attempt, rather than one event with a count of retries per eventually-successful API call.
+
 <a id='changelog-0.6.0'></a>
 ## 0.6.0 (2025-06-11)
 
