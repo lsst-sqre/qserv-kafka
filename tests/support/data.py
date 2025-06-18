@@ -94,9 +94,7 @@ def read_test_job_run(filename: str) -> JobRun:
     return JobRun.model_validate(read_test_json(filename))
 
 
-def read_test_job_status(
-    filename: str, *, mock_timestamps: bool = True
-) -> JobStatus:
+def read_test_job_status(filename: str) -> JobStatus:
     """Read test data parsed as a Kafka job status message.
 
     Parameters
@@ -104,8 +102,6 @@ def read_test_job_status(
     filename
         File to read relative to the test data directory, without the
         ``.json`` suffix.
-    mock_timestamps
-        Whether to mock out the timestamps so they'll match any time.
 
     Returns
     -------
@@ -113,12 +109,11 @@ def read_test_job_status(
         Parsed contents of the file.
     """
     result = JobStatus.model_validate(read_test_json(filename))
-    if mock_timestamps:
-        result.timestamp = ANY
-        if result.query_info:
-            result.query_info.start_time = ANY
-            if result.query_info.end_time:
-                result.query_info.end_time = ANY
+    result.timestamp = ANY
+    if result.query_info:
+        result.query_info.start_time = ANY
+        if result.query_info.end_time:
+            result.query_info.end_time = ANY
     return result
 
 

@@ -28,7 +28,6 @@ from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 from ..support.arq import run_arq_jobs
 from ..support.data import (
     read_test_job_run,
-    read_test_job_status,
     read_test_job_status_json,
     read_test_json,
 )
@@ -44,12 +43,7 @@ async def test_job_run(
     mock_qserv: MockQserv,
 ) -> None:
     job = read_test_json("jobs/simple")
-    status = read_test_job_status(
-        "status/simple-started", mock_timestamps=False
-    )
-    expected = status.model_dump(mode="json")
-    expected["timestamp"] = ANY
-    expected["queryInfo"]["startTime"] = ANY
+    expected = read_test_job_status_json("status/simple-started")
 
     await kafka_broker.publish(job, config.job_run_topic)
     assert status_publisher.mock
@@ -122,10 +116,7 @@ async def test_job_results(
     mock_qserv: MockQserv,
 ) -> None:
     job = read_test_json("jobs/data")
-    status = read_test_job_status(
-        "status/data-completed", mock_timestamps=False
-    )
-    expected = status.model_dump(mode="json")
+    expected = read_test_job_status_json("status/data-completed")
     assert status_publisher.mock
 
     await kafka_broker.publish(job, config.job_run_topic)
@@ -245,9 +236,7 @@ async def test_job_cancel(
     """Test canceling a job."""
     job = read_test_job_run("jobs/simple")
     job_json = read_test_json("jobs/simple")
-    status = read_test_job_status(
-        "status/simple-aborted", mock_timestamps=False
-    )
+    expected = read_test_job_status_json("status/simple-aborted")
     assert status_publisher.mock
 
     await kafka_broker.publish(job_json, config.job_run_topic)
@@ -259,11 +248,6 @@ async def test_job_cancel(
     await kafka_broker.publish(cancel_json, config.job_cancel_topic)
     await asyncio.sleep(0.1)
 
-    expected = status.model_dump(mode="json")
-    expected["status"] = "ABORTED"
-    expected["timestamp"] = ANY
-    expected["queryInfo"]["startTime"] = ANY
-    expected["queryInfo"]["endTime"] = ANY
     status_publisher.mock.assert_called_once_with(expected)
 
     factory = context_dependency.create_factory()
