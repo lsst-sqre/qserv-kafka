@@ -279,7 +279,7 @@ async def test_job_upload(
     status_publisher: AsyncAPIDefaultPublisher,
     mock_qserv: MockQserv,
 ) -> None:
-    """Test canceling a job."""
+    """Test running a job with table upload."""
     job = read_test_job_run("jobs/upload")
     job_json = read_test_json("jobs/upload")
     status = read_test_job_status_json("status/upload-started")
@@ -289,3 +289,29 @@ async def test_job_upload(
     await asyncio.sleep(0.1)
     status_publisher.mock.assert_called_once_with(status)
     assert mock_qserv.get_uploaded_table() == job.upload_tables[0].table_name
+
+    async_status = mock_qserv.get_status(1)
+    now = current_datetime()
+    await mock_qserv.update_status(
+        1,
+        AsyncQueryStatus(
+            query_id=1,
+            status=AsyncQueryPhase.FAILED,
+            total_chunks=10,
+            completed_chunks=8,
+            collected_bytes=200,
+            query_begin=async_status.query_begin,
+            last_update=now,
+        ),
+    )
+    await asyncio.sleep(1.1)
+    with patch.object(kafka_broker, "publish"):
+        assert await run_arq_jobs(kafka_broker) == 1
+
+    # Now that results have been processed, the table should be deleted.
+    assert mock_qserv.get_uploaded_table() is None
+
+    # There should be no more running jobs.
+    assert context_dependency._process_context
+    state = context_dependency._process_context.state
+    assert await state.get_active_queries() == set()

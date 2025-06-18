@@ -301,6 +301,33 @@ class MockQserv:
         self._results_stored = False
         return Response(200, json={"success": 1}, request=request)
 
+    async def delete_table(
+        self, request: Request, database: str, table: str
+    ) -> Response:
+        """Delete an uploaded table.
+
+        Parameters
+        ----------
+        request
+            Incoming request.
+        database
+            Name of the database.
+        table
+            Name of the table.
+
+        Returns
+        -------
+        httpx.Response
+            Returns 200 on successful deletion.
+        """
+        if self._should_fail():
+            return Response(500, text="Something failed")
+        self._check_auth(request)
+        self._check_version(request)
+        assert f"{database}.{table}" == self._uploaded_table
+        self._uploaded_table = None
+        return Response(200, json={"success": 1}, request=request)
+
     def get_upload_schema(self, request: Request) -> Response:
         """Return the stored schema for table upload.
 
@@ -622,17 +649,18 @@ async def register_mock_qserv(
     """
     session = await create_async_session(engine, get_logger("qservkafka"))
     mock = MockQserv(session, respx_mock, flaky=flaky)
-    base_url = str(base_url).rstrip("/")
-    base_escaped = re.escape(base_url)
-    regex = rf"{base_escaped}/query-async"
+    base = re.escape(str(base_url).rstrip("/"))
+    regex = rf"{base}/query-async"
     respx_mock.post(url__regex=regex).mock(side_effect=mock.submit)
-    regex = rf"{base_escaped}/ingest/csv"
+    regex = rf"{base}/ingest/csv"
     respx_mock.post(url__regex=regex).mock(side_effect=mock.upload_table)
-    regex = rf"{base_escaped}/query-async/(?P<query_id>[0-9]+)"
+    regex = rf"{base}/ingest/table/(?P<database>[^/]+)/(?P<table>[^/?]+)"
+    respx_mock.delete(url__regex=regex).mock(side_effect=mock.delete_table)
+    regex = rf"{base}/query-async/(?P<query_id>[0-9]+)"
     respx_mock.delete(url__regex=regex).mock(side_effect=mock.cancel)
-    regex = rf"{base_escaped}/query-async/result/(?P<query_id>[0-9]+)"
+    regex = rf"{base}/query-async/result/(?P<query_id>[0-9]+)"
     respx_mock.delete(url__regex=regex).mock(side_effect=mock.delete_results)
-    regex = rf"{base_escaped}/query-async/status/(?P<query_id>[0-9]+)"
+    regex = rf"{base}/query-async/status/(?P<query_id>[0-9]+)"
     respx_mock.get(url__regex=regex).mock(side_effect=mock.status)
 
     upload_job = read_test_job_run("jobs/upload")
