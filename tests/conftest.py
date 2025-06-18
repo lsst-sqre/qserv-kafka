@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Generator
 from contextlib import aclosing
+from datetime import timedelta
 
 import pytest
 import pytest_asyncio
@@ -151,9 +152,11 @@ async def kafka_broker(
 
 @pytest_asyncio.fixture(ids=["good"], params=[False])
 async def mock_qserv(
+    *,
     respx_mock: respx.Router,
     engine: AsyncEngine,
     request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncGenerator[MockQserv]:
     """Mock the Qserv REST API.
 
@@ -172,6 +175,9 @@ async def mock_qserv(
            "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
        )
     """
+    if request.param:
+        delay = timedelta(milliseconds=10)
+        monkeypatch.setattr(config, "qserv_retry_delay", delay)
     url = str(config.qserv_rest_url)
     async with register_mock_qserv(
         respx_mock, url, engine, flaky=request.param

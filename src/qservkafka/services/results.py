@@ -498,8 +498,6 @@ class ResultProcessor:
         start: datetime,
         *,
         logger: BoundLogger,
-        delay: float = 1,
-        max_tries: int = 3,
     ) -> UploadStats:
         """Retrieve and upload the results, with retries.
 
@@ -518,10 +516,6 @@ class ResultProcessor:
             When the query was started.
         logger
             Logger to use.
-        delay
-            How long, in seconds, to wait between tries.
-        max_tries
-            Number of times to retry the transaction.
 
         Returns
         -------
@@ -539,10 +533,11 @@ class ResultProcessor:
             Raised if the processing and upload did not complete within the
             configured timeout.
         """
-        for _ in range(1, max_tries):
+        for _ in range(1, config.qserv_retry_count):
             try:
                 return await self._upload_results(query_id, job)
             except (QservApiSqlError, UploadWebError) as e:
+                delay = config.qserv_retry_delay.total_seconds()
                 if isinstance(e, QservApiSqlError):
                     msg = f"SQL call to Qserv failed, retrying after {delay}s"
                     event = QservFailureEvent(protocol=QservProtocol.SQL)

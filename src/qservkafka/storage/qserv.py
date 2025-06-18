@@ -95,8 +95,6 @@ def _retry[**P, T](
 @overload
 def _retry[**P, T](
     *,
-    delay: float = 1,
-    max_tries: int = 3,
     qserv: bool = True,
     qserv_protocol: QservProtocol = QservProtocol.HTTP,
 ) -> Callable[
@@ -111,8 +109,6 @@ def _retry[**P, T](
     ) = None,
     /,
     *,
-    delay: float = 1,
-    max_tries: int = 3,
     qserv: bool = True,
     qserv_protocol: QservProtocol = QservProtocol.HTTP,
 ) -> (
@@ -130,13 +126,11 @@ def _retry[**P, T](
 
     Parameters
     ----------
-    delay
-        How long, in seconds, to wait between tries.
-    max_tries
-        Number of times to retry the transaction.
     qserv
         Set to `False` if this call is not a call to Qserv and therefore
         should not generate metrics events.
+    qserv_protocol
+        Protocol of Qserv API that is being retried, for metrics purposes.
     """
 
     def retry_decorator(
@@ -146,10 +140,11 @@ def _retry[**P, T](
         async def retry_wrapper(
             client: QservClient, *args: P.args, **kwargs: P.kwargs
         ) -> T:
-            for _ in range(1, max_tries):
+            for _ in range(1, config.qserv_retry_count):
                 try:
                     return await f(client, *args, **kwargs)
                 except (QservApiSqlError, SlackWebException):
+                    delay = config.qserv_retry_delay.total_seconds()
                     msg = f"Qserv API call failed, retrying after {delay}s"
                     client.logger.exception(msg)
                     event = QservFailureEvent(protocol=qserv_protocol)
