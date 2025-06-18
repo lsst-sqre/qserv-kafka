@@ -32,6 +32,7 @@ from ..support.qserv import MockQserv
 async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     job = read_test_job_run("jobs/simple")
     query_service = factory.create_query_service()
+    state_store = factory.create_query_state_store()
     now = datetime.now(tz=UTC)
 
     # HTTP failure starting the job.
@@ -70,7 +71,7 @@ async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     expected.error.message = "Qserv request failed: Some error"
     assert status == expected
 
-    assert await factory.query_state_store.get_active_queries() == set()
+    assert await state_store.get_active_queries() == set()
 
 
 @pytest.mark.asyncio
@@ -80,6 +81,7 @@ async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
 async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     job = read_test_job_run("jobs/simple")
     query_service = factory.create_query_service()
+    state_store = factory.create_query_state_store()
     now = datetime.now(tz=UTC)
 
     # HTTP failure getting the job status.
@@ -162,12 +164,13 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     expected.error.message = "Query failed in backend"
     assert status == expected
 
-    assert await factory.query_state_store.get_active_queries() == set()
+    assert await state_store.get_active_queries() == set()
 
 
 @pytest.mark.asyncio
 async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
     query_service = factory.create_query_service()
+    state_store = factory.create_query_state_store()
     now = datetime.now(tz=UTC)
 
     job = read_test_job_run("jobs/tabledata")
@@ -203,7 +206,7 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
     expected.timestamp = ANY
     assert status == expected
 
-    assert await factory.query_state_store.get_active_queries() == set()
+    assert await state_store.get_active_queries() == set()
 
 
 @pytest.mark.asyncio
@@ -212,6 +215,7 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
 )
 async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
     query_service = factory.create_query_service()
+    state_store = factory.create_query_state_store()
     job = read_test_job_run("jobs/data")
     now = datetime.now(tz=UTC)
 
@@ -234,7 +238,7 @@ async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
     assert status == expected
     assert_approximately_now(status.timestamp)
 
-    assert await factory.query_state_store.get_active_queries() == set()
+    assert await state_store.get_active_queries() == set()
 
 
 @pytest.mark.asyncio
@@ -246,6 +250,7 @@ async def test_upload_timeout(
     This should also cover a timeout in retrieving the data from SQL.
     """
     query_service = factory.create_query_service()
+    state_store = factory.create_query_state_store()
     job = read_test_job_run("jobs/data")
 
     mock_qserv.set_immediate_success(job)
@@ -268,7 +273,7 @@ async def test_upload_timeout(
     assert status == expected
     assert_approximately_now(status.timestamp)
 
-    assert await factory.query_state_store.get_active_queries() == set()
+    assert await state_store.get_active_queries() == set()
 
 
 @pytest.mark.asyncio

@@ -51,6 +51,7 @@ async def test_success(
     factory._context.events = events
 
     query_service = factory.create_query_service()
+    state_store = factory.create_query_state_store()
     job = read_test_job_run("jobs/data")
     expected_status = read_test_job_status("status/data-completed")
     mock_qserv.set_immediate_success(job)
@@ -63,7 +64,7 @@ async def test_success(
         expected_status.execution_id = str(i)
         assert status == expected_status
 
-    assert await factory.query_state_store.get_active_queries() == set()
+    assert await state_store.get_active_queries() == set()
 
     mock_qserv.reset()
     respx_mock.reset()
