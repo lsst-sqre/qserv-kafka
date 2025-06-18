@@ -152,7 +152,7 @@ class ResultProcessor:
                 error=e.to_job_error(),
                 metadata=job.to_job_metadata(),
             )
-            await self._state.delete_query(query_id)
+            await self._delete_query_data(query_id, job, logger)
             return update
         match status.status:
             case AsyncQueryPhase.ABORTED:
@@ -173,7 +173,10 @@ class ResultProcessor:
                 result = await self._build_failed_status(job, status, start)
             case _:  # pragma: no cover
                 raise ValueError(f"Unknown phase {status.status}")
-        await self._state.delete_query(query_id)
+
+        # Query was completed, either successfully or unsuccessfully. Delete
+        # any state storage needed for it and return the resulting status.
+        await self._delete_query_data(query_id, job, logger)
         return result
 
     async def publish_status(self, status: JobStatus) -> None:
@@ -453,6 +456,36 @@ class ResultProcessor:
             ),
             metadata=metadata,
         )
+
+    async def _delete_query_data(
+        self, query_id: int, job: JobRun, logger: BoundLogger
+    ) -> None:
+        """Delete stored information for the query.
+
+        Remove the query from the Qserv Kafka bridge state storage and delete
+        any uploaded temporary tables from Qserv.
+
+        Parameters
+        ----------
+        query_id
+            Qserv query ID.
+        job
+            Original query request.
+        logger
+            Logger to use.
+        """
+        await self._state.delete_query(query_id)
+
+        # Delete any temporary tables.
+        for upload in job.upload_tables:
+            try:
+                await self._qserv.delete_table(upload.database, upload.table)
+            except QservApiError as e:
+                logger.exception(
+                    "Unable to delete temporary table, orphaning it",
+                    error=str(e),
+                    table_name=upload.table_name,
+                )
 
     async def _upload_results(self, query_id: int, job: JobRun) -> UploadStats:
         """Retrieve and upload the results.

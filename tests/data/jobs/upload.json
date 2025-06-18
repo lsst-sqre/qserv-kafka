@@ -2,7 +2,8 @@
   "query": "SELECT TOP 10 * FROM user_username.table",
   "jobID": "uws123",
   "ownerID": "username",
-  "resultDestination": "https://gcs.example.com/upload",
+  "resultDestination": "https://results.example.com/1",
+  "resultLocation": "https://gcs.example.com/upload",
   "resultFormat": {
     "format": {
       "type": "VOTable",
@@ -15,9 +16,57 @@
     },
     "columnTypes": [
       {
-        "name": "col_0",
+        "name": "id",
+        "datatype": "int"
+      },
+      {
+        "name": "a",
+        "datatype": "boolean"
+      },
+      {
+        "name": "b",
+        "datatype": "char"
+      },
+      {
+        "name": "c",
+        "datatype": "char",
+        "arraysize": "10"
+      },
+      {
+        "name": "d",
+        "datatype": "char",
+        "arraysize": "*",
+        "requiresUrlRewrite": true
+      },
+      {
+        "name": "e",
+        "datatype": "double"
+      },
+      {
+        "name": "f",
+        "datatype": "float"
+      },
+      {
+        "name": "g",
+        "datatype": "int"
+      },
+      {
+        "name": "h",
+        "datatype": "long"
+      },
+      {
+        "name": "i",
+        "datatype": "char",
+        "arraysize": "4*"
+      },
+      {
+        "name": "j",
         "datatype": "char",
         "arraysize": "*"
+      },
+      {
+        "name": "k",
+        "datatype": "short"
       }
     ]
   },

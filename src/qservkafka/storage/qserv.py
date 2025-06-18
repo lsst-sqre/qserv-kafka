@@ -243,6 +243,23 @@ class QservClient:
         """
         await self._delete(f"/query-async/result/{query_id}")
 
+    async def delete_table(self, database: str, table: str) -> None:
+        """Delete a user table.
+
+        Parameters
+        ----------
+        database
+            Name of the database (normally :samp:`user_{username}`).
+        table
+            Name of the table.
+
+        Raises
+        ------
+        QservApiError
+            Raised if there was some error deleting the table.
+        """
+        await self._delete(f"/ingest/table/{database}/{table}")
+
     async def get_query_results_gen(
         self, query_id: int
     ) -> AsyncGenerator[Row[Any]]:

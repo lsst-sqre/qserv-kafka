@@ -232,3 +232,31 @@ async def test_auth(
     assert_approximately_now(status.query_info.start_time)
 
     assert await factory.query_state_store.get_active_queries() == {2}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
+async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
+    """Test temporary table upload."""
+    query_service = factory.create_query_service()
+    job = read_test_job_run("jobs/upload")
+    completed_status = read_test_job_status("status/upload-completed")
+    started_status = read_test_job_status("status/upload-started")
+
+    await assert_query_successful(
+        query_service=query_service,
+        mock_qserv=mock_qserv,
+        job=job,
+        expected_status=completed_status,
+    )
+    assert mock_qserv.get_uploaded_table() is None
+
+    mock_qserv.set_immediate_success(None)
+    status = await query_service.start_query(job)
+    started_status.execution_id = "2"
+    assert status == started_status
+    assert mock_qserv.get_uploaded_table() == job.upload_tables[0].table_name
+
+    assert await factory.query_state_store.get_active_queries() == {2}
