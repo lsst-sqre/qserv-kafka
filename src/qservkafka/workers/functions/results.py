@@ -25,7 +25,7 @@ async def handle_finished_query(ctx: dict[Any, Any], query_id: int) -> None:
     factory: Factory = ctx["factory"]
     session: async_scoped_session = ctx["session"]
     logger: BoundLogger = ctx["logger"]
-    state = factory.query_state_store
+    state = factory.create_query_state_store()
 
     query = await state.get_query(query_id)
     if not query:

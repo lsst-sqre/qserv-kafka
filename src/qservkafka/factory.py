@@ -16,7 +16,6 @@ from safir.database import create_database_engine
 from safir.metrics import EventManager
 from safir.redis import PydanticRedisStorage
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
-from structlog import get_logger
 from structlog.stdlib import BoundLogger
 
 from .config import config
@@ -67,13 +66,6 @@ class ProcessContext:
     redis: Redis
     """Connection pool for state-tracking Redis."""
 
-    state: QueryStateStore
-    """Storage for running query state.
-
-    This will eventually move out of the process context once the state has
-    been moved into Qserv.
-    """
-
     @classmethod
     async def create(
         cls,
@@ -91,8 +83,6 @@ class ProcessContext:
         ProcessContext
             Shared context for a Qserv Kafka bridge process.
         """
-        logger = get_logger("qservkafka")
-
         # Qserv currently uses a self-signed certificate.
         limits = Limits(max_connections=config.qserv_rest_max_connections)
         http_client = AsyncClient(
@@ -124,10 +114,6 @@ class ProcessContext:
             timeout=REDIS_POOL_TIMEOUT,
         )
         redis_client = Redis.from_pool(redis_pool)
-        redis_storage = PydanticRedisStorage(
-            datatype=Query, redis=redis_client, key_prefix="query:"
-        )
-        state_store = QueryStateStore(redis_storage, logger)
 
         # Create the database engine.
         engine = create_database_engine(
@@ -163,7 +149,6 @@ class ProcessContext:
             event_manager=event_manager,
             events=events,
             redis=redis_client,
-            state=state_store,
         )
 
     async def aclose(self) -> None:
@@ -205,10 +190,18 @@ class Factory:
         self._session = session
         self._logger = logger
 
-    @property
-    def query_state_store(self) -> QueryStateStore:
-        """Underlying state storage for queries."""
-        return self._context.state
+    def create_query_state_store(self) -> QueryStateStore:
+        """Create the storage client for query state.
+
+        Returns
+        -------
+        QueryStateStore
+            Client for query state.
+        """
+        redis_storage = PydanticRedisStorage(
+            datatype=Query, redis=self._context.redis, key_prefix="query:"
+        )
+        return QueryStateStore(redis_storage, self._logger)
 
     def create_qserv_client(self) -> QservClient:
         """Create a client for talking to the Qserv API.
@@ -244,7 +237,7 @@ class Factory:
             result_processor=self.create_result_processor(),
             qserv_client=self.create_qserv_client(),
             arq_queue=arq_queue,
-            state_store=self.query_state_store,
+            state_store=self.create_query_state_store(),
             events=self._context.events,
             logger=self._logger,
         )
@@ -264,7 +257,7 @@ class Factory:
         """
         return QueryService(
             qserv_client=self.create_qserv_client(),
-            state_store=self.query_state_store,
+            state_store=self.create_query_state_store(),
             result_processor=self.create_result_processor(),
             events=self._context.events,
             logger=self._logger,
@@ -280,7 +273,7 @@ class Factory:
         """
         return ResultProcessor(
             qserv_client=self.create_qserv_client(),
-            state_store=self.query_state_store,
+            state_store=self.create_query_state_store(),
             votable_writer=VOTableWriter(
                 self._context.http_client, self._logger
             ),

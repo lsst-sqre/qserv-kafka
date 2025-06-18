@@ -108,9 +108,9 @@ async def test_job_run(
         headers={"Content-Type": "application/json"},
     )
 
-    assert context_dependency._process_context
-    state = context_dependency._process_context.state
-    assert await state.get_active_queries() == set()
+    factory = context_dependency.create_factory()
+    state_store = factory.create_query_state_store()
+    assert await state_store.get_active_queries() == set()
 
 
 @pytest.mark.asyncio
@@ -161,9 +161,9 @@ async def test_job_results(
         headers={"Content-Type": "application/json"},
     )
 
-    assert context_dependency._process_context
-    state = context_dependency._process_context.state
-    assert await state.get_active_queries() == set()
+    factory = context_dependency.create_factory()
+    state_store = factory.create_query_state_store()
+    assert await state_store.get_active_queries() == set()
 
 
 @pytest.mark.asyncio
@@ -229,9 +229,9 @@ async def test_job_result_error(
         headers={"Content-Type": "application/json"},
     )
 
-    assert context_dependency._process_context
-    state = context_dependency._process_context.state
-    assert await state.get_active_queries() == set()
+    factory = context_dependency.create_factory()
+    state_store = factory.create_query_state_store()
+    assert await state_store.get_active_queries() == set()
 
 
 @pytest.mark.asyncio
@@ -266,9 +266,9 @@ async def test_job_cancel(
     expected["queryInfo"]["endTime"] = ANY
     status_publisher.mock.assert_called_once_with(expected)
 
-    assert context_dependency._process_context
-    state = context_dependency._process_context.state
-    assert await state.get_active_queries() == set()
+    factory = context_dependency.create_factory()
+    state_store = factory.create_query_state_store()
+    assert await state_store.get_active_queries() == set()
 
 
 @pytest.mark.asyncio
@@ -312,6 +312,6 @@ async def test_job_upload(
     assert mock_qserv.get_uploaded_table() is None
 
     # There should be no more running jobs.
-    assert context_dependency._process_context
-    state = context_dependency._process_context.state
-    assert await state.get_active_queries() == set()
+    factory = context_dependency.create_factory()
+    state_store = factory.create_query_state_store()
+    assert await state_store.get_active_queries() == set()
