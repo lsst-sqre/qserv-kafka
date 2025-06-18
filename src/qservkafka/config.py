@@ -169,6 +169,20 @@ class Config(BaseSettings):
         ),
     )
 
+    qserv_retry_count: int = Field(
+        3,
+        title="Number of Qserv retries",
+        description=(
+            "How many times to retry a Qserv API call before giving up"
+        ),
+    )
+
+    qserv_retry_delay: HumanTimedelta = Field(
+        timedelta(seconds=1),
+        title="Delay between Qserv retries",
+        description="How long to pause between retries of Qserv API calls",
+    )
+
     qserv_upload_timeout: HumanTimedelta = Field(
         timedelta(minutes=5),
         title="Qserv table upload timeout",
