@@ -438,6 +438,7 @@ class MockQserv:
                 total_chunks=10,
                 completed_chunks=0,
                 query_begin=now,
+                last_update=now,
             )
             async with self._session.begin():
                 process = _Process(
