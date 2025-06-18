@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
-from unittest.mock import ANY
 
 import pytest
 from aiokafka import AIOKafkaConsumer
@@ -23,7 +22,7 @@ from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 from ..support.arq import run_arq_jobs
 from ..support.data import (
     read_test_job_run,
-    read_test_job_status,
+    read_test_job_status_json,
     read_test_json,
 )
 from ..support.qserv import MockQserv
@@ -49,10 +48,7 @@ async def test_success(
 
     job = read_test_job_run("jobs/data")
     job_json = read_test_json("jobs/data")
-    status = read_test_job_status(
-        "status/data-completed", mock_timestamps=False
-    )
-    expected = status.model_dump(mode="json")
+    expected = read_test_job_status_json("status/data-completed")
 
     mock_qserv.set_upload_delay(timedelta(seconds=1))
     app = create_app()
@@ -79,9 +75,6 @@ async def test_success(
         )
         await asyncio.sleep(1.1)
 
-    expected["queryInfo"]["startTime"] = ANY
-    expected["queryInfo"]["endTime"] = ANY
-    expected["timestamp"] = ANY
     assert await run_arq_jobs() == 1
     raw_message = await kafka_status_consumer.getone()
     message = json.loads(raw_message.value.decode())
