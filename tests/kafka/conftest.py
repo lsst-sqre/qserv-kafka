@@ -8,7 +8,6 @@ from datetime import timedelta
 import pytest
 import pytest_asyncio
 from aiokafka import AIOKafkaConsumer
-from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 from faststream.kafka import KafkaBroker
 from pydantic import RedisDsn
@@ -24,14 +23,14 @@ from qservkafka.main import create_app
 from ..support.qserv import MockQserv
 
 
-@pytest_asyncio.fixture
-async def app(
+@pytest.fixture
+def app(
     *,
     kafka_connection_settings: KafkaConnectionSettings,
     mock_qserv: MockQserv,
     redis: RedisContainer,
     monkeypatch: pytest.MonkeyPatch,
-) -> AsyncGenerator[FastAPI]:
+) -> FastAPI:
     redis_host = redis.get_container_host_ip()
     redis_port = redis.get_exposed_port(6379)
     redis_url = RedisDsn(f"redis://{redis_host}:{redis_port}/0")
@@ -40,9 +39,7 @@ async def app(
     monkeypatch.setattr(config, "redis_url", redis_url)
     monkeypatch.setattr(config, "kafka", kafka_connection_settings)
     monkeypatch.setattr(config, "qserv_poll_interval", poll_interval)
-    app = create_app()
-    async with LifespanManager(app):
-        yield app
+    return create_app()
 
 
 @pytest.fixture(scope="session")
