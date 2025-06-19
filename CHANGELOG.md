@@ -7,6 +7,14 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-1.0.0'></a>
+## 1.0.0 (2025-06-19)
+
+### New features
+
+- Delete temporary table uploads from Qserv after completion of the query.
+- Allow configuration of the number of retries for Qserv API network failures and the delay between retries. The defaults are 3 and one second, respectively.
+
 <a id='changelog-0.7.0'></a>
 ## 0.7.0 (2025-06-17)
 
