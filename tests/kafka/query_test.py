@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from aiokafka import AIOKafkaConsumer
+from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 from faststream.kafka import KafkaBroker
 from testcontainers.redis import RedisContainer
@@ -17,6 +18,7 @@ from qservkafka.dependencies.context import context_dependency
 from qservkafka.factory import Factory
 from qservkafka.models.kafka import JobRun, JobStatus
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
+from qservkafka.models.state import Query
 
 from ..support.arq import run_arq_jobs
 from ..support.data import (
@@ -136,33 +138,72 @@ async def test_success(
     mock_qserv: MockQserv,
     redis: RedisContainer,
 ) -> None:
-    factory = context_dependency.create_factory()
+    async with LifespanManager(app):
+        factory = context_dependency.create_factory()
 
-    job = await start_query(kafka_broker, "jobs/data")
-    status = await wait_for_status(
-        kafka_status_consumer, "status/data-started"
-    )
-    assert status.query_info
+        job = await start_query(kafka_broker, "jobs/data")
+        status = await wait_for_status(
+            kafka_status_consumer, "status/data-started"
+        )
+        assert status.query_info
 
-    now = datetime.now(tz=UTC)
-    await mock_qserv.store_results(job)
-    await mock_qserv.update_status(
-        1,
-        AsyncQueryStatus(
-            query_id=1,
-            status=AsyncQueryPhase.COMPLETED,
-            total_chunks=10,
-            completed_chunks=10,
-            collected_bytes=250,
-            query_begin=status.query_info.start_time,
-            last_update=now,
-        ),
-    )
+        now = datetime.now(tz=UTC)
+        await mock_qserv.store_results(job)
+        await mock_qserv.update_status(
+            1,
+            AsyncQueryStatus(
+                query_id=1,
+                status=AsyncQueryPhase.COMPLETED,
+                total_chunks=10,
+                completed_chunks=10,
+                collected_bytes=250,
+                query_begin=status.query_info.start_time,
+                last_update=now,
+            ),
+        )
 
-    await wait_for_dispatch(factory, 1)
+        await wait_for_dispatch(factory, 1)
+
+    # Run the background tsk queue.
     assert await run_arq_jobs() == 1
     await wait_for_status(kafka_status_consumer, "status/data-completed")
 
     # Ensure all query state has been deleted.
     redis_client = redis.get_client()
     assert set(redis_client.scan_iter("query:*")) == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_missing_executing(
+    *,
+    app: FastAPI,
+    kafka_broker: KafkaBroker,
+    kafka_status_consumer: AIOKafkaConsumer,
+    mock_qserv: MockQserv,
+    redis: RedisContainer,
+) -> None:
+    """Test queries that are not in the process list but still executing."""
+    async with LifespanManager(app):
+        factory = context_dependency.create_factory()
+        await start_query(kafka_broker, "jobs/data")
+        await wait_for_status(kafka_status_consumer, "status/data-started")
+
+        # Remove the query from the running query list. It should be
+        # dispatched to the result worker.
+        await mock_qserv.remove_running_query(1)
+        await wait_for_dispatch(factory, 1)
+
+    # Run the backend worker. It should process the job and send the same
+    # status update we already sent (since nothing has changed).
+    assert await run_arq_jobs() == 1
+    await wait_for_status(kafka_status_consumer, "status/data-started")
+
+    # The query should still be active and should no longer be marked as
+    # dispatched, so it will be checked again the next time through the
+    # monitor loop.
+    redis_client = redis.get_client()
+    raw_query = redis_client.get("query:1")
+    assert raw_query
+    query = Query.model_validate(json.loads(raw_query))
+    assert not query.result_queued

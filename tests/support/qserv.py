@@ -182,6 +182,22 @@ class MockQserv:
         """
         self._mocks = mocks
 
+    async def remove_running_query(self, query_id: int) -> None:
+        """Remove a running query from the process list.
+
+        Normally this is done as part of `update_status` with a completed
+        status, but allow it to be done separately to test handling of
+        still-executing queries that no longer appear in the process list.
+
+        Parameters
+        ----------
+        query_id
+            Qserv query ID.
+        """
+        async with self._session.begin():
+            stmt = delete(_Process).where(_Process.id == query_id)
+            await self._session.execute(stmt)
+
     def reset(self) -> None:
         """Reset the mock to its initial state."""
         self._expected_job = None
@@ -493,8 +509,8 @@ class MockQserv:
             New query status.
         """
         assert query_id in self._queries
-        async with self._session.begin():
-            if status.status == AsyncQueryPhase.EXECUTING:
+        if status.status == AsyncQueryPhase.EXECUTING:
+            async with self._session.begin():
                 stmt = select(_Process).where(_Process.id == query_id)
                 results = await self._session.execute(stmt)
                 process = results.scalars().first()
@@ -502,9 +518,8 @@ class MockQserv:
                 assert status.last_update
                 process.updated = datetime_to_db(status.last_update)
                 process.chunks_comp = status.completed_chunks
-            else:
-                dstmt = delete(_Process).where(_Process.id == query_id)
-                await self._session.execute(dstmt)
+        else:
+            await self.remove_running_query(query_id)
         self._queries[query_id] = status
 
     async def upload(self, request: Request) -> Response:
