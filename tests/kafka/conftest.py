@@ -3,16 +3,46 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Iterator
+from datetime import timedelta
 
 import pytest
 import pytest_asyncio
 from aiokafka import AIOKafkaConsumer
+from asgi_lifespan import LifespanManager
+from fastapi import FastAPI
 from faststream.kafka import KafkaBroker
+from pydantic import RedisDsn
+from safir.arq import ArqMode
 from safir.kafka import KafkaConnectionSettings, SecurityProtocol
 from safir.testing.containers import FullKafkaContainer
 from testcontainers.core.network import Network
+from testcontainers.redis import RedisContainer
 
 from qservkafka.config import config
+from qservkafka.main import create_app
+
+from ..support.qserv import MockQserv
+
+
+@pytest_asyncio.fixture
+async def app(
+    *,
+    kafka_connection_settings: KafkaConnectionSettings,
+    mock_qserv: MockQserv,
+    redis: RedisContainer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncGenerator[FastAPI]:
+    redis_host = redis.get_container_host_ip()
+    redis_port = redis.get_exposed_port(6379)
+    redis_url = RedisDsn(f"redis://{redis_host}:{redis_port}/0")
+    poll_interval = timedelta(milliseconds=100)
+    monkeypatch.setattr(config, "arq_mode", ArqMode.production)
+    monkeypatch.setattr(config, "redis_url", redis_url)
+    monkeypatch.setattr(config, "kafka", kafka_connection_settings)
+    monkeypatch.setattr(config, "qserv_poll_interval", poll_interval)
+    app = create_app()
+    async with LifespanManager(app):
+        yield app
 
 
 @pytest.fixture(scope="session")

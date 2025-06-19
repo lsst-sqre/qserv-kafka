@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-__all__ = ["assert_approximately_now"]
+__all__ = [
+    "assert_approximately_now",
+    "milliseconds_to_timestamp",
+]
 
 
 def assert_approximately_now(time: datetime | None) -> None:
@@ -12,3 +15,8 @@ def assert_approximately_now(time: datetime | None) -> None:
     assert time
     now = datetime.now(tz=UTC)
     assert now - timedelta(seconds=5) <= time <= now
+
+
+def milliseconds_to_timestamp(milliseconds: int) -> datetime:
+    """Convert from milliseconds since epoch to a `~datetime.datetime`."""
+    return datetime.fromtimestamp(milliseconds / 1000, tz=UTC)
