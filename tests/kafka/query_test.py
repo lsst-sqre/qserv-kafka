@@ -16,6 +16,7 @@ from safir.kafka import KafkaConnectionSettings
 from testcontainers.redis import RedisContainer
 
 from qservkafka.config import config
+from qservkafka.dependencies.context import context_dependency
 from qservkafka.main import create_app
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 
@@ -75,7 +76,17 @@ async def test_success(
                 last_update=now,
             ),
         )
-        await asyncio.sleep(1.1)
+
+        factory = context_dependency.create_factory()
+        state_store = factory.create_query_state_store()
+        for _ in range(11):
+            query = await state_store.get_query(1)
+            assert query
+            if query.result_queued:
+                break
+            await asyncio.sleep(0.1)
+        assert query
+        assert query.result_queued
 
     assert await run_arq_jobs() == 1
     raw_message = await kafka_status_consumer.getone()
