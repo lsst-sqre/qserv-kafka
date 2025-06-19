@@ -48,7 +48,8 @@ async def test_success(
 
     job = read_test_job_run("jobs/data")
     job_json = read_test_json("jobs/data")
-    expected = read_test_job_status_json("status/data-completed")
+    status_started = read_test_job_status_json("status/data-started")
+    status_completed = read_test_job_status_json("status/data-completed")
 
     mock_qserv.set_upload_delay(timedelta(seconds=1))
     app = create_app()
@@ -56,8 +57,9 @@ async def test_success(
         await kafka_broker.publish(job_json, config.job_run_topic)
         await mock_qserv.store_results(job)
 
-        await asyncio.sleep(0.1)
-        await kafka_status_consumer.getmany()
+        raw_message = await kafka_status_consumer.getone()
+        message = json.loads(raw_message.value.decode())
+        assert message == status_started
 
         async_status = mock_qserv.get_status(1)
         now = datetime.now(tz=UTC)
@@ -81,7 +83,7 @@ async def test_success(
     if message["status"] == "EXECUTING":
         raw_message = await kafka_status_consumer.getone()
         message = json.loads(raw_message.value.decode())
-    assert message == expected
+    assert message == status_completed
 
     # Ensure all query state has been deleted.
     redis_client = redis.get_client()
