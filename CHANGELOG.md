@@ -7,6 +7,13 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-1.0.1'></a>
+## 1.0.1 (2025-06-27)
+
+### Bug fixes
+
+- Fix query start and end times in status responses. Previously, the start time and, for canceled or completed queries, the end time were taken directly from the Qserv query information. This includes only time spent by Qserv, which results in an inaccurate picture of the query execution time in the TAP UWS table. Instead measure query timings from the time the query was received by the bridge to when it completes uploading of the results, or is aware of a failure.
+
 <a id='changelog-1.0.0'></a>
 ## 1.0.0 (2025-06-19)
 
