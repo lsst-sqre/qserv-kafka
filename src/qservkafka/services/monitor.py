@@ -114,9 +114,10 @@ class QueryMonitor:
                 job, status, query.start
             )
             await self._state.update_status(query_id, status)
+            logger.debug("Sending status update for running query")
             return update
         else:
             await self._arq.enqueue("handle_finished_query", query_id)
             await self._state.mark_queued_query(query_id)
-            self._logger.debug("Dispatched finished query to worker")
+            logger.info("Dispatched finished query to worker")
             return None
