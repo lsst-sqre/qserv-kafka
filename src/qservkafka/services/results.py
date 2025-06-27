@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import assert_never
 
 from faststream.kafka import KafkaBroker
+from safir.datetime import format_datetime_for_logging
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
@@ -98,6 +99,7 @@ class ResultProcessor:
             job_id=job.job_id,
             qserv_id=str(status.query_id),
             username=job.owner,
+            start_time=format_datetime_for_logging(start),
         )
         return JobStatus(
             job_id=job.job_id,
@@ -219,6 +221,7 @@ class ResultProcessor:
             job_id=job.job_id,
             qserv_id=str(status.query_id),
             username=job.owner,
+            start_time=format_datetime_for_logging(start),
             total_chunks=status.total_chunks,
             completed_chunks=status.completed_chunks,
             result_bytes=status.collected_bytes,
@@ -270,7 +273,10 @@ class ResultProcessor:
         """
         query_id = status.query_id
         logger = self._logger.bind(
-            job_id=job.job_id, qserv_id=str(query_id), username=job.owner
+            job_id=job.job_id,
+            qserv_id=str(query_id),
+            username=job.owner,
+            start_time=format_datetime_for_logging(start),
         )
         logger.debug("Processing job completion")
 
@@ -369,7 +375,10 @@ class ResultProcessor:
             Status for the query.
         """
         logger = self._logger.bind(
-            job_id=job.job_id, qserv_id=str(query_id), username=job.owner
+            job_id=job.job_id,
+            qserv_id=str(query_id),
+            username=job.owner,
+            start_time=format_datetime_for_logging(start),
         )
         now = datetime.now(tz=UTC)
         elapsed = now - start
@@ -441,6 +450,7 @@ class ResultProcessor:
             job_id=job.job_id,
             qserv_id=str(status.query_id),
             username=job.owner,
+            start_time=format_datetime_for_logging(start),
             query=metadata.model_dump(mode="json", exclude_none=True),
             status=status.model_dump(mode="json", exclude_none=True),
             total_chunks=status.total_chunks,
