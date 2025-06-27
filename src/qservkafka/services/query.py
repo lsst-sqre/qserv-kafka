@@ -115,12 +115,12 @@ class QueryService:
         JobStatus
             Initial status of the job.
         """
+        start = datetime.now(tz=UTC)
         metadata = job.to_job_metadata()
         query_for_logging = metadata.model_dump(mode="json", exclude_none=True)
         logger = self._logger.bind(
             job_id=job.job_id, username=job.owner, query=query_for_logging
         )
-        start = datetime.now(tz=UTC)
 
         # Check that the job request is supported.
         serialization = job.result_format.format.serialization

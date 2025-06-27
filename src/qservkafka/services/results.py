@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import assert_never
 
 from faststream.kafka import KafkaBroker
+from safir.datetime import format_datetime_for_logging
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
@@ -75,7 +76,7 @@ class ResultProcessor:
         self._logger = logger
 
     def build_executing_status(
-        self, job: JobRun, status: AsyncQueryStatus
+        self, job: JobRun, status: AsyncQueryStatus, start: datetime
     ) -> JobStatus:
         """Build the status for a query that's still executing.
 
@@ -85,6 +86,8 @@ class ResultProcessor:
             Original query request.
         status
             Status response from Qserv.
+        start
+            Start time of the query.
 
         Returns
         -------
@@ -96,13 +99,14 @@ class ResultProcessor:
             job_id=job.job_id,
             qserv_id=str(status.query_id),
             username=job.owner,
+            start_time=format_datetime_for_logging(start),
         )
         return JobStatus(
             job_id=job.job_id,
             execution_id=str(status.query_id),
             timestamp=status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.EXECUTING,
-            query_info=JobQueryInfo.from_query_status(status),
+            query_info=JobQueryInfo.from_query_status(status, start),
             metadata=job.to_job_metadata(),
         )
 
@@ -138,7 +142,10 @@ class ResultProcessor:
             Job status to report to Kafka.
         """
         logger = self._logger.bind(
-            job_id=job.job_id, qserv_id=str(query_id), username=job.owner
+            job_id=job.job_id,
+            qserv_id=str(query_id),
+            username=job.owner,
+            start_time=format_datetime_for_logging(start),
         )
         try:
             status = await self._qserv.get_query_status(query_id)
@@ -164,7 +171,7 @@ class ResultProcessor:
                     )
                 else:
                     await self._state.update_status(query_id, status)
-                return self.build_executing_status(job, status)
+                return self.build_executing_status(job, status, start)
             case AsyncQueryPhase.COMPLETED:
                 result = await self._build_completed_status(
                     job, status, start, initial=initial
@@ -217,6 +224,7 @@ class ResultProcessor:
             job_id=job.job_id,
             qserv_id=str(status.query_id),
             username=job.owner,
+            start_time=format_datetime_for_logging(start),
             total_chunks=status.total_chunks,
             completed_chunks=status.completed_chunks,
             result_bytes=status.collected_bytes,
@@ -229,7 +237,9 @@ class ResultProcessor:
             execution_id=str(status.query_id),
             timestamp=status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.ABORTED,
-            query_info=JobQueryInfo.from_query_status(status),
+            query_info=JobQueryInfo.from_query_status(
+                status, start, finished=True
+            ),
             metadata=job.to_job_metadata(),
         )
 
@@ -266,7 +276,10 @@ class ResultProcessor:
         """
         query_id = status.query_id
         logger = self._logger.bind(
-            job_id=job.job_id, qserv_id=str(query_id), username=job.owner
+            job_id=job.job_id,
+            qserv_id=str(query_id),
+            username=job.owner,
+            start_time=format_datetime_for_logging(start),
         )
         logger.debug("Processing job completion")
 
@@ -307,9 +320,12 @@ class ResultProcessor:
         logger.info(
             "Job complete and results uploaded",
             rows=stats.rows,
-            data_size=stats.data_bytes,
+            qserv_size=status.collected_bytes,
+            encoded_size=stats.data_bytes,
             total_size=stats.total_bytes,
-            elapsed=stats.elapsed.total_seconds(),
+            elapsed=(now - start).total_seconds(),
+            qserv_elapsed=qserv_elapsed.total_seconds(),
+            result_elapsed=stats.elapsed.total_seconds(),
         )
 
         # Delete the results.
@@ -324,7 +340,9 @@ class ResultProcessor:
             execution_id=str(query_id),
             timestamp=status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.COMPLETED,
-            query_info=JobQueryInfo.from_query_status(status),
+            query_info=JobQueryInfo.from_query_status(
+                status, start, finished=True
+            ),
             result_info=JobResultInfo(
                 total_rows=stats.rows,
                 result_location=job.result_location,
@@ -360,7 +378,10 @@ class ResultProcessor:
             Status for the query.
         """
         logger = self._logger.bind(
-            job_id=job.job_id, qserv_id=str(query_id), username=job.owner
+            job_id=job.job_id,
+            qserv_id=str(query_id),
+            username=job.owner,
+            start_time=format_datetime_for_logging(start),
         )
         now = datetime.now(tz=UTC)
         elapsed = now - start
@@ -432,6 +453,7 @@ class ResultProcessor:
             job_id=job.job_id,
             qserv_id=str(status.query_id),
             username=job.owner,
+            start_time=format_datetime_for_logging(start),
             query=metadata.model_dump(mode="json", exclude_none=True),
             status=status.model_dump(mode="json", exclude_none=True),
             total_chunks=status.total_chunks,
@@ -449,7 +471,9 @@ class ResultProcessor:
             execution_id=str(status.query_id),
             timestamp=status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.ERROR,
-            query_info=JobQueryInfo.from_query_status(status),
+            query_info=JobQueryInfo.from_query_status(
+                status, start, finished=True
+            ),
             error=JobError(
                 code=JobErrorCode.backend_error,
                 message="Query failed in backend",

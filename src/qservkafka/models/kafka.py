@@ -17,7 +17,7 @@ from pydantic import (
 from safir.pydantic import SecondsTimedelta
 from vo_models.uws.types import ExecutionPhase
 
-from .qserv import AsyncQueryPhase, AsyncQueryStatus
+from .qserv import AsyncQueryStatus
 from .votable import VOTableArraySize, VOTablePrimitive
 
 type DatetimeMillis = Annotated[
@@ -421,27 +421,37 @@ class JobQueryInfo(BaseModel):
     ]
 
     @classmethod
-    def from_query_status(cls, status: AsyncQueryStatus) -> Self:
+    def from_query_status(
+        cls,
+        status: AsyncQueryStatus,
+        start: datetime,
+        *,
+        finished: bool = False,
+    ) -> Self:
         """Create a new object from the query status returned by Qserv.
 
         Parameters
         ----------
         status
             Query status to convert.
+        start
+            Start time of query, measured from the point at which the Qserv
+            Kafka bridge received the query.
+        finished
+            Whether the query is finished and therefore the end time should be
+            set to now.
 
         Returns
         -------
         JobQueryInfo
             Corresponding query information.
         """
-        result = cls(
-            start_time=status.query_begin,
+        return cls(
+            start_time=start,
             total_chunks=status.total_chunks,
             completed_chunks=status.completed_chunks,
+            end_time=datetime.now(tz=UTC) if finished else None,
         )
-        if status.status != AsyncQueryPhase.EXECUTING:
-            result.end_time = status.last_update
-        return result
 
 
 class JobResultInfo(BaseModel):

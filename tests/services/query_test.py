@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from pydantic import SecretStr
 
@@ -121,12 +123,14 @@ async def test_cancel(factory: Factory) -> None:
 
     assert await state_store.get_active_queries() == {1}
 
+    now = datetime.now(tz=UTC)
     status = await query_service.cancel_query(cancel)
     assert status == canceled_status
     assert_approximately_now(status.timestamp)
     assert status.query_info
     assert status.query_info.start_time == start_time
-    assert_approximately_now(status.query_info.end_time)
+    assert status.query_info.end_time
+    assert status.query_info.end_time >= now
 
 
 @pytest.mark.asyncio

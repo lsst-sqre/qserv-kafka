@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import async_scoped_session
@@ -33,7 +32,7 @@ async def handle_finished_query(ctx: dict[Any, Any], query_id: int) -> None:
     processor = factory.create_result_processor()
     try:
         status = await processor.build_query_status(
-            query_id, query.job, query.start or datetime.now(tz=UTC)
+            query_id, query.job, query.start
         )
     finally:
         await session.remove()
