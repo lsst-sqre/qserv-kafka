@@ -311,9 +311,12 @@ class ResultProcessor:
         logger.info(
             "Job complete and results uploaded",
             rows=stats.rows,
-            data_size=stats.data_bytes,
+            qserv_size=status.collected_bytes,
+            encoded_size=stats.data_bytes,
             total_size=stats.total_bytes,
-            elapsed=stats.elapsed.total_seconds(),
+            elapsed=(now - start).total_seconds(),
+            qserv_elapsed=qserv_elapsed.total_seconds(),
+            result_elapsed=stats.elapsed.total_seconds(),
         )
 
         # Delete the results.
