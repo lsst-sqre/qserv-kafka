@@ -18,9 +18,7 @@ class Query(BaseModel):
 
     query_id: Annotated[int, Field(title="Qserv ID of query")]
 
-    start: Annotated[datetime | None, Field(title="Receipt time of query")] = (
-        None
-    )
+    start: Annotated[datetime, Field(title="Receipt time of query")]
 
     job: Annotated[JobRun, Field(title="Full job request")]
 

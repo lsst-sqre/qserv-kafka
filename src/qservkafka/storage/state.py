@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from safir.redis import PydanticRedisStorage
 from structlog.stdlib import BoundLogger
@@ -73,16 +73,7 @@ class QueryStateStore:
         job or None
             Original job request, or `None` if no such job was found.
         """
-        query = await self._storage.get(str(query_id))
-
-        # Temporary code to fix up existing job records that have no start
-        # time. This can be deleted in the 0.4.0 release or later.
-        if query and not query.start:
-            query.start = datetime.now(tz=UTC)
-            lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
-            await self._storage.store(str(query_id), query, lifetime)
-
-        return query
+        return await self._storage.get(str(query_id))
 
     async def mark_queued_query(self, query_id: int) -> None:
         """Mark a query as queued.

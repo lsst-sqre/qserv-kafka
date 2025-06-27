@@ -110,7 +110,9 @@ class QueryMonitor:
             if query.status == status:
                 logger.debug("Running query has not changed state")
                 return None
-            update = self._results.build_executing_status(job, status)
+            update = self._results.build_executing_status(
+                job, status, query.start
+            )
             await self._state.update_status(query_id, status)
             return update
         else:

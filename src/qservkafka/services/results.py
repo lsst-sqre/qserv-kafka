@@ -75,7 +75,7 @@ class ResultProcessor:
         self._logger = logger
 
     def build_executing_status(
-        self, job: JobRun, status: AsyncQueryStatus
+        self, job: JobRun, status: AsyncQueryStatus, start: datetime
     ) -> JobStatus:
         """Build the status for a query that's still executing.
 
@@ -85,6 +85,8 @@ class ResultProcessor:
             Original query request.
         status
             Status response from Qserv.
+        start
+            Start time of the query.
 
         Returns
         -------
@@ -102,7 +104,7 @@ class ResultProcessor:
             execution_id=str(status.query_id),
             timestamp=status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.EXECUTING,
-            query_info=JobQueryInfo.from_query_status(status),
+            query_info=JobQueryInfo.from_query_status(status, start),
             metadata=job.to_job_metadata(),
         )
 
@@ -164,7 +166,7 @@ class ResultProcessor:
                     )
                 else:
                     await self._state.update_status(query_id, status)
-                return self.build_executing_status(job, status)
+                return self.build_executing_status(job, status, start)
             case AsyncQueryPhase.COMPLETED:
                 result = await self._build_completed_status(
                     job, status, start, initial=initial
@@ -229,7 +231,9 @@ class ResultProcessor:
             execution_id=str(status.query_id),
             timestamp=status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.ABORTED,
-            query_info=JobQueryInfo.from_query_status(status),
+            query_info=JobQueryInfo.from_query_status(
+                status, start, finished=True
+            ),
             metadata=job.to_job_metadata(),
         )
 
@@ -324,7 +328,9 @@ class ResultProcessor:
             execution_id=str(query_id),
             timestamp=status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.COMPLETED,
-            query_info=JobQueryInfo.from_query_status(status),
+            query_info=JobQueryInfo.from_query_status(
+                status, start, finished=True
+            ),
             result_info=JobResultInfo(
                 total_rows=stats.rows,
                 result_location=job.result_location,
@@ -449,7 +455,9 @@ class ResultProcessor:
             execution_id=str(status.query_id),
             timestamp=status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.ERROR,
-            query_info=JobQueryInfo.from_query_status(status),
+            query_info=JobQueryInfo.from_query_status(
+                status, start, finished=True
+            ),
             error=JobError(
                 code=JobErrorCode.backend_error,
                 message="Query failed in backend",

@@ -156,13 +156,21 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
         )
     )
     status = await query_service.start_query(job)
+    now = datetime.now(tz=UTC)
     expected.execution_id = "4"
+    assert status.query_info
     expected.query_info = JobQueryInfo(
-        start_time=now, end_time=now, total_chunks=10, completed_chunks=4
+        total_chunks=10,
+        completed_chunks=4,
+        start_time=status.query_info.start_time,
+        end_time=status.query_info.end_time,
     )
     expected.error.code = JobErrorCode.backend_error
     expected.error.message = "Query failed in backend"
     assert status == expected
+    assert status.query_info.start_time <= now
+    assert status.query_info.end_time
+    assert status.query_info.end_time <= now
 
     assert await state_store.get_active_queries() == set()
 

@@ -66,10 +66,6 @@ async def test_job_run(
     )
     await asyncio.sleep(1.1)
     expected["queryInfo"]["completedChunks"] = 5
-    expected["queryInfo"]["startTime"] = int(
-        async_status.query_begin.timestamp() * 1000
-    )
-    expected["timestamp"] = int(now.timestamp() * 1000)
     status_publisher.mock.assert_called_once_with(expected)
 
     now = current_datetime()
@@ -94,8 +90,6 @@ async def test_job_run(
     }
     expected["status"] = "ERROR"
     expected["queryInfo"]["completedChunks"] = 8
-    expected["queryInfo"]["endTime"] = int(now.timestamp() * 1000)
-    expected["timestamp"] = int(now.timestamp() * 1000)
     mock.assert_called_once_with(
         expected,
         config.job_status_topic,
@@ -141,11 +135,6 @@ async def test_job_results(
     await asyncio.sleep(1.1)
     with patch.object(kafka_broker, "publish") as mock:
         assert await run_arq_jobs(kafka_broker) == 1
-    expected["queryInfo"]["startTime"] = int(
-        async_status.query_begin.timestamp() * 1000
-    )
-    expected["queryInfo"]["endTime"] = int(now.timestamp() * 1000)
-    expected["timestamp"] = int(now.timestamp() * 1000)
     mock.assert_called_once_with(
         expected,
         config.job_status_topic,
