@@ -52,8 +52,8 @@ async def test_success(
 
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    job = read_test_job_run("jobs/data")
-    expected_status = read_test_job_status("status/data-completed")
+    job = read_test_job_run("data")
+    expected_status = read_test_job_status("data-completed")
     mock_qserv.set_immediate_success(job)
 
     gc.collect()

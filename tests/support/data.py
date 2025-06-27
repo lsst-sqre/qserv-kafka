@@ -66,7 +66,7 @@ def read_test_job_cancel(filename: str) -> JobCancel:
     Parameters
     ----------
     filename
-        File to read relative to the test data directory, without the
+        File to read relative to the test cancel directory, without the
         ``.json`` suffix.
 
     Returns
@@ -74,7 +74,7 @@ def read_test_job_cancel(filename: str) -> JobCancel:
     JobCancel
         Parsed contents of the file.
     """
-    return JobCancel.model_validate(read_test_json(filename))
+    return JobCancel.model_validate(read_test_json(f"cancel/{filename}"))
 
 
 def read_test_job_run(filename: str) -> JobRun:
@@ -83,7 +83,7 @@ def read_test_job_run(filename: str) -> JobRun:
     Parameters
     ----------
     filename
-        File to read relative to the test data directory, without the
+        File to read relative to the test jobs directory, without the
         ``.json`` suffix.
 
     Returns
@@ -91,7 +91,24 @@ def read_test_job_run(filename: str) -> JobRun:
     JobRun
         Parsed contents of the file.
     """
-    return JobRun.model_validate(read_test_json(filename))
+    return JobRun.model_validate(read_test_json(f"jobs/{filename}"))
+
+
+def read_test_job_run_json(filename: str) -> JobRun:
+    """Read test data parsed as JSON to run a query.
+
+    Parameters
+    ----------
+    filename
+        File to read relative to the test jobs directory, without the
+        ``.json`` suffix.
+
+    Returns
+    -------
+    JobRun
+        Parsed contents of the file.
+    """
+    return read_test_json(f"jobs/{filename}")
 
 
 def read_test_job_status(filename: str) -> JobStatus:
@@ -100,7 +117,7 @@ def read_test_job_status(filename: str) -> JobStatus:
     Parameters
     ----------
     filename
-        File to read relative to the test data directory, without the
+        File to read relative to the test status directory, without the
         ``.json`` suffix.
 
     Returns
@@ -108,7 +125,7 @@ def read_test_job_status(filename: str) -> JobStatus:
     JobStatus
         Parsed contents of the file.
     """
-    result = JobStatus.model_validate(read_test_json(filename))
+    result = JobStatus.model_validate(read_test_json(f"status/{filename}"))
     result.timestamp = ANY
     if result.query_info:
         result.query_info.start_time = ANY
@@ -123,7 +140,7 @@ def read_test_job_status_json(filename: str) -> dict[str, Any]:
     Parameters
     ----------
     filename
-        File to read relative to the test data directory, without the
+        File to read relative to the test status directory, without the
         ``.json`` suffix.
 
     Returns
@@ -131,8 +148,8 @@ def read_test_job_status_json(filename: str) -> dict[str, Any]:
     JobStatus
         Parsed contents of the file.
     """
-    result_model = JobStatus.model_validate(read_test_json(filename))
-    result = result_model.model_dump(mode="json")
+    model = JobStatus.model_validate(read_test_json(f"status/{filename}"))
+    result = model.model_dump(mode="json")
     result["timestamp"] = ANY
     if "queryInfo" in result:
         result["queryInfo"]["startTime"] = ANY

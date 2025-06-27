@@ -28,8 +28,8 @@ from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 from ..support.arq import run_arq_jobs
 from ..support.data import (
     read_test_job_run,
+    read_test_job_run_json,
     read_test_job_status_json,
-    read_test_json,
 )
 from ..support.qserv import MockQserv
 
@@ -42,8 +42,8 @@ async def test_job_run(
     status_publisher: AsyncAPIDefaultPublisher,
     mock_qserv: MockQserv,
 ) -> None:
-    job = read_test_json("jobs/simple")
-    expected = read_test_job_status_json("status/simple-started")
+    job = read_test_job_run_json("simple")
+    expected = read_test_job_status_json("simple-started")
 
     await kafka_broker.publish(job, config.job_run_topic)
     assert status_publisher.mock
@@ -109,8 +109,8 @@ async def test_job_results(
     status_publisher: AsyncAPIDefaultPublisher,
     mock_qserv: MockQserv,
 ) -> None:
-    job = read_test_json("jobs/data")
-    expected = read_test_job_status_json("status/data-completed")
+    job = read_test_job_run_json("data")
+    expected = read_test_job_status_json("data-completed")
     assert status_publisher.mock
 
     await kafka_broker.publish(job, config.job_run_topic)
@@ -159,8 +159,8 @@ async def test_job_result_error(
     An earlier version of the Qserv Kafka bridge erroneously didn't stop
     processing when the API request failed.
     """
-    job = read_test_job_run("jobs/data")
-    job_json = read_test_json("jobs/data")
+    job = read_test_job_run("data")
+    job_json = read_test_job_run_json("data")
     assert status_publisher.mock
 
     await kafka_broker.publish(job_json, config.job_run_topic)
@@ -223,9 +223,9 @@ async def test_job_cancel(
     mock_qserv: MockQserv,
 ) -> None:
     """Test canceling a job."""
-    job = read_test_job_run("jobs/simple")
-    job_json = read_test_json("jobs/simple")
-    expected = read_test_job_status_json("status/simple-aborted")
+    job = read_test_job_run("simple")
+    job_json = read_test_job_run_json("simple")
+    expected = read_test_job_status_json("simple-aborted")
     assert status_publisher.mock
 
     await kafka_broker.publish(job_json, config.job_run_topic)
@@ -253,9 +253,9 @@ async def test_job_upload(
     mock_qserv: MockQserv,
 ) -> None:
     """Test running a job with table upload."""
-    job = read_test_job_run("jobs/upload")
-    job_json = read_test_json("jobs/upload")
-    status = read_test_job_status_json("status/upload-started")
+    job = read_test_job_run("upload")
+    job_json = read_test_job_run_json("upload")
+    status = read_test_job_status_json("upload-started")
     assert status_publisher.mock
 
     await kafka_broker.publish(job_json, config.job_run_topic)

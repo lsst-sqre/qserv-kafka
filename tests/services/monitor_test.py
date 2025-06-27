@@ -23,8 +23,8 @@ async def test_dispatch(factory: Factory, mock_qserv: MockQserv) -> None:
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
     monitor = await factory.create_query_monitor()
-    job = read_test_job_run("jobs/simple")
-    expected_status = read_test_job_status("status/simple-started")
+    job = read_test_job_run("simple")
+    expected_status = read_test_job_status("simple-started")
 
     status = await query_service.start_query(job)
     assert status == expected_status
