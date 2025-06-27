@@ -8,7 +8,11 @@ from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
 from ..events import Events, TemporaryTableUploadEvent
-from ..exceptions import QservApiError, TableUploadWebError
+from ..exceptions import (
+    QservApiError,
+    QservApiFailedError,
+    TableUploadWebError,
+)
 from ..models.kafka import (
     JobCancel,
     JobError,
@@ -162,7 +166,11 @@ class QueryService:
         try:
             query_id = await self._qserv.submit_query(job)
         except QservApiError as e:
-            logger.exception("Unable to start query", error=str(e))
+            if isinstance(e, QservApiFailedError):
+                msg = "Query rejected by Qserv"
+                logger.info(msg, error=str(e), detail=e.detail)
+            else:
+                logger.exception("Unable to start query", error=str(e))
             return JobStatus(
                 job_id=job.job_id,
                 execution_id=str(query_id) if query_id else None,
