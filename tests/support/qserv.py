@@ -586,7 +586,7 @@ class MockQserv:
         body.close()
 
         # Check the request is correct.
-        expected_job = read_test_job_run("jobs/upload")
+        expected_job = read_test_job_run("upload")
         upload_table = expected_job.upload_tables[0]
         expected = {
             "database": upload_table.table_name.split(".", 1)[0],
@@ -678,7 +678,7 @@ async def register_mock_qserv(
     regex = rf"{base}/query-async/status/(?P<query_id>[0-9]+)"
     respx_mock.get(url__regex=regex).mock(side_effect=mock.status)
 
-    upload_job = read_test_job_run("jobs/upload")
+    upload_job = read_test_job_run("upload")
     for upload_table in upload_job.upload_tables:
         url = upload_table.source_url
         respx_mock.get(url).mock(side_effect=mock.get_upload_source)

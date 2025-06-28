@@ -30,7 +30,7 @@ from ..support.qserv import MockQserv
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
 async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
-    job = read_test_job_run("jobs/simple")
+    job = read_test_job_run("simple")
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
     now = datetime.now(tz=UTC)
@@ -79,7 +79,7 @@ async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
 async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
-    job = read_test_job_run("jobs/simple")
+    job = read_test_job_run("simple")
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
     now = datetime.now(tz=UTC)
@@ -181,7 +181,7 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
     state_store = factory.create_query_state_store()
     now = datetime.now(tz=UTC)
 
-    job = read_test_job_run("jobs/tabledata")
+    job = read_test_job_run("tabledata")
     status = await query_service.start_query(job)
     expected = JobStatus(
         job_id=job.job_id,
@@ -198,7 +198,7 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
     assert expected.error
     assert status == expected
 
-    job = read_test_job_run("jobs/arraysize")
+    job = read_test_job_run("arraysize")
     status = await query_service.start_query(job)
     expected = JobStatus(
         job_id=job.job_id,
@@ -224,7 +224,7 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
 async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    job = read_test_job_run("jobs/data")
+    job = read_test_job_run("data")
     now = datetime.now(tz=UTC)
 
     mock_qserv.set_immediate_success(job)
@@ -259,7 +259,7 @@ async def test_upload_timeout(
     """
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    job = read_test_job_run("jobs/data")
+    job = read_test_job_run("data")
 
     mock_qserv.set_immediate_success(job)
     mock_qserv.set_upload_delay(timedelta(seconds=2))
@@ -288,6 +288,6 @@ async def test_upload_timeout(
 async def test_cancel_unknown(factory: Factory) -> None:
     """Test canceling an unknown job."""
     query_service = factory.create_query_service()
-    cancel = read_test_job_cancel("cancel/simple")
+    cancel = read_test_job_cancel("simple")
 
     assert await query_service.cancel_query(cancel) is None

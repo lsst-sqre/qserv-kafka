@@ -19,8 +19,8 @@ async def test_list_running_queries(
 ) -> None:
     qserv = factory.create_qserv_client()
     query_service = factory.create_query_service()
-    job = read_test_job_run("jobs/simple")
-    expected_status = read_test_job_status("status/simple-started")
+    job = read_test_job_run("simple")
+    expected_status = read_test_job_status("simple-started")
 
     processes = await qserv.list_running_queries()
     assert processes == {}

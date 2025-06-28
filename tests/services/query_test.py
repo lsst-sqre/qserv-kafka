@@ -55,8 +55,8 @@ async def assert_query_successful(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
 async def test_start(factory: Factory) -> None:
-    job = read_test_job_run("jobs/simple")
-    expected_status = read_test_job_status("status/simple-started")
+    job = read_test_job_run("simple")
+    expected_status = read_test_job_status("simple-started")
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
 
@@ -76,8 +76,8 @@ async def test_start(factory: Factory) -> None:
 async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     """Test a job that completes immediately."""
     query_service = factory.create_query_service()
-    job = read_test_job_run("jobs/data")
-    expected_status = read_test_job_status("status/data-completed")
+    job = read_test_job_run("data")
+    expected_status = read_test_job_status("data-completed")
     state_store = factory.create_query_state_store()
 
     await assert_query_successful(
@@ -107,10 +107,10 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
 async def test_cancel(factory: Factory) -> None:
-    job = read_test_job_run("jobs/simple")
-    started_status = read_test_job_status("status/simple-started")
-    cancel = read_test_job_cancel("cancel/simple")
-    canceled_status = read_test_job_status("status/simple-aborted")
+    job = read_test_job_run("simple")
+    started_status = read_test_job_status("simple-started")
+    cancel = read_test_job_cancel("simple")
+    canceled_status = read_test_job_status("simple-aborted")
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
 
@@ -139,8 +139,8 @@ async def test_cancel(factory: Factory) -> None:
 )
 async def test_maxrec(factory: Factory, mock_qserv: MockQserv) -> None:
     query_service = factory.create_query_service()
-    job = read_test_job_run("jobs/data-maxrec")
-    expected_status = read_test_job_status("status/data-maxrec-completed")
+    job = read_test_job_run("data-maxrec")
+    expected_status = read_test_job_status("data-maxrec-completed")
 
     await assert_query_successful(
         query_service=query_service,
@@ -157,8 +157,8 @@ async def test_maxrec(factory: Factory, mock_qserv: MockQserv) -> None:
 async def test_maxrec_zero(factory: Factory, mock_qserv: MockQserv) -> None:
     """Test a query with MAXREC set to zero."""
     query_service = factory.create_query_service()
-    job = read_test_job_run("jobs/data-zero")
-    expected_status = read_test_job_status("status/data-zero-completed")
+    job = read_test_job_run("data-zero")
+    expected_status = read_test_job_status("data-zero-completed")
 
     await assert_query_successful(
         query_service=query_service,
@@ -178,8 +178,8 @@ async def test_no_api_version(
     """Test disabling sending the API version in Qserv requests."""
     monkeypatch.setattr(config, "qserv_rest_send_api_version", False)
     query_service = factory.create_query_service()
-    job = read_test_job_run("jobs/data")
-    expected_status = read_test_job_status("status/data-completed")
+    job = read_test_job_run("data")
+    expected_status = read_test_job_status("data-completed")
     state_store = factory.create_query_state_store()
 
     await assert_query_successful(
@@ -191,8 +191,8 @@ async def test_no_api_version(
 
     # Also test starting a job with table upload, since that tests an
     # additional API endpoint.
-    job = read_test_job_run("jobs/upload")
-    expected_status = read_test_job_status("status/upload-started")
+    job = read_test_job_run("upload")
+    expected_status = read_test_job_status("upload-started")
     expected_status.execution_id = "2"
 
     mock_qserv.set_immediate_success(None)
@@ -217,8 +217,8 @@ async def test_auth(
     monkeypatch.setattr(config, "qserv_rest_password", SecretStr("password"))
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    job = read_test_job_run("jobs/data")
-    expected_status = read_test_job_status("status/data-completed")
+    job = read_test_job_run("data")
+    expected_status = read_test_job_status("data-completed")
 
     await assert_query_successful(
         query_service=query_service,
@@ -229,8 +229,8 @@ async def test_auth(
 
     # Also test starting a job with table upload, since that tests an
     # additional API endpoint.
-    job = read_test_job_run("jobs/upload")
-    expected_status = read_test_job_status("status/upload-started")
+    job = read_test_job_run("upload")
+    expected_status = read_test_job_status("upload-started")
     expected_status.execution_id = "2"
 
     mock_qserv.set_immediate_success(None)
@@ -251,9 +251,9 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
     """Test temporary table upload."""
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    job = read_test_job_run("jobs/upload")
-    completed_status = read_test_job_status("status/upload-completed")
-    started_status = read_test_job_status("status/upload-started")
+    job = read_test_job_run("upload")
+    completed_status = read_test_job_status("upload-completed")
+    started_status = read_test_job_status("upload-started")
 
     await assert_query_successful(
         query_service=query_service,
