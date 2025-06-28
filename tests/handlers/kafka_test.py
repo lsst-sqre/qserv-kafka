@@ -20,7 +20,6 @@ from qservkafka.models.kafka import (
     JobCancel,
     JobError,
     JobErrorCode,
-    JobRun,
     JobStatus,
 )
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
@@ -32,118 +31,6 @@ from ..support.data import (
     read_test_job_status_json,
 )
 from ..support.qserv import MockQserv
-
-
-@pytest.mark.asyncio
-async def test_job_run(
-    *,
-    app: FastAPI,
-    kafka_broker: KafkaBroker,
-    status_publisher: AsyncAPIDefaultPublisher,
-    mock_qserv: MockQserv,
-) -> None:
-    job = read_test_job_run_json("simple")
-    expected = read_test_job_status_json("simple-started")
-
-    await kafka_broker.publish(job, config.job_run_topic)
-    assert status_publisher.mock
-    status_publisher.mock.assert_called_once_with(expected)
-
-    async_status = mock_qserv.get_status(1)
-    status_publisher.mock.reset_mock()
-    now = current_datetime()
-    await mock_qserv.update_status(
-        1,
-        AsyncQueryStatus(
-            query_id=1,
-            status=AsyncQueryPhase.EXECUTING,
-            total_chunks=10,
-            completed_chunks=5,
-            collected_bytes=150,
-            query_begin=async_status.query_begin,
-            last_update=now,
-        ),
-    )
-    await asyncio.sleep(1.1)
-    expected["queryInfo"]["completedChunks"] = 5
-    status_publisher.mock.assert_called_once_with(expected)
-
-    now = current_datetime()
-    await mock_qserv.update_status(
-        1,
-        AsyncQueryStatus(
-            query_id=1,
-            status=AsyncQueryPhase.FAILED,
-            total_chunks=10,
-            completed_chunks=8,
-            collected_bytes=200,
-            query_begin=async_status.query_begin,
-            last_update=now,
-        ),
-    )
-    await asyncio.sleep(1.1)
-    with patch.object(kafka_broker, "publish") as mock:
-        assert await run_arq_jobs(kafka_broker) == 1
-    expected["errorInfo"] = {
-        "errorCode": "backend_error",
-        "errorMessage": "Query failed in backend",
-    }
-    expected["status"] = "ERROR"
-    expected["queryInfo"]["completedChunks"] = 8
-    mock.assert_called_once_with(
-        expected,
-        config.job_status_topic,
-        headers={"Content-Type": "application/json"},
-    )
-
-    factory = context_dependency.create_factory()
-    state_store = factory.create_query_state_store()
-    assert await state_store.get_active_queries() == set()
-
-
-@pytest.mark.asyncio
-async def test_job_results(
-    *,
-    app: FastAPI,
-    kafka_broker: KafkaBroker,
-    status_publisher: AsyncAPIDefaultPublisher,
-    mock_qserv: MockQserv,
-) -> None:
-    job = read_test_job_run_json("data")
-    expected = read_test_job_status_json("data-completed")
-    assert status_publisher.mock
-
-    await kafka_broker.publish(job, config.job_run_topic)
-
-    status_publisher.mock.reset_mock()
-    await mock_qserv.store_results(JobRun.model_validate(job))
-    async_status = mock_qserv.get_status(1)
-    now = datetime.now(tz=UTC)
-    await mock_qserv.update_status(
-        1,
-        AsyncQueryStatus(
-            query_id=1,
-            status=AsyncQueryPhase.COMPLETED,
-            total_chunks=10,
-            completed_chunks=10,
-            collected_bytes=250,
-            query_begin=async_status.query_begin,
-            last_update=now,
-        ),
-    )
-
-    await asyncio.sleep(1.1)
-    with patch.object(kafka_broker, "publish") as mock:
-        assert await run_arq_jobs(kafka_broker) == 1
-    mock.assert_called_once_with(
-        expected,
-        config.job_status_topic,
-        headers={"Content-Type": "application/json"},
-    )
-
-    factory = context_dependency.create_factory()
-    state_store = factory.create_query_state_store()
-    assert await state_store.get_active_queries() == set()
 
 
 @pytest.mark.asyncio

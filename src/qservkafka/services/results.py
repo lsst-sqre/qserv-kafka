@@ -338,7 +338,7 @@ class ResultProcessor:
         return JobStatus(
             job_id=job.job_id,
             execution_id=str(query_id),
-            timestamp=status.last_update or datetime.now(tz=UTC),
+            timestamp=datetime.now(tz=UTC),
             status=ExecutionPhase.COMPLETED,
             query_info=JobQueryInfo.from_query_status(
                 status, start, finished=True
