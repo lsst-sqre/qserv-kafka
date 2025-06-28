@@ -11,6 +11,7 @@ from aiokafka import AIOKafkaConsumer
 from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 from faststream.kafka import KafkaBroker
+from safir.datetime import current_datetime
 from testcontainers.redis import RedisContainer
 
 from qservkafka.config import config
@@ -144,8 +145,8 @@ async def test_success(
         job = await start_query(kafka_broker, "data")
         status = await wait_for_status(kafka_status_consumer, "data-started")
         assert status.query_info
+        start_time = status.query_info.start_time
 
-        now = datetime.now(tz=UTC)
         await mock_qserv.store_results(job)
         await mock_qserv.update_status(
             1,
@@ -155,16 +156,85 @@ async def test_success(
                 total_chunks=10,
                 completed_chunks=10,
                 collected_bytes=250,
-                query_begin=status.query_info.start_time,
-                last_update=now,
+                query_begin=start_time,
+                last_update=datetime.now(tz=UTC),
             ),
         )
 
         await wait_for_dispatch(factory, 1)
 
-    # Run the background tsk queue.
-    assert await run_arq_jobs() == 1
-    await wait_for_status(kafka_status_consumer, "data-completed")
+        # Run the background task queue.
+        assert await run_arq_jobs() == 1
+        status = await wait_for_status(kafka_status_consumer, "data-completed")
+        assert status.query_info
+        assert status.query_info.start_time == start_time
+        assert status.query_info.end_time
+        assert status.query_info.end_time >= start_time
+
+    # Ensure all query state has been deleted.
+    redis_client = redis.get_client()
+    assert set(redis_client.scan_iter("query:*")) == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_failure(
+    *,
+    app: FastAPI,
+    kafka_broker: KafkaBroker,
+    kafka_status_consumer: AIOKafkaConsumer,
+    mock_qserv: MockQserv,
+    redis: RedisContainer,
+) -> None:
+    async with LifespanManager(app):
+        factory = context_dependency.create_factory()
+
+        await start_query(kafka_broker, "simple")
+        status = await wait_for_status(kafka_status_consumer, "simple-started")
+        assert status.query_info
+        start_time = status.query_info.start_time
+
+        now = current_datetime()
+        await mock_qserv.update_status(
+            1,
+            AsyncQueryStatus(
+                query_id=1,
+                status=AsyncQueryPhase.EXECUTING,
+                total_chunks=10,
+                completed_chunks=5,
+                collected_bytes=150,
+                query_begin=start_time,
+                last_update=now,
+            ),
+        )
+        status = await wait_for_status(kafka_status_consumer, "simple-partial")
+        assert status.timestamp == now
+        assert status.query_info
+        assert status.query_info.start_time == start_time
+
+        now = current_datetime()
+        await mock_qserv.update_status(
+            1,
+            AsyncQueryStatus(
+                query_id=1,
+                status=AsyncQueryPhase.FAILED,
+                total_chunks=10,
+                completed_chunks=8,
+                collected_bytes=200,
+                query_begin=start_time,
+                last_update=now,
+            ),
+        )
+        await wait_for_dispatch(factory, 1)
+
+        # Run the background tsk queue.
+        assert await run_arq_jobs() == 1
+        status = await wait_for_status(kafka_status_consumer, "simple-failed")
+        assert status.timestamp == now
+        assert status.query_info
+        assert status.query_info.start_time == start_time
+        assert status.query_info.end_time
+        assert status.query_info.end_time >= now
 
     # Ensure all query state has been deleted.
     redis_client = redis.get_client()

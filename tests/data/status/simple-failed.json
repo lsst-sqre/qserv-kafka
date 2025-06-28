@@ -1,0 +1,19 @@
+{
+  "job_id": "uws123",
+  "execution_id": "1",
+  "timestamp": 1743540791,
+  "status": "ERROR",
+  "error": {
+    "code": "backend_error",
+    "message": "Query failed in backend"
+  },
+  "query_info": {
+    "start_time": 1743540791,
+    "total_chunks": 10,
+    "completed_chunks": 8
+  },
+  "metadata": {
+    "query": "SELECT TOP 10 * FROM table",
+    "database": "dp1"
+  }
+}
