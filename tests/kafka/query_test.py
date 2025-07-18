@@ -17,6 +17,7 @@ from testcontainers.redis import RedisContainer
 from qservkafka.config import config
 from qservkafka.dependencies.context import context_dependency
 from qservkafka.factory import Factory
+from qservkafka.models.gafaelfawr import GafaelfawrQuota, GafaelfawrTapQuota
 from qservkafka.models.kafka import JobRun, JobStatus
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 from qservkafka.models.state import Query
@@ -32,6 +33,7 @@ from ..support.datetime import (
     assert_approximately_now,
     milliseconds_to_timestamp,
 )
+from ..support.gafaelfawr import MockGafaelfawr
 from ..support.qserv import MockQserv
 
 
@@ -57,7 +59,10 @@ async def start_query(kafka_broker: KafkaBroker, job: str) -> JobRun:
 
 
 async def wait_for_status(
-    kafka_status_consumer: AIOKafkaConsumer, status: str
+    kafka_status_consumer: AIOKafkaConsumer,
+    status: str,
+    *,
+    execution_id: str | None = None,
 ) -> JobStatus:
     """Wait for a Kafka status message and check it.
 
@@ -67,6 +72,9 @@ async def wait_for_status(
         Consumer for the Kafka status topic.
     status
         Name to the Kafka status message to expect.
+    execution_id
+        If set, expect this execution ID instead of the one in the loaded JSON
+        file.
 
     Returns
     -------
@@ -75,20 +83,30 @@ async def wait_for_status(
     """
     expected = read_test_job_status_json(status)
     status_model = read_test_job_status(status)
+    if execution_id is not None:
+        expected["executionID"] = execution_id
+        status_model.execution_id = execution_id
+
+    # Get the status message from Kafka and do the equality check
     raw_message = await kafka_status_consumer.getone()
     message = json.loads(raw_message.value.decode())
     assert message == expected
+
+    # Check the timestamps and update the model to match the received message.
     timestamp = milliseconds_to_timestamp(message["timestamp"])
     assert_approximately_now(timestamp)
     status_model.timestamp = timestamp
-    start_time = milliseconds_to_timestamp(message["queryInfo"]["startTime"])
-    assert_approximately_now(start_time)
-    assert status_model.query_info
-    status_model.query_info.start_time = start_time
-    if message["queryInfo"].get("endTime"):
-        end_time = milliseconds_to_timestamp(message["queryInfo"]["endTime"])
-        assert_approximately_now(end_time)
-        status_model.query_info.end_time = end_time
+    if message.get("queryInfo"):
+        start_time_milli = message["queryInfo"]["startTime"]
+        start_time = milliseconds_to_timestamp(start_time_milli)
+        assert_approximately_now(start_time)
+        assert status_model.query_info
+        status_model.query_info.start_time = start_time
+        if message["queryInfo"].get("endTime"):
+            end_time_milli = message["queryInfo"]["endTime"]
+            end_time = milliseconds_to_timestamp(end_time_milli)
+            assert_approximately_now(end_time)
+            status_model.query_info.end_time = end_time
     return status_model
 
 
@@ -275,3 +293,73 @@ async def test_missing_executing(
     assert raw_query
     query = Query.model_validate(json.loads(raw_query))
     assert not query.result_queued
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_quota(
+    *,
+    app: FastAPI,
+    kafka_broker: KafkaBroker,
+    kafka_status_consumer: AIOKafkaConsumer,
+    mock_gafaelfawr: MockGafaelfawr,
+    mock_qserv: MockQserv,
+    redis: RedisContainer,
+) -> None:
+    redis_client = redis.get_client()
+    job = read_test_job_run("data")
+    mock_gafaelfawr.set_quota(
+        job.owner,
+        GafaelfawrQuota(
+            tap={config.tap_service: GafaelfawrTapQuota(concurrent=2)}
+        ),
+    )
+
+    async with LifespanManager(app):
+        factory = context_dependency.create_factory()
+
+        # Start a couple of queries.
+        await start_query(kafka_broker, "data")
+        status = await wait_for_status(kafka_status_consumer, "data-started")
+        assert status.query_info
+        start_time = status.query_info.start_time
+        job = await start_query(kafka_broker, "data")
+        await wait_for_status(
+            kafka_status_consumer, "data-started", execution_id="2"
+        )
+
+        # This should have exhausted the user's quota, and starting a third
+        # job should be rejected with an error.
+        await start_query(kafka_broker, "data")
+        await wait_for_status(kafka_status_consumer, "data-overquota")
+
+        # Make sure that we decremented the counter of running queries again
+        # when rejecting that job.
+        assert redis_client.get(f"rate:{job.owner}") == b"2"
+
+        # Let the first query finish.
+        await mock_qserv.store_results(job)
+        await mock_qserv.update_status(
+            1,
+            AsyncQueryStatus(
+                query_id=1,
+                status=AsyncQueryPhase.COMPLETED,
+                total_chunks=10,
+                completed_chunks=10,
+                collected_bytes=250,
+                query_begin=start_time,
+                last_update=datetime.now(tz=UTC),
+            ),
+        )
+        await wait_for_dispatch(factory, 1)
+
+        # Run the background task queue.
+        assert await run_arq_jobs() == 1
+        await wait_for_status(kafka_status_consumer, "data-completed")
+
+        # Now, it should be possible to start a new query.
+        await start_query(kafka_broker, "data")
+        await wait_for_status(
+            kafka_status_consumer, "data-started", execution_id="3"
+        )
+        assert redis_client.get(f"rate:{job.owner}") == b"2"

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 from safir.arq import ArqQueue
 from structlog.stdlib import BoundLogger
 
@@ -10,6 +12,7 @@ from ..models.kafka import JobStatus
 from ..models.qserv import AsyncQueryPhase, AsyncQueryStatus
 from ..models.state import Query
 from ..storage.qserv import QservClient
+from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from .results import ResultProcessor
 
@@ -29,6 +32,8 @@ class QueryMonitor:
         Queue to which to dispatch result processing requests.
     state_store
         Storage for query state.
+    rate_limit_store
+        Storage for rate limits.
     events
         Metrics events publishers.
     logger
@@ -42,6 +47,7 @@ class QueryMonitor:
         qserv_client: QservClient,
         arq_queue: ArqQueue,
         state_store: QueryStateStore,
+        rate_limit_store: RateLimitStore,
         events: Events,
         logger: BoundLogger,
     ) -> None:
@@ -49,6 +55,7 @@ class QueryMonitor:
         self._qserv = qserv_client
         self._arq = arq_queue
         self._state = state_store
+        self._rate_store = rate_limit_store
         self._events = events
         self._logger = logger
 
@@ -121,3 +128,13 @@ class QueryMonitor:
             await self._state.mark_queued_query(query_id)
             logger.info("Dispatched finished query to worker")
             return None
+
+    async def reconcile_rate_limits(self) -> None:
+        """Reconcile rate limits against currently running queries."""
+        active_queries = await self._state.get_active_queries()
+        counts: Counter[str] = Counter()
+        for qserv_id in active_queries:
+            query = await self._state.get_query(qserv_id)
+            if query:
+                counts[query.job.owner] += 1
+        await self._rate_store.reconcile_query_counts(counts)

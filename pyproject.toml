@@ -23,6 +23,7 @@ dependencies = [
     "arq>=0.26",
     "asyncmy>=0.2",
     "bitstring>=4.3",
+    "cachetools>=6.1",
     "fastapi>=0.112.2",
     "faststream[kafka]>=0.5",
     "httpx>=0.27",
@@ -71,6 +72,7 @@ tox = [
 ]
 typing = [
     "mypy>=1.15",
+    "types-cachetools",
 ]
 
 [tool.coverage.run]

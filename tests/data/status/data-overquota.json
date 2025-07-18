@@ -1,0 +1,13 @@
+{
+  "job_id": "uws123",
+  "timestamp": 1743540791,
+  "status": "ERROR",
+  "error": {
+    "code": "quota_exceeded",
+    "message": "Maximum running queries reached (2 running, maximum 2); wait for a query to finish or cancel one of your running queries"
+  },
+  "metadata": {
+    "query": "SELECT TOP 10 * FROM table",
+    "database": "dp1"
+  }
+}

@@ -6,10 +6,11 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
-from aiojobs import Scheduler
+from aiojobs import Job, Scheduler
 from structlog.stdlib import BoundLogger
 
 from .config import config
+from .constants import RATE_LIMIT_RECONCILE_INTERVAL
 from .services.monitor import QueryMonitor
 
 __all__ = ["BackgroundTaskManager"]
@@ -40,6 +41,7 @@ class BackgroundTaskManager:
         self._logger = logger
         self._closing = False
         self._scheduler: Scheduler | None = None
+        self._tasks: list[Job] = []
 
     async def start(self) -> None:
         """Start all background tasks.
@@ -56,11 +58,16 @@ class BackgroundTaskManager:
                 self._monitor.check_status,
                 config.qserv_poll_interval,
                 "polling query status",
-            )
+            ),
+            self._loop(
+                self._monitor.reconcile_rate_limits,
+                RATE_LIMIT_RECONCILE_INTERVAL,
+                "reconciling rate limits",
+            ),
         ]
         self._logger.info("Starting background tasks")
         for coro in coros:
-            await self._scheduler.spawn(coro)
+            self._tasks.append(await self._scheduler.spawn(coro))
 
         # Give all of the newly-spawned background tasks a chance to start.
         await asyncio.sleep(0)
@@ -73,10 +80,13 @@ class BackgroundTaskManager:
             return
         self._logger.info("Stopping background tasks")
         self._closing = True
+        for task in self._tasks:
+            await task.close()
         timeout = config.result_timeout.total_seconds() + 1.0
         await self._scheduler.wait_and_close(timeout=timeout)
         self._closing = False
         self._scheduler = None
+        self._tasks = []
 
     async def _loop(
         self,
@@ -100,11 +110,13 @@ class BackgroundTaskManager:
         description
             Description of the background task for error reporting.
         """
+        if not self._scheduler:
+            raise AssertionError("Background tasks not initialized")
         while not self._closing:
             await asyncio.sleep(interval.total_seconds())
             start = datetime.now(tz=UTC)
             try:
-                await call()
+                await self._scheduler.shield(call())
             except Exception:
                 # On failure, log the exception but otherwise continue as
                 # normal, including the delay. This will provide some time for

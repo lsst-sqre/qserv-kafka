@@ -488,6 +488,7 @@ class JobErrorCode(StrEnum):
     backend_request_error = "backend_request_error"
     backend_sql_error = "backend_sql_error"
     invalid_request = "invalid_request"
+    quota_exceeded = "quota_exceeded"
     result_timeout = "result_timeout"
     upload_failed = "upload_failed"
     table_read = "table_read"

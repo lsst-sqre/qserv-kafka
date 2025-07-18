@@ -22,7 +22,9 @@ from ..models.kafka import (
     JobStatus,
 )
 from ..models.votable import VOTablePrimitive
+from ..storage.gafaelfawr import GafaelfawrClient
 from ..storage.qserv import QservClient
+from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from .results import ResultProcessor
 
@@ -40,6 +42,10 @@ class QueryService:
         Storage for query state.
     result_processor
         Service to process completed queries.
+    rate_limit_store
+        Storage for rate limiting.
+    gafaelfawr_client
+        Client for quota information.
     events
         Metrics events publishers.
     logger
@@ -52,12 +58,16 @@ class QueryService:
         qserv_client: QservClient,
         state_store: QueryStateStore,
         result_processor: ResultProcessor,
+        rate_limit_store: RateLimitStore,
+        gafaelfawr_client: GafaelfawrClient,
         events: Events,
         logger: BoundLogger,
     ) -> None:
         self._qserv = qserv_client
         self._state = state_store
         self._results = result_processor
+        self._rate_store = rate_limit_store
+        self._gafaelfawr = gafaelfawr_client
         self._events = events
         self._logger = logger
 
@@ -119,12 +129,8 @@ class QueryService:
         JobStatus
             Initial status of the job.
         """
-        start = datetime.now(tz=UTC)
         metadata = job.to_job_metadata()
         query_for_logging = metadata.model_dump(mode="json", exclude_none=True)
-        logger = self._logger.bind(
-            job_id=job.job_id, username=job.owner, query=query_for_logging
-        )
 
         # Check that the job request is supported.
         serialization = job.result_format.format.serialization
@@ -137,54 +143,29 @@ class QueryService:
                 msg = "arraysize only supported for char fields"
                 return self._build_invalid_request_status(job, msg)
 
-        # Upload any tables.
-        try:
-            for upload in job.upload_tables:
-                size = await self._qserv.upload_table(upload)
-                logger.info("Uploaded table", table_name=upload.table_name)
-                event = TemporaryTableUploadEvent(
-                    username=job.owner, size=size
-                )
-                await self._events.temporary_table.publish(event)
-        except (QservApiError, TableUploadWebError) as e:
-            if isinstance(e, TableUploadWebError):
-                msg = "Unable to retrieve table to upload"
-            else:
-                msg = "Unable to upload table"
-            logger.exception(msg, error=str(e))
-            return JobStatus(
-                job_id=job.job_id,
-                execution_id=None,
-                timestamp=datetime.now(tz=UTC),
-                status=ExecutionPhase.ERROR,
-                error=e.to_job_error(),
-                metadata=metadata,
-            )
+        # Increment the user's running queries and make sure they have space
+        # to start a new query.
+        quota = await self._gafaelfawr.get_user_quota(job.owner)
+        count = await self._rate_store.start_query(job.owner)
+        if quota and quota.concurrent < count:
+            await self._rate_store.end_query(job.owner)
+            return self._build_quota_status(job, count - 1, quota.concurrent)
+
+        # Set up the logger for the query.
+        logger = self._logger.bind(
+            job_id=job.job_id,
+            username=job.owner,
+            quota=quota,
+            running=count,
+            query=query_for_logging,
+        )
 
         # Start the query.
-        query_id = None
         try:
-            query_id = await self._qserv.submit_query(job)
-        except QservApiError as e:
-            if isinstance(e, QservApiFailedError):
-                msg = "Query rejected by Qserv"
-                logger.info(msg, error=str(e), detail=e.detail)
-            else:
-                logger.exception("Unable to start query", error=str(e))
-            return JobStatus(
-                job_id=job.job_id,
-                execution_id=str(query_id) if query_id else None,
-                timestamp=datetime.now(tz=UTC),
-                status=ExecutionPhase.ERROR,
-                error=e.to_job_error(),
-                metadata=metadata,
-            )
-        logger.info("Started query", qserv_id=str(query_id))
-
-        # Analyze the initial status and return it.
-        return await self._results.build_query_status(
-            query_id, job, start, initial=True
-        )
+            return await self._start_query_internal(job, logger)
+        except Exception:
+            await self._rate_store.end_query(job.owner)
+            raise
 
     def _build_invalid_request_status(
         self, job: JobRun, error: str
@@ -216,4 +197,116 @@ class QueryService:
             status=ExecutionPhase.ERROR,
             error=JobError(code=JobErrorCode.invalid_request, message=error),
             metadata=metadata,
+        )
+
+    def _build_quota_status(
+        self, job: JobRun, count: int, quota: int
+    ) -> JobStatus:
+        """Build a status reply for an over-quota request.
+
+        Parameters
+        ----------
+        job
+            Initial query request.
+        count
+            Number of running queries.
+        quota
+            Maximum allowed number of concurrent running queries.
+
+        Returns
+        -------
+        JobStatus
+            Job status to report to Kafka.
+        """
+        metadata = job.to_job_metadata()
+        self._logger.info(
+            "Query rejected due to quota",
+            job_id=job.job_id,
+            username=job.owner,
+            quota=quota,
+            running=count,
+            query=metadata.model_dump(mode="json", exclude_none=True),
+        )
+        error = (
+            f"Maximum running queries reached ({count} running, maximum"
+            f" {quota}); wait for a query to finish or cancel one of your"
+            " running queries"
+        )
+        return JobStatus(
+            job_id=job.job_id,
+            timestamp=datetime.now(tz=UTC),
+            status=ExecutionPhase.ERROR,
+            error=JobError(code=JobErrorCode.quota_exceeded, message=error),
+            metadata=metadata,
+        )
+
+    async def _start_query_internal(
+        self, job: JobRun, logger: BoundLogger
+    ) -> JobStatus:
+        """Start a query after verification and rate limiting.
+
+        Parameters
+        ----------
+        job
+            Query job to start.
+        logger
+            Logger to use for any messages.
+
+        Returns
+        -------
+        JobStatus
+            Initial status of the job.
+        """
+        start = datetime.now(tz=UTC)
+        metadata = job.to_job_metadata()
+
+        # Upload any tables.
+        try:
+            for upload in job.upload_tables:
+                size = await self._qserv.upload_table(upload)
+                logger.info("Uploaded table", table_name=upload.table_name)
+                event = TemporaryTableUploadEvent(
+                    username=job.owner, size=size
+                )
+                await self._events.temporary_table.publish(event)
+        except (QservApiError, TableUploadWebError) as e:
+            await self._rate_store.end_query(job.owner)
+            if isinstance(e, TableUploadWebError):
+                msg = "Unable to retrieve table to upload"
+            else:
+                msg = "Unable to upload table"
+            logger.exception(msg, error=str(e))
+            return JobStatus(
+                job_id=job.job_id,
+                execution_id=None,
+                timestamp=datetime.now(tz=UTC),
+                status=ExecutionPhase.ERROR,
+                error=e.to_job_error(),
+                metadata=metadata,
+            )
+
+        # Start the query.
+        query_id = None
+        try:
+            query_id = await self._qserv.submit_query(job)
+        except QservApiError as e:
+            await self._rate_store.end_query(job.owner)
+            if isinstance(e, QservApiFailedError):
+                msg = "Query rejected by Qserv"
+                logger.info(msg, error=str(e), detail=e.detail)
+            else:
+                logger.exception("Unable to start query", error=str(e))
+            return JobStatus(
+                job_id=job.job_id,
+                execution_id=str(query_id) if query_id else None,
+                timestamp=datetime.now(tz=UTC),
+                status=ExecutionPhase.ERROR,
+                error=e.to_job_error(),
+                metadata=metadata,
+            )
+        logger.info("Started query", qserv_id=str(query_id))
+
+        # Analyze the initial status and return it.
+        return await self._results.build_query_status(
+            query_id, job, start, initial=True
         )

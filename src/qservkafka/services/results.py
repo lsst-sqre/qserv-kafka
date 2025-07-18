@@ -33,6 +33,7 @@ from ..models.kafka import (
 from ..models.qserv import AsyncQueryPhase, AsyncQueryStatus
 from ..models.votable import UploadStats
 from ..storage.qserv import QservClient
+from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from ..storage.votable import VOTableWriter
 
@@ -52,6 +53,8 @@ class ResultProcessor:
         Writer for VOTable output.
     kafka_broker
         Broker to use to publish status messages.
+    rate_limit_store
+        Storage for rate limiting.
     events
         Metrics events publishers.
     logger
@@ -65,6 +68,7 @@ class ResultProcessor:
         state_store: QueryStateStore,
         votable_writer: VOTableWriter,
         kafka_broker: KafkaBroker,
+        rate_limit_store: RateLimitStore,
         events: Events,
         logger: BoundLogger,
     ) -> None:
@@ -72,6 +76,7 @@ class ResultProcessor:
         self._state = state_store
         self._votable = votable_writer
         self._kafka = kafka_broker
+        self._rate_store = rate_limit_store
         self._events = events
         self._logger = logger
 
@@ -182,7 +187,8 @@ class ResultProcessor:
                 raise ValueError(f"Unknown phase {status.status}")
 
         # Query was completed, either successfully or unsuccessfully. Delete
-        # any state storage needed for it and return the resulting status.
+        # any state storage needed for it, update rate limits, and return the
+        # resulting status.
         await self._delete_query_data(query_id, job, logger)
         return result
 
@@ -499,6 +505,7 @@ class ResultProcessor:
             Logger to use.
         """
         await self._state.delete_query(query_id)
+        await self._rate_store.end_query(job.owner)
 
         # Delete any temporary tables.
         for upload in job.upload_tables:

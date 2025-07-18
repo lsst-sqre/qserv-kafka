@@ -29,6 +29,7 @@ from qservkafka.config import config
 from qservkafka.factory import Factory, ProcessContext
 from qservkafka.main import create_app
 
+from .support.gafaelfawr import MockGafaelfawr, register_mock_gafaelfawr
 from .support.qserv import MockQserv, register_mock_qserv
 
 
@@ -150,6 +151,12 @@ async def kafka_broker(
         yield broker
 
 
+@pytest.fixture(autouse=True)
+def mock_gafaelfawr(respx_mock: respx.Router) -> MockGafaelfawr:
+    base_url = str(config.gafaelfawr_base_url)
+    return register_mock_gafaelfawr(respx_mock, base_url)
+
+
 @pytest_asyncio.fixture(ids=["good"], params=[False])
 async def mock_qserv(
     *,
@@ -201,6 +208,8 @@ def redis(redis_container: RedisContainer) -> RedisContainer:
     """Wrap the session fixture to clear data before each test."""
     redis_client = redis_container.get_client()
     for key in redis_client.scan_iter("query:*"):
+        redis_client.delete(key)
+    for key in redis_client.scan_iter("rate:*"):
         redis_client.delete(key)
     return redis_container
 
