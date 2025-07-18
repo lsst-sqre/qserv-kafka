@@ -90,7 +90,8 @@ class VOTablePrimitive(Enum):
     """
 
     boolean = ("boolean", "1s")
-    char = ("char", "s")
+    char = ("char", "c")
+    unicode_char = ("unicodeChar", "2s")
     double = ("double", ">d")
     float = ("float", ">f")
     short = ("short", ">h")
@@ -125,6 +126,12 @@ class VOTablePrimitive(Enum):
             case "char":
                 if not isinstance(value, bytes):
                     value = str(value).encode()
+                return struct.pack(
+                    self._pack_format, value[:1] if value else b"\x00"
+                )
+            case "unicodeChar":
+                if not isinstance(value, bytes):
+                    value = str(value).encode("utf-16-be")
                 return struct.pack(self._pack_format, value)
             case "double" | "float":
                 value = math.nan if value is None else float(value)
@@ -134,3 +141,7 @@ class VOTablePrimitive(Enum):
                 return struct.pack(self._pack_format, value)
             case _:  # pragma: no cover
                 raise ValueError(f"Unknown type {self.value}")
+
+    def is_string(self) -> bool:
+        """Check if the primitive type is a string type."""
+        return self in (VOTablePrimitive.char, VOTablePrimitive.unicode_char)

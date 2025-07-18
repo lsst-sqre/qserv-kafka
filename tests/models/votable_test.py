@@ -42,3 +42,36 @@ def test_votable_primitive() -> None:
     assert model.type == VOTablePrimitive.double
     assert model.type.pack(13.71) == struct.pack(">d", 13.71)
     assert model.model_dump(mode="json") == {"type": "double"}
+
+
+def test_votable_primitive_unicode_char() -> None:
+    class TestModel(BaseModel):
+        type: VOTablePrimitive
+
+    model = TestModel.model_validate({"type": "unicodeChar"})
+    assert model.type == VOTablePrimitive.unicode_char
+    assert model.model_dump(mode="json") == {"type": "unicodeChar"}
+
+    result = model.type.pack("h")
+    expected = "h".encode("utf-16-be")
+    assert result == expected
+
+    result = model.type.pack("hello")
+    expected = "h".encode("utf-16-be")
+    assert result == expected
+
+
+def test_votable_primitive_char_vs_unicode_char() -> None:
+    char_type = VOTablePrimitive.char
+    unicode_type = VOTablePrimitive.unicode_char
+
+    test_char = "h"
+
+    char_result = char_type.pack(test_char)
+    unicode_result = unicode_type.pack(test_char)
+
+    assert char_result == struct.pack("c", test_char.encode()[:1])
+    assert unicode_result == test_char.encode("utf-16-be")
+
+    assert char_type.pack("hello") == b"h"
+    assert unicode_type.pack("hello") == b"\x00h"
