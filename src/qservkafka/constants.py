@@ -19,7 +19,7 @@ __all__ = [
     "UPLOAD_BUFFER_SIZE",
 ]
 
-ARQ_TIMEOUT_GRACE = timedelta(seconds=2)
+ARQ_TIMEOUT_GRACE = timedelta(seconds=5)
 """Additional grace period to allow on top of result processing timeout.
 
 This should be long enough to allow for asking the REST API for the status,
