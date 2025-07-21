@@ -151,8 +151,8 @@ def read_test_job_status_json(filename: str) -> dict[str, Any]:
     model = JobStatus.model_validate(read_test_json(f"status/{filename}"))
     result = model.model_dump(mode="json")
     result["timestamp"] = ANY
-    if "queryInfo" in result:
+    if result.get("queryInfo"):
         result["queryInfo"]["startTime"] = ANY
-        if "endTime" in result["queryInfo"]:
+        if result["queryInfo"].get("endTime"):
             result["queryInfo"]["endTime"] = ANY
     return result

@@ -42,6 +42,18 @@ class Config(BaseSettings):
         "qserv", title="Kafka consumer group ID"
     )
 
+    gafaelfawr_base_url: HttpUrl = Field(
+        ...,
+        title="Base URL for Gafaelfawr",
+        description="Used to access the Gafaelfawr API to get user quotas",
+    )
+
+    gafaelfawr_token: SecretStr = Field(
+        ...,
+        title="Gafaelfawr token",
+        description="Token to use for Gafaelfawr API calls",
+    )
+
     kafka: KafkaConnectionSettings = Field(
         default_factory=KafkaConnectionSettings,
         title="Kafka connection settings",
@@ -212,6 +224,12 @@ class Config(BaseSettings):
             " result processing risks losing a result. This should be aligned"
             " with the Kubernetes shutdown grace period."
         ),
+    )
+
+    tap_service: str = Field(
+        ...,
+        title="TAP service name",
+        description="Used to determine which TAP quota to apply",
     )
 
     @property

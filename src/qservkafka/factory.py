@@ -16,6 +16,7 @@ from safir.database import create_database_engine
 from safir.metrics import EventManager
 from safir.redis import PydanticRedisStorage
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
+from structlog import get_logger
 from structlog.stdlib import BoundLogger
 
 from .config import config
@@ -32,7 +33,9 @@ from .models.state import Query
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
 from .services.results import ResultProcessor
+from .storage.gafaelfawr import GafaelfawrClient
 from .storage.qserv import QservClient
+from .storage.rate import RateLimitStore
 from .storage.state import QueryStateStore
 from .storage.votable import VOTableWriter
 
@@ -59,6 +62,9 @@ class ProcessContext:
 
     event_manager: EventManager
     """Manager for publishing metrics events."""
+
+    gafaelfawr_client: GafaelfawrClient
+    """Shared caching Gafaelfawr client."""
 
     events: Events
     """Event publishers for metrics events."""
@@ -141,12 +147,17 @@ class ProcessContext:
         events = Events()
         await events.initialize(event_manager)
 
+        # Create a shared caching Gafaelfawr client.
+        logger = get_logger("qservkafka")
+        gafaelfawr_client = GafaelfawrClient(http_client, logger)
+
         # Return the newly-constructed context.
         return cls(
             http_client=http_client,
             engine=engine,
             kafka_broker=kafka_broker,
             event_manager=event_manager,
+            gafaelfawr_client=gafaelfawr_client,
             events=events,
             redis=redis_client,
         )
@@ -189,6 +200,11 @@ class Factory:
         self._context = context
         self._session = session
         self._logger = logger
+
+    @property
+    def gafaelfawr_client(self) -> GafaelfawrClient:
+        """Global shared caching Gafaelfawr client."""
+        return self._context.gafaelfawr_client
 
     def create_query_state_store(self) -> QueryStateStore:
         """Create the storage client for query state.
@@ -238,6 +254,7 @@ class Factory:
             qserv_client=self.create_qserv_client(),
             arq_queue=arq_queue,
             state_store=self.create_query_state_store(),
+            rate_limit_store=self.create_rate_limit_store(),
             events=self._context.events,
             logger=self._logger,
         )
@@ -259,6 +276,8 @@ class Factory:
             qserv_client=self.create_qserv_client(),
             state_store=self.create_query_state_store(),
             result_processor=self.create_result_processor(),
+            rate_limit_store=self.create_rate_limit_store(),
+            gafaelfawr_client=self.gafaelfawr_client,
             events=self._context.events,
             logger=self._logger,
         )
@@ -278,6 +297,17 @@ class Factory:
                 self._context.http_client, self._logger
             ),
             kafka_broker=self._context.kafka_broker,
+            rate_limit_store=self.create_rate_limit_store(),
             events=self._context.events,
             logger=self._logger,
         )
+
+    def create_rate_limit_store(self) -> RateLimitStore:
+        """Create a new storage client for rate limiting.
+
+        Returns
+        -------
+        RateLimitStore
+            Storage for rate limit information.
+        """
+        return RateLimitStore(self._context.redis)
