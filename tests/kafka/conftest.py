@@ -103,4 +103,4 @@ async def kafka_broker(
     )
     await broker.start()
     yield broker
-    await broker.close()
+    await broker.stop()
