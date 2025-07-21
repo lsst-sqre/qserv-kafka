@@ -11,7 +11,7 @@ from collections.abc import (
     Sequence,
 )
 from copy import copy
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from functools import wraps
 from typing import Any, Concatenate, overload
 
@@ -41,6 +41,7 @@ from ..models.qserv import (
     AsyncSubmitRequest,
     AsyncSubmitResponse,
     BaseResponse,
+    TableUploadStats,
 )
 
 API_VERSION = 43
@@ -374,7 +375,7 @@ class QservClient:
         result = await self._post("/query-async", request, AsyncSubmitResponse)
         return result.query_id
 
-    async def upload_table(self, upload: JobTableUpload) -> int:
+    async def upload_table(self, upload: JobTableUpload) -> TableUploadStats:
         """Upload a table to Qserv.
 
         Parameters
@@ -384,8 +385,8 @@ class QservClient:
 
         Returns
         -------
-        int
-            Size of the uploaded CSV data for the table in bytes.
+        TableUploadStats
+            Statistics about the uploaded table.
 
         Raises
         ------
@@ -396,6 +397,7 @@ class QservClient:
         """
         schema = await self._get_table(upload.schema_url)
         source = await self._get_table(upload.source_url)
+        start = datetime.now(tz=UTC)
         await self._post_multipart(
             "/ingest/csv",
             data={
@@ -411,7 +413,9 @@ class QservClient:
             ),
             timeout=config.qserv_upload_timeout + timedelta(seconds=1),
         )
-        return len(source)
+        return TableUploadStats(
+            size=len(source), elapsed=datetime.now(tz=UTC) - start
+        )
 
     @_retry
     async def _delete(self, route: str) -> None:
