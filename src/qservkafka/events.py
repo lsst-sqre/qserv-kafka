@@ -42,6 +42,11 @@ class QservFailureEvent(EventPayload):
 class BaseQueryEvent(EventPayload):
     """Common fields in all query events."""
 
+    job_id: str = Field(
+        title="UWS job ID",
+        description="Identifier of job in the TAP server's UWS database",
+    )
+
     username: str = Field(
         ..., title="Username", description="Username of authenticated user"
     )

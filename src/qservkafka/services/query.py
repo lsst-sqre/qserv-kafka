@@ -266,7 +266,7 @@ class QueryService:
                 size = await self._qserv.upload_table(upload)
                 logger.info("Uploaded table", table_name=upload.table_name)
                 event = TemporaryTableUploadEvent(
-                    username=job.owner, size=size
+                    job_id=job.job_id, username=job.owner, size=size
                 )
                 await self._events.temporary_table.publish(event)
         except (QservApiError, TableUploadWebError) as e:

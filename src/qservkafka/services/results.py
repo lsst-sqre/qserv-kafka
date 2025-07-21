@@ -236,7 +236,9 @@ class ResultProcessor:
             result_bytes=status.collected_bytes,
         )
         timestamp = status.last_update or datetime.now(tz=UTC)
-        event = QueryAbortEvent(username=job.owner, elapsed=timestamp - start)
+        event = QueryAbortEvent(
+            job_id=job.job_id, username=job.owner, elapsed=timestamp - start
+        )
         await self._events.query_abort.publish(event)
         return JobStatus(
             job_id=job.job_id,
@@ -308,6 +310,7 @@ class ResultProcessor:
         else:
             qserv_rate = None
         event = QuerySuccessEvent(
+            job_id=job.job_id,
             username=job.owner,
             elapsed=now - start,
             qserv_elapsed=qserv_elapsed,
@@ -417,7 +420,10 @@ class ResultProcessor:
 
         # Send a metrics event for the failure.
         event = QueryFailureEvent(
-            username=job.owner, error=error.code, elapsed=elapsed
+            job_id=job.job_id,
+            username=job.owner,
+            error=error.code,
+            elapsed=elapsed,
         )
         await self._events.query_failure.publish(event)
 
@@ -467,6 +473,7 @@ class ResultProcessor:
             result_bytes=status.collected_bytes,
         )
         event = QueryFailureEvent(
+            job_id=job.job_id,
             username=job.owner,
             error=JobErrorCode.backend_error,
             elapsed=datetime.now(tz=UTC) - start,
