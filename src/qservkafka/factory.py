@@ -169,7 +169,7 @@ class ProcessContext:
         a different configuration.
         """
         await self.event_manager.aclose()
-        await self.kafka_broker.close()
+        await self.kafka_broker.stop()
         await self.redis.aclose()
         await self.engine.dispose()
         await self.http_client.aclose()

@@ -113,7 +113,7 @@ async def factory(
         async with aclosing(context):
             session = await create_async_session(engine, logger)
             yield Factory(context, session, logger)
-    await kafka_broker.close()
+    await kafka_broker.stop()
 
 
 @pytest.fixture
