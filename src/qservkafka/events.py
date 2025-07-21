@@ -178,6 +178,15 @@ class TemporaryTableUploadEvent(BaseQueryEvent):
         description="Size of the CSV file holding the table data",
     )
 
+    elapsed: timedelta = Field(
+        ...,
+        title="Upload time (seconds)",
+        description=(
+            "Time required to upload the table to Qserv. This does not include"
+            " the time required to read the table from GCS."
+        ),
+    )
+
 
 class Events(EventMaker):
     """Event publishers for all possible events, used by workers and frontend.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import timedelta
 from enum import StrEnum
 from typing import Annotated, Any
 
@@ -15,6 +17,7 @@ __all__ = [
     "AsyncSubmitRequest",
     "AsyncSubmitResponse",
     "BaseResponse",
+    "TableUploadStats",
 ]
 
 
@@ -119,3 +122,18 @@ class AsyncSubmitResponse(BaseResponse):
             validation_alias="queryId",
         ),
     ]
+
+
+@dataclass
+class TableUploadStats:
+    """Statistics from a table upload to Qserv."""
+
+    size: int
+    """Size of the uploaded table in CSV format (bytes)."""
+
+    elapsed: timedelta
+    """Time required to upload the table to Qserv.
+
+    Does not include the time required to retrieve the table source and SQL
+    from GCS before uploading.
+    """
