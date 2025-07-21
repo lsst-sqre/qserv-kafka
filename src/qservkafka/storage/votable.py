@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import struct
 from binascii import b2a_base64
 from collections.abc import AsyncGenerator
@@ -116,7 +117,7 @@ class VOTableEncoder:
             yield self._base64_encode_bytes(encoded, last=True)
         finally:
             encoded.close()
-            await results.aclose()
+            await asyncio.shield(results.aclose())
 
         # Add the footer, which varies if the results overflowed.
         if overflow:
