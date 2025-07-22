@@ -7,6 +7,22 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-1.1.0'></a>
+## 1.1.0 (2025-07-21)
+
+### New features
+
+- Add support for retrieving a user's TAP quota information from Gafaelfawr and imposing a limit on the number of concurrent queries a user is allowed to run. Queries in excess of their quota will be rejected with an error.
+
+### Bug fixes
+
+- Increase termination grace period for arq workers and shield closing the database query results. This hopefully will fix an issue where arq's attempt to cancel a timed-out task converted the cancellation exception to a SQL exception, which triggered a retry of the query in one worker while simultaneously processing the query in a second worker.
+
+### Other changes
+
+- Add the TAP query ID to all metrics events.
+- Include the elapsed time required to upload the table to Qserv in metrics events for successful user table uploads. This does not include the time required to retrieve the table from its source URLs before upload.
+
 <a id='changelog-1.0.1'></a>
 ## 1.0.1 (2025-06-27)
 
