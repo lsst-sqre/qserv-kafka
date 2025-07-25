@@ -21,7 +21,7 @@ from qservkafka.factory import Factory
 from qservkafka.models.gafaelfawr import GafaelfawrQuota, GafaelfawrTapQuota
 from qservkafka.models.kafka import JobRun, JobStatus
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
-from qservkafka.models.state import Query
+from qservkafka.models.state import RunningQuery
 
 from ..support.arq import run_arq_jobs
 from ..support.data import (
@@ -345,7 +345,7 @@ async def test_missing_executing(
     redis_client = redis.get_client()
     raw_query = redis_client.get("query:1")
     assert raw_query
-    query = Query.model_validate(json.loads(raw_query))
+    query = RunningQuery.model_validate(json.loads(raw_query))
     assert not query.result_queued
 
 

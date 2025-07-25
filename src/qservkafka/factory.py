@@ -29,7 +29,7 @@ from .constants import (
     REDIS_TIMEOUT,
 )
 from .events import Events
-from .models.state import Query
+from .models.state import RunningQuery
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
 from .services.results import ResultProcessor
@@ -215,7 +215,9 @@ class Factory:
             Client for query state.
         """
         redis_storage = PydanticRedisStorage(
-            datatype=Query, redis=self._context.redis, key_prefix="query:"
+            datatype=RunningQuery,
+            redis=self._context.redis,
+            key_prefix="query:",
         )
         return QueryStateStore(redis_storage, self._logger)
 

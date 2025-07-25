@@ -27,10 +27,10 @@ from ..models.kafka import (
     JobErrorCode,
     JobQueryInfo,
     JobResultInfo,
-    JobRun,
     JobStatus,
 )
-from ..models.qserv import AsyncQueryPhase, AsyncQueryStatus
+from ..models.qserv import AsyncQueryPhase
+from ..models.state import Query, RunningQuery
 from ..models.votable import UploadStats
 from ..storage.qserv import QservClient
 from ..storage.rate import RateLimitStore
@@ -80,19 +80,13 @@ class ResultProcessor:
         self._events = events
         self._logger = logger
 
-    def build_executing_status(
-        self, job: JobRun, status: AsyncQueryStatus, start: datetime
-    ) -> JobStatus:
+    def build_executing_status(self, query: RunningQuery) -> JobStatus:
         """Build the status for a query that's still executing.
 
         Parameters
         ----------
-        job
-            Original query request.
-        status
-            Status response from Qserv.
-        start
-            Start time of the query.
+        query
+            Metadata about the query.
 
         Returns
         -------
@@ -101,27 +95,23 @@ class ResultProcessor:
         """
         self._logger.debug(
             "Query is executing",
-            job_id=job.job_id,
-            qserv_id=str(status.query_id),
-            username=job.owner,
-            start_time=format_datetime_for_logging(start),
+            job_id=query.job.job_id,
+            qserv_id=str(query.status.query_id),
+            username=query.job.owner,
+            start_time=format_datetime_for_logging(query.start),
         )
+        query_info = JobQueryInfo.from_query_status(query.status, query.start)
         return JobStatus(
-            job_id=job.job_id,
-            execution_id=str(status.query_id),
-            timestamp=status.last_update or datetime.now(tz=UTC),
+            job_id=query.job.job_id,
+            execution_id=str(query.status.query_id),
+            timestamp=query.status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.EXECUTING,
-            query_info=JobQueryInfo.from_query_status(status, start),
-            metadata=job.to_job_metadata(),
+            query_info=query_info,
+            metadata=query.job.to_job_metadata(),
         )
 
     async def build_query_status(
-        self,
-        query_id: int,
-        job: JobRun,
-        start: datetime,
-        *,
-        initial: bool = False,
+        self, query: Query, *, initial: bool = False
     ) -> JobStatus:
         """Retrieve query status and convert it to a job status update.
 
@@ -131,12 +121,8 @@ class ResultProcessor:
 
         Parameters
         ----------
-        query_id
-            Qserv query ID.
-        job
-            Initial query request.
-        start
-            Start time of the query.
+        query
+            Metadata about the query without the Qserv status.
         initial
             Whether this is the first status call immediately after starting
             the job.
@@ -147,49 +133,52 @@ class ResultProcessor:
             Job status to report to Kafka.
         """
         logger = self._logger.bind(
-            job_id=job.job_id,
-            qserv_id=str(query_id),
-            username=job.owner,
-            start_time=format_datetime_for_logging(start),
+            job_id=query.job.job_id,
+            qserv_id=str(query.query_id),
+            username=query.job.owner,
+            start_time=format_datetime_for_logging(query.start),
         )
+
+        # Get the current query status.
         try:
-            status = await self._qserv.get_query_status(query_id)
+            status = await self._qserv.get_query_status(query.query_id)
         except QservApiError as e:
             logger.exception("Unable to get job status", error=str(e))
             update = JobStatus(
-                job_id=job.job_id,
-                execution_id=str(query_id),
+                job_id=query.job.job_id,
+                execution_id=str(query.query_id),
                 timestamp=datetime.now(tz=UTC),
                 status=ExecutionPhase.ERROR,
                 error=e.to_job_error(),
-                metadata=job.to_job_metadata(),
+                metadata=query.job.to_job_metadata(),
             )
-            await self._delete_query_data(query_id, job, logger)
+            await self._delete_query_data(query, logger)
             return update
+        full_query = RunningQuery.from_query(query, status)
+
+        # Based on the status, process the results.
         match status.status:
             case AsyncQueryPhase.ABORTED:
-                result = await self._build_aborted_status(job, status, start)
+                result = await self._build_aborted_status(full_query)
             case AsyncQueryPhase.EXECUTING:
                 if initial:
-                    await self._state.store_query(
-                        query_id, job, status, start=start
-                    )
+                    await self._state.store_query(full_query)
                 else:
-                    await self._state.update_status(query_id, status)
-                return self.build_executing_status(job, status, start)
+                    await self._state.update_status(query.query_id, status)
+                return self.build_executing_status(full_query)
             case AsyncQueryPhase.COMPLETED:
                 result = await self._build_completed_status(
-                    job, status, start, initial=initial
+                    full_query, initial=initial
                 )
             case AsyncQueryPhase.FAILED:
-                result = await self._build_failed_status(job, status, start)
+                result = await self._build_failed_status(full_query)
             case _:  # pragma: no cover
                 raise ValueError(f"Unknown phase {status.status}")
 
         # Query was completed, either successfully or unsuccessfully. Delete
         # any state storage needed for it, update rate limits, and return the
         # resulting status.
-        await self._delete_query_data(query_id, job, logger)
+        await self._delete_query_data(query, logger)
         return result
 
     async def publish_status(self, status: JobStatus) -> None:
@@ -206,19 +195,13 @@ class ResultProcessor:
             headers={"Content-Type": "application/json"},
         )
 
-    async def _build_aborted_status(
-        self, job: JobRun, status: AsyncQueryStatus, start: datetime
-    ) -> JobStatus:
+    async def _build_aborted_status(self, query: RunningQuery) -> JobStatus:
         """Construct the status for an aborted job.
 
         Parameters
         ----------
-        job
-            Original query request.
-        status
-            Status from Qserv.
-        start
-            When the query was started.
+        query
+            Metadata about query.
 
         Returns
         -------
@@ -227,35 +210,35 @@ class ResultProcessor:
         """
         self._logger.info(
             "Job aborted",
-            job_id=job.job_id,
-            qserv_id=str(status.query_id),
-            username=job.owner,
-            start_time=format_datetime_for_logging(start),
-            total_chunks=status.total_chunks,
-            completed_chunks=status.completed_chunks,
-            result_bytes=status.collected_bytes,
+            job_id=query.job.job_id,
+            qserv_id=str(query.status.query_id),
+            username=query.job.owner,
+            start_time=format_datetime_for_logging(query.start),
+            total_chunks=query.status.total_chunks,
+            completed_chunks=query.status.completed_chunks,
+            result_bytes=query.status.collected_bytes,
         )
-        timestamp = status.last_update or datetime.now(tz=UTC)
+        timestamp = query.status.last_update or datetime.now(tz=UTC)
         event = QueryAbortEvent(
-            job_id=job.job_id, username=job.owner, elapsed=timestamp - start
+            job_id=query.job.job_id,
+            username=query.job.owner,
+            elapsed=timestamp - query.start,
         )
         await self._events.query_abort.publish(event)
         return JobStatus(
-            job_id=job.job_id,
-            execution_id=str(status.query_id),
-            timestamp=status.last_update or datetime.now(tz=UTC),
+            job_id=query.job.job_id,
+            execution_id=str(query.status.query_id),
+            timestamp=query.status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.ABORTED,
             query_info=JobQueryInfo.from_query_status(
-                status, start, finished=True
+                query.status, query.start, finished=True
             ),
-            metadata=job.to_job_metadata(),
+            metadata=query.job.to_job_metadata(),
         )
 
     async def _build_completed_status(
         self,
-        job: JobRun,
-        status: AsyncQueryStatus,
-        start: datetime,
+        query: RunningQuery,
         *,
         initial: bool = False,
     ) -> JobStatus:
@@ -267,12 +250,8 @@ class ResultProcessor:
 
         Parameters
         ----------
-        job
-            Original query request.
-        status
-            Status from Qserv.
-        start
-            When the query was started.
+        query
+            Metadata about the query.
         initial
             Whether this is the initial invocation, immediately after creating
             the job.
@@ -282,104 +261,93 @@ class ResultProcessor:
         JobStatus
             Status for the query.
         """
-        query_id = status.query_id
         logger = self._logger.bind(
-            job_id=job.job_id,
-            qserv_id=str(query_id),
-            username=job.owner,
-            start_time=format_datetime_for_logging(start),
+            job_id=query.job.job_id,
+            qserv_id=str(query.query_id),
+            username=query.job.owner,
+            start_time=format_datetime_for_logging(query.start),
         )
         logger.debug("Processing job completion")
 
         # Retrieve and upload the results.
         try:
-            stats = await self._upload_results_with_retry(
-                query_id, job, start, logger=logger
-            )
+            stats = await self._upload_results_with_retry(query, logger)
         except (QservApiError, UploadWebError, TimeoutError) as e:
-            return await self._build_exception_status(
-                query_id, job, e, start=start
-            )
+            return await self._build_exception_status(query, e)
 
         # Send a metrics event for the job completion and log it.
         now = datetime.now(tz=UTC)
-        qserv_end = status.last_update or now
-        qserv_elapsed = qserv_end - status.query_begin
+        qserv_end = query.status.last_update or now
+        qserv_elapsed = qserv_end - query.status.query_begin
+        qserv_elapsed_sec = qserv_elapsed.total_seconds()
         if qserv_elapsed.total_seconds() > 0:
-            qserv_rate = status.collected_bytes / qserv_elapsed.total_seconds()
+            qserv_rate = query.status.collected_bytes / qserv_elapsed_sec
         else:
             qserv_rate = None
         event = QuerySuccessEvent(
-            job_id=job.job_id,
-            username=job.owner,
-            elapsed=now - start,
+            job_id=query.job.job_id,
+            username=query.job.owner,
+            elapsed=now - query.start,
             qserv_elapsed=qserv_elapsed,
             result_elapsed=stats.elapsed,
             rows=stats.rows,
-            qserv_size=status.collected_bytes,
+            qserv_size=query.status.collected_bytes,
             encoded_size=stats.data_bytes,
             result_size=stats.total_bytes,
-            rate=stats.data_bytes / (now - start).total_seconds(),
+            rate=stats.data_bytes / (now - query.start).total_seconds(),
             qserv_rate=qserv_rate,
             result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
-            upload_tables=len(job.upload_tables),
+            upload_tables=len(query.job.upload_tables),
             immediate=initial,
         )
         await self._events.query_success.publish(event)
         logger.info(
             "Job complete and results uploaded",
             rows=stats.rows,
-            qserv_size=status.collected_bytes,
+            qserv_size=query.status.collected_bytes,
             encoded_size=stats.data_bytes,
             total_size=stats.total_bytes,
-            elapsed=(now - start).total_seconds(),
+            elapsed=(now - query.start).total_seconds(),
             qserv_elapsed=qserv_elapsed.total_seconds(),
             result_elapsed=stats.elapsed.total_seconds(),
         )
 
         # Delete the results.
         try:
-            await self._qserv.delete_result(query_id)
+            await self._qserv.delete_result(query.query_id)
         except QservApiError:
             logger.exception("Cannot delete results")
 
         # Return the resulting status.
         return JobStatus(
-            job_id=job.job_id,
-            execution_id=str(query_id),
+            job_id=query.job.job_id,
+            execution_id=str(query.query_id),
             timestamp=datetime.now(tz=UTC),
             status=ExecutionPhase.COMPLETED,
             query_info=JobQueryInfo.from_query_status(
-                status, start, finished=True
+                query.status, query.start, finished=True
             ),
             result_info=JobResultInfo(
                 total_rows=stats.rows,
-                result_location=job.result_location,
-                format=job.result_format.format,
+                result_location=query.job.result_location,
+                format=query.job.result_format.format,
             ),
-            metadata=job.to_job_metadata(),
+            metadata=query.job.to_job_metadata(),
         )
 
     async def _build_exception_status(
         self,
-        query_id: int,
-        job: JobRun,
+        query: RunningQuery,
         exc: QservApiError | UploadWebError | TimeoutError,
-        *,
-        start: datetime,
     ) -> JobStatus:
         """Construct the job status for an exception.
 
         Parameters
         ----------
-        query_id
-            Qserv query ID.
-        job
-            Original query request.
+        query
+            Query metadata.
         exc
             Exception that caused the job to fail.
-        start
-            When the query was started.
 
         Returns
         -------
@@ -387,13 +355,13 @@ class ResultProcessor:
             Status for the query.
         """
         logger = self._logger.bind(
-            job_id=job.job_id,
-            qserv_id=str(query_id),
-            username=job.owner,
-            start_time=format_datetime_for_logging(start),
+            job_id=query.job.job_id,
+            qserv_id=str(query.query_id),
+            username=query.job.owner,
+            start_time=format_datetime_for_logging(query.start),
         )
         now = datetime.now(tz=UTC)
-        elapsed = now - start
+        elapsed = now - query.start
         elapsed_seconds = elapsed.total_seconds()
 
         # Analyze the exception.
@@ -420,8 +388,8 @@ class ResultProcessor:
 
         # Send a metrics event for the failure.
         event = QueryFailureEvent(
-            job_id=job.job_id,
-            username=job.owner,
+            job_id=query.job.job_id,
+            username=query.job.owner,
             error=error.code,
             elapsed=elapsed,
         )
@@ -429,17 +397,15 @@ class ResultProcessor:
 
         # Return the job status to send to Kafka.
         return JobStatus(
-            job_id=job.job_id,
-            execution_id=str(query_id),
+            job_id=query.job.job_id,
+            execution_id=str(query.query_id),
             timestamp=now,
             status=ExecutionPhase.ERROR,
             error=error,
-            metadata=job.to_job_metadata(),
+            metadata=query.job.to_job_metadata(),
         )
 
-    async def _build_failed_status(
-        self, job: JobRun, status: AsyncQueryStatus, start: datetime
-    ) -> JobStatus:
+    async def _build_failed_status(self, query: RunningQuery) -> JobStatus:
         """Build the status for a failed job.
 
         Currently, Qserv has no way of reporting an error, so we have to
@@ -447,45 +413,41 @@ class ResultProcessor:
 
         Parameters
         ----------
-        job
-            Original query request.
-        status
-            Status from Qserv.
-        start
-            When the query was started.
+        query
+            Query metadata.
 
         Returns
         -------
         JobStatus
             Status for the query.
         """
-        metadata = job.to_job_metadata()
+        metadata = query.job.to_job_metadata()
         self._logger.warning(
             "Backend reported query failure",
-            job_id=job.job_id,
-            qserv_id=str(status.query_id),
-            username=job.owner,
-            start_time=format_datetime_for_logging(start),
+            job_id=query.job.job_id,
+            qserv_id=str(query.status.query_id),
+            username=query.job.owner,
+            start_time=format_datetime_for_logging(query.start),
             query=metadata.model_dump(mode="json", exclude_none=True),
-            status=status.model_dump(mode="json", exclude_none=True),
-            total_chunks=status.total_chunks,
-            completed_chunks=status.completed_chunks,
-            result_bytes=status.collected_bytes,
+            status=query.status.model_dump(mode="json", exclude_none=True),
+            total_chunks=query.status.total_chunks,
+            completed_chunks=query.status.completed_chunks,
+            result_bytes=query.status.collected_bytes,
         )
         event = QueryFailureEvent(
-            job_id=job.job_id,
-            username=job.owner,
+            job_id=query.job.job_id,
+            username=query.job.owner,
             error=JobErrorCode.backend_error,
-            elapsed=datetime.now(tz=UTC) - start,
+            elapsed=datetime.now(tz=UTC) - query.start,
         )
         await self._events.query_failure.publish(event)
         return JobStatus(
-            job_id=job.job_id,
-            execution_id=str(status.query_id),
-            timestamp=status.last_update or datetime.now(tz=UTC),
+            job_id=query.job.job_id,
+            execution_id=str(query.status.query_id),
+            timestamp=query.status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.ERROR,
             query_info=JobQueryInfo.from_query_status(
-                status, start, finished=True
+                query.status, query.start, finished=True
             ),
             error=JobError(
                 code=JobErrorCode.backend_error,
@@ -495,7 +457,7 @@ class ResultProcessor:
         )
 
     async def _delete_query_data(
-        self, query_id: int, job: JobRun, logger: BoundLogger
+        self, query: Query, logger: BoundLogger
     ) -> None:
         """Delete stored information for the query.
 
@@ -504,18 +466,16 @@ class ResultProcessor:
 
         Parameters
         ----------
-        query_id
-            Qserv query ID.
-        job
-            Original query request.
+        query
+            Query metadata.
         logger
             Logger to use.
         """
-        await self._state.delete_query(query_id)
-        await self._rate_store.end_query(job.owner)
+        await self._state.delete_query(query.query_id)
+        await self._rate_store.end_query(query.job.owner)
 
         # Delete any temporary tables.
-        for upload in job.upload_tables:
+        for upload in query.job.upload_tables:
             try:
                 await self._qserv.delete_table(upload.database, upload.table)
             except QservApiError as e:
@@ -525,15 +485,13 @@ class ResultProcessor:
                     table_name=upload.table_name,
                 )
 
-    async def _upload_results(self, query_id: int, job: JobRun) -> UploadStats:
+    async def _upload_results(self, query: RunningQuery) -> UploadStats:
         """Retrieve and upload the results.
 
         Parameters
         ----------
-        query_id
-            Qserv query ID.
-        job
-            Original query request.
+        query
+            Query metadata.
 
         Returns
         -------
@@ -552,23 +510,21 @@ class ResultProcessor:
             configured timeout.
         """
         result_start = datetime.now(tz=UTC)
-        results = self._qserv.get_query_results_gen(query_id)
+        results = self._qserv.get_query_results_gen(query.query_id)
         timeout = config.result_timeout.total_seconds()
         async with asyncio.timeout(timeout):
             size = await self._votable.store(
-                job.result_url, job.result_format, results, maxrec=job.maxrec
+                query.job.result_url,
+                query.job.result_format,
+                results,
+                maxrec=query.job.maxrec,
             )
             return UploadStats(
                 elapsed=datetime.now(tz=UTC) - result_start, **asdict(size)
             )
 
     async def _upload_results_with_retry(
-        self,
-        query_id: int,
-        job: JobRun,
-        start: datetime,
-        *,
-        logger: BoundLogger,
+        self, query: RunningQuery, logger: BoundLogger
     ) -> UploadStats:
         """Retrieve and upload the results, with retries.
 
@@ -579,12 +535,8 @@ class ResultProcessor:
 
         Parameters
         ----------
-        query_id
-            Qserv query ID.
-        job
-            Original query request.
-        start
-            When the query was started.
+        query
+            Query metadata.
         logger
             Logger to use.
 
@@ -606,7 +558,7 @@ class ResultProcessor:
         """
         for _ in range(1, config.qserv_retry_count):
             try:
-                return await self._upload_results(query_id, job)
+                return await self._upload_results(query)
             except (QservApiSqlError, UploadWebError) as e:
                 delay = config.qserv_retry_delay.total_seconds()
                 if isinstance(e, QservApiSqlError):
@@ -621,7 +573,7 @@ class ResultProcessor:
         # Fell through, so failed max_tries - 1 times. Try one more time,
         # re-raising the exception.
         try:
-            return await self._upload_results(query_id, job)
+            return await self._upload_results(query)
         except QservApiSqlError:
             event = QservFailureEvent(protocol=QservProtocol.SQL)
             await self._events.qserv_failure.publish(event)

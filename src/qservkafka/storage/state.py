@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from safir.redis import PydanticRedisStorage
 from structlog.stdlib import BoundLogger
 
 from ..constants import MAXIMUM_QUERY_LIFETIME
-from ..models.kafka import JobRun
 from ..models.qserv import AsyncQueryStatus
-from ..models.state import Query
+from ..models.state import RunningQuery
 
 __all__ = ["QueryStateStore"]
 
@@ -31,7 +28,7 @@ class QueryStateStore:
     """
 
     def __init__(
-        self, storage: PydanticRedisStorage[Query], logger: BoundLogger
+        self, storage: PydanticRedisStorage[RunningQuery], logger: BoundLogger
     ) -> None:
         self._storage = storage
         self._logger = logger
@@ -60,7 +57,7 @@ class QueryStateStore:
         """
         return {int(k) async for k in self._storage.scan("*")}
 
-    async def get_query(self, query_id: int) -> Query | None:
+    async def get_query(self, query_id: int) -> RunningQuery | None:
         """Get the original job request for a given query.
 
         Parameters
@@ -90,13 +87,7 @@ class QueryStateStore:
             await self._storage.store(str(query_id), query, lifetime)
 
     async def store_query(
-        self,
-        query_id: int,
-        job: JobRun,
-        status: AsyncQueryStatus | None,
-        *,
-        start: datetime,
-        result_queued: bool = False,
+        self, query: RunningQuery, *, result_queued: bool = False
     ) -> None:
         """Add or update a record for an in-progress query.
 
@@ -114,16 +105,9 @@ class QueryStateStore:
             Whether this query has been dispatched to arq for result
             processing.
         """
-        query = Query(
-            query_id=query_id,
-            job=job,
-            status=status,
-            start=start,
-            result_queued=result_queued,
-        )
         lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
         await self._storage.store(
-            str(query_id), query, lifetime, exclude_defaults=True
+            str(query.query_id), query, lifetime, exclude_defaults=True
         )
 
     async def update_status(
