@@ -3,7 +3,6 @@
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 
-from faststream.kafka import KafkaBroker
 from faststream.kafka.fastapi import KafkaMessage
 from safir.database import create_async_session
 from sqlalchemy.ext.asyncio import async_scoped_session
@@ -101,20 +100,11 @@ class ContextDependency:
         logger = get_logger("qservkafka")
         return Factory(self._process_context, self._session, logger)
 
-    async def initialize(
-        self, kafka_broker: KafkaBroker | None = None
-    ) -> None:
-        """Initialize the process-wide shared context.
-
-        Parameters
-        ----------
-        kafka_broker
-            Use this Kafka broker instead of creating a new one if it is not
-            `None`.
-        """
+    async def initialize(self) -> None:
+        """Initialize the process-wide shared context."""
         if self._process_context:
             await self.aclose()
-        self._process_context = await ProcessContext.create(kafka_broker)
+        self._process_context = await ProcessContext.create()
         engine = self._process_context.engine
         self._session = await create_async_session(engine)
 

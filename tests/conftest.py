@@ -2,25 +2,27 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator, Iterator
 from contextlib import aclosing
 from datetime import timedelta
 
 import pytest
 import pytest_asyncio
 import respx
-from asgi_lifespan import LifespanManager
+from aiokafka import AIOKafkaConsumer
 from fastapi import FastAPI
 from faststream.kafka import KafkaBroker, TestKafkaBroker
-from faststream.kafka.fastapi import KafkaRouter
-from faststream.kafka.publisher.asyncapi import AsyncAPIDefaultPublisher
 from httpx import ASGITransport, AsyncClient
 from pydantic import MySQLDsn, RedisDsn, SecretStr
+from safir.arq import ArqMode
 from safir.database import create_async_session, create_database_engine
+from safir.kafka import KafkaConnectionSettings, SecurityProtocol
 from safir.logging import LogLevel, Profile, configure_logging
+from safir.testing.containers import FullKafkaContainer
 from sqlalchemy.ext.asyncio import AsyncEngine
 from structlog import get_logger
 from structlog.stdlib import BoundLogger
+from testcontainers.core.network import Network
 from testcontainers.mysql import MySqlContainer
 from testcontainers.redis import RedisContainer
 
@@ -36,25 +38,20 @@ from .support.qserv import MockQserv, register_mock_qserv
 @pytest_asyncio.fixture
 async def app(
     *,
-    kafka_router: KafkaRouter,
-    kafka_broker: KafkaBroker,
-    status_publisher: AsyncAPIDefaultPublisher,
+    kafka_connection_settings: KafkaConnectionSettings,
     mock_qserv: MockQserv,
     redis: RedisContainer,
     monkeypatch: pytest.MonkeyPatch,
-) -> AsyncGenerator[FastAPI]:
-    """Return a configured test application.
-
-    Wraps the application in a lifespan manager so that startup and shutdown
-    events are sent during test execution.
-    """
+) -> FastAPI:
     redis_host = redis.get_container_host_ip()
     redis_port = redis.get_exposed_port(6379)
     redis_url = RedisDsn(f"redis://{redis_host}:{redis_port}/0")
+    poll_interval = timedelta(milliseconds=100)
+    monkeypatch.setattr(config, "arq_mode", ArqMode.production)
     monkeypatch.setattr(config, "redis_url", redis_url)
-    app = create_app(kafka_router, kafka_broker, status_publisher)
-    async with LifespanManager(app):
-        yield app
+    monkeypatch.setattr(config, "kafka", kafka_connection_settings)
+    monkeypatch.setattr(config, "qserv_poll_interval", poll_interval)
+    return create_app()
 
 
 @pytest_asyncio.fixture
@@ -102,7 +99,11 @@ async def factory(
     monkeypatch: pytest.MonkeyPatch,
     logger: BoundLogger,
 ) -> AsyncGenerator[Factory]:
-    """Provide a component factory for tests that don't require the app."""
+    """Provide a component factory for tests.
+
+    This fixture doesn't require the app and doesn't start an actual Kafka
+    instance. Only use this for unit tests without a real Kafka.
+    """
     redis_host = redis.get_container_host_ip()
     redis_port = redis.get_exposed_port(6379)
     redis_url = RedisDsn(f"redis://{redis_host}:{redis_port}/0")
@@ -116,11 +117,68 @@ async def factory(
     await kafka_broker.stop()
 
 
+@pytest.fixture(scope="session")
+def global_kafka_container(
+    kafka_docker_network: Network,
+) -> Iterator[FullKafkaContainer]:
+    container = FullKafkaContainer()
+    container.with_network(kafka_docker_network)
+    container.with_network_aliases("kafka")
+    with container as kafka:
+        yield kafka
+
+
+@pytest_asyncio.fixture
+async def kafka_broker(
+    kafka_connection_settings: KafkaConnectionSettings,
+) -> AsyncGenerator[KafkaBroker]:
+    broker = KafkaBroker(
+        **kafka_connection_settings.to_faststream_params(),
+        client_id="pytest-broker",
+    )
+    await broker.start()
+    yield broker
+    await broker.stop()
+
+
 @pytest.fixture
-def kafka_router(logger: BoundLogger) -> KafkaRouter:
-    """Kafka router used for testing, broken out so that it can be mocked."""
-    kafka_params = config.kafka.to_faststream_params()
-    return KafkaRouter(**kafka_params, logger=logger)
+def kafka_container(
+    global_kafka_container: FullKafkaContainer,
+) -> FullKafkaContainer:
+    global_kafka_container.reset()
+    return global_kafka_container
+
+
+@pytest.fixture
+def kafka_connection_settings(
+    kafka_container: FullKafkaContainer, monkeypatch: pytest.MonkeyPatch
+) -> KafkaConnectionSettings:
+    monkeypatch.delenv("KAFKA_BOOTSTRAP_SERVERS")
+    monkeypatch.delenv("KAFKA_SECURITY_PROTOCOL")
+    return KafkaConnectionSettings(
+        bootstrap_servers=kafka_container.get_bootstrap_server(),
+        security_protocol=SecurityProtocol.PLAINTEXT,
+    )
+
+
+@pytest.fixture(scope="session")
+def kafka_docker_network() -> Iterator[Network]:
+    with Network() as network:
+        yield network
+
+
+@pytest_asyncio.fixture
+async def kafka_status_consumer(
+    kafka_connection_settings: KafkaConnectionSettings,
+) -> AsyncGenerator[AIOKafkaConsumer]:
+    consumer = AIOKafkaConsumer(
+        config.job_status_topic,
+        **kafka_connection_settings.to_aiokafka_params(),
+        client_id="pytest-consumer",
+    )
+    await consumer.start()
+    yield consumer
+    await consumer.stop()
 
 
 @pytest.fixture
@@ -132,23 +190,6 @@ def logger() -> BoundLogger:
         add_timestamp=True,
     )
     return get_logger("qservkafka")
-
-
-@pytest.fixture
-def status_publisher(
-    kafka_router: KafkaRouter, kafka_broker: KafkaBroker
-) -> AsyncAPIDefaultPublisher:
-    """Create a mocked Kafka publisher for status messages."""
-    return kafka_router.publisher(config.job_status_topic)
-
-
-@pytest_asyncio.fixture
-async def kafka_broker(
-    kafka_router: KafkaRouter,
-) -> AsyncGenerator[KafkaBroker]:
-    """Provide a Kafka producer pointing to the test Kafka."""
-    async with TestKafkaBroker(kafka_router.broker) as broker:
-        yield broker
 
 
 @pytest.fixture(autouse=True)

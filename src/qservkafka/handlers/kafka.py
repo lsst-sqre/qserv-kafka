@@ -10,7 +10,6 @@ from typing import Annotated
 
 from fastapi import Depends
 from faststream.kafka.fastapi import KafkaRouter
-from faststream.kafka.publisher.asyncapi import AsyncAPIDefaultPublisher
 
 from ..config import config
 from ..dependencies.context import ConsumerContext, context_dependency
@@ -38,10 +37,7 @@ async def job_cancel(
         await processor.publish_status(result)
 
 
-def register_kafka_handlers(
-    kafka_router: KafkaRouter,
-    status_publisher: AsyncAPIDefaultPublisher | None = None,
-) -> None:
+def register_kafka_handlers(kafka_router: KafkaRouter) -> None:
     """Register the Kafka message handlers with the router.
 
     This is done dynamically via a function instead of statically with
@@ -56,8 +52,7 @@ def register_kafka_handlers(
         If not `None`, use this publisher to handle the return value of query
         processing. This is only used by the test suite.
     """
-    if not status_publisher:
-        status_publisher = kafka_router.publisher(config.job_status_topic)
+    status_publisher = kafka_router.publisher(config.job_status_topic)
     kafka_router.subscriber(
         config.job_run_topic,
         auto_offset_reset="earliest",
