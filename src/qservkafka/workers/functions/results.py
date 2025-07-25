@@ -31,16 +31,14 @@ async def handle_finished_query(ctx: dict[Any, Any], query_id: int) -> None:
         return
     processor = factory.create_result_processor()
     try:
-        status = await processor.build_query_status(
-            query_id, query.job, query.start
-        )
+        status = await processor.build_query_status(query)
     finally:
         await session.remove()
     if status.status == ExecutionPhase.EXECUTING:
         logger.warning(
             "Apparently completed job still executing",
             job_id=query.job.job_id,
-            qserv_id=str(query_id),
+            qserv_id=str(query.query_id),
             username=query.job.owner,
             status=status.model_dump(mode="json", exclude_none=True),
         )

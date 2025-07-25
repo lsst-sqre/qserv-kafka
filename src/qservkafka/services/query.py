@@ -21,6 +21,7 @@ from ..models.kafka import (
     JobRun,
     JobStatus,
 )
+from ..models.state import Query
 from ..storage.gafaelfawr import GafaelfawrClient
 from ..storage.qserv import QservClient
 from ..storage.rate import RateLimitStore
@@ -109,11 +110,7 @@ class QueryService:
             return None
 
         # Return an appropriate status update for the job's current status.
-        return await self._results.build_query_status(
-            query_id,
-            query.job,
-            query.start or datetime.now(tz=UTC),
-        )
+        return await self._results.build_query_status(query)
 
     async def start_query(self, job: JobRun) -> JobStatus:
         """Start a new query and return its initial status.
@@ -313,6 +310,5 @@ class QueryService:
         logger.info("Started query", qserv_id=str(query_id))
 
         # Analyze the initial status and return it.
-        return await self._results.build_query_status(
-            query_id, job, start, initial=True
-        )
+        query = Query(query_id=query_id, job=job, start=start)
+        return await self._results.build_query_status(query, initial=True)
