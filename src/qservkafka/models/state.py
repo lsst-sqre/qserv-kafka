@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Self
+from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, Field
+from safir.datetime import format_datetime_for_logging
 
 from .kafka import JobRun
 from .qserv import AsyncQueryStatus
@@ -24,6 +25,15 @@ class Query(BaseModel):
     start: Annotated[datetime, Field(title="Receipt time of query")]
 
     job: Annotated[JobRun, Field(title="Full job request")]
+
+    def to_logging_context(self) -> dict[str, Any]:
+        """Convert to variables for a structlog logging context."""
+        return {
+            "job_id": self.job.job_id,
+            "qserv_id": str(self.query_id),
+            "username": self.job.owner,
+            "start_time": format_datetime_for_logging(self.start),
+        }
 
 
 class RunningQuery(Query):
