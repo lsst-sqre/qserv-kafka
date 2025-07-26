@@ -95,11 +95,7 @@ class QueryMonitor:
             The status of the query, for posting to Kafka, or `None` if no
             update is warranted.
         """
-        query_id = query.query_id
-        job = query.job
-        logger = self._logger.bind(
-            job_id=job.job_id, qserv_id=str(query_id), username=job.owner
-        )
+        logger = self._logger.bind(**query.to_logging_context())
         if query.result_queued:
             logger.debug("Skipping already queued query")
             return None
@@ -119,12 +115,12 @@ class QueryMonitor:
                 return None
             query.status = status
             update = self._results.build_executing_status(query)
-            await self._state.update_status(query_id, status)
+            await self._state.update_status(query.query_id, status)
             logger.debug("Sending status update for running query")
             return update
         else:
-            await self._arq.enqueue("handle_finished_query", query_id)
-            await self._state.mark_queued_query(query_id)
+            await self._arq.enqueue("handle_finished_query", query.query_id)
+            await self._state.mark_queued_query(query.query_id)
             logger.info("Dispatched finished query to worker")
             return None
 

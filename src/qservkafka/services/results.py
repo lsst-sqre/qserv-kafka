@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from typing import assert_never
 
 from faststream.kafka import KafkaBroker
-from safir.datetime import format_datetime_for_logging
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
@@ -93,13 +92,7 @@ class ResultProcessor:
         JobStatus
             Job status to report to Kafka.
         """
-        self._logger.debug(
-            "Query is executing",
-            job_id=query.job.job_id,
-            qserv_id=str(query.status.query_id),
-            username=query.job.owner,
-            start_time=format_datetime_for_logging(query.start),
-        )
+        self._logger.debug("Query is executing", **query.to_logging_context())
         query_info = JobQueryInfo.from_query_status(query.status, query.start)
         return JobStatus(
             job_id=query.job.job_id,
@@ -132,12 +125,7 @@ class ResultProcessor:
         JobStatus
             Job status to report to Kafka.
         """
-        logger = self._logger.bind(
-            job_id=query.job.job_id,
-            qserv_id=str(query.query_id),
-            username=query.job.owner,
-            start_time=format_datetime_for_logging(query.start),
-        )
+        logger = self._logger.bind(**query.to_logging_context())
 
         # Get the current query status.
         try:
@@ -210,10 +198,7 @@ class ResultProcessor:
         """
         self._logger.info(
             "Job aborted",
-            job_id=query.job.job_id,
-            qserv_id=str(query.status.query_id),
-            username=query.job.owner,
-            start_time=format_datetime_for_logging(query.start),
+            **query.to_logging_context(),
             total_chunks=query.status.total_chunks,
             completed_chunks=query.status.completed_chunks,
             result_bytes=query.status.collected_bytes,
@@ -261,12 +246,7 @@ class ResultProcessor:
         JobStatus
             Status for the query.
         """
-        logger = self._logger.bind(
-            job_id=query.job.job_id,
-            qserv_id=str(query.query_id),
-            username=query.job.owner,
-            start_time=format_datetime_for_logging(query.start),
-        )
+        logger = self._logger.bind(**query.to_logging_context())
         logger.debug("Processing job completion")
 
         # Retrieve and upload the results.
@@ -354,12 +334,7 @@ class ResultProcessor:
         JobStatus
             Status for the query.
         """
-        logger = self._logger.bind(
-            job_id=query.job.job_id,
-            qserv_id=str(query.query_id),
-            username=query.job.owner,
-            start_time=format_datetime_for_logging(query.start),
-        )
+        logger = self._logger.bind(**query.to_logging_context())
         now = datetime.now(tz=UTC)
         elapsed = now - query.start
         elapsed_seconds = elapsed.total_seconds()
@@ -424,10 +399,7 @@ class ResultProcessor:
         metadata = query.job.to_job_metadata()
         self._logger.warning(
             "Backend reported query failure",
-            job_id=query.job.job_id,
-            qserv_id=str(query.status.query_id),
-            username=query.job.owner,
-            start_time=format_datetime_for_logging(query.start),
+            **query.to_logging_context(),
             query=metadata.model_dump(mode="json", exclude_none=True),
             status=query.status.model_dump(mode="json", exclude_none=True),
             total_chunks=query.status.total_chunks,
