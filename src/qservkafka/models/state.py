@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, Field
 from safir.datetime import format_datetime_for_logging
 
-from .kafka import JobRun
+from .kafka import JobQueryInfo, JobRun
 from .qserv import AsyncQueryStatus
 
 __all__ = [
@@ -67,4 +67,25 @@ class RunningQuery(Query):
             job=query.job,
             status=status,
             result_queued=False,
+        )
+
+    def to_job_query_info(self, *, finished: bool = False) -> JobQueryInfo:
+        """Build job query information based on query status.
+
+        Parameters
+        ----------
+        finished
+            Whether the query is finished and therefore the end time should be
+            set to now.
+
+        Returns
+        -------
+        JobQueryInfo
+            Corresponding query information.
+        """
+        return JobQueryInfo(
+            start_time=self.start,
+            total_chunks=self.status.total_chunks,
+            completed_chunks=self.status.completed_chunks,
+            end_time=datetime.now(tz=UTC) if finished else None,
         )

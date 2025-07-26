@@ -21,13 +21,7 @@ from ..events import (
     QuerySuccessEvent,
 )
 from ..exceptions import QservApiError, QservApiSqlError, UploadWebError
-from ..models.kafka import (
-    JobError,
-    JobErrorCode,
-    JobQueryInfo,
-    JobResultInfo,
-    JobStatus,
-)
+from ..models.kafka import JobError, JobErrorCode, JobResultInfo, JobStatus
 from ..models.qserv import AsyncQueryPhase
 from ..models.state import Query, RunningQuery
 from ..models.votable import UploadStats
@@ -93,13 +87,12 @@ class ResultProcessor:
             Job status to report to Kafka.
         """
         self._logger.debug("Query is executing", **query.to_logging_context())
-        query_info = JobQueryInfo.from_query_status(query.status, query.start)
         return JobStatus(
             job_id=query.job.job_id,
             execution_id=str(query.status.query_id),
             timestamp=query.status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.EXECUTING,
-            query_info=query_info,
+            query_info=query.to_job_query_info(),
             metadata=query.job.to_job_metadata(),
         )
 
@@ -215,9 +208,7 @@ class ResultProcessor:
             execution_id=str(query.status.query_id),
             timestamp=query.status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.ABORTED,
-            query_info=JobQueryInfo.from_query_status(
-                query.status, query.start, finished=True
-            ),
+            query_info=query.to_job_query_info(finished=True),
             metadata=query.job.to_job_metadata(),
         )
 
@@ -304,9 +295,7 @@ class ResultProcessor:
             execution_id=str(query.query_id),
             timestamp=datetime.now(tz=UTC),
             status=ExecutionPhase.COMPLETED,
-            query_info=JobQueryInfo.from_query_status(
-                query.status, query.start, finished=True
-            ),
+            query_info=query.to_job_query_info(finished=True),
             result_info=JobResultInfo(
                 total_rows=stats.rows,
                 result_location=query.job.result_location,
@@ -418,9 +407,7 @@ class ResultProcessor:
             execution_id=str(query.status.query_id),
             timestamp=query.status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.ERROR,
-            query_info=JobQueryInfo.from_query_status(
-                query.status, query.start, finished=True
-            ),
+            query_info=query.to_job_query_info(finished=True),
             error=JobError(
                 code=JobErrorCode.backend_error,
                 message="Query failed in backend",
