@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 from pydantic import SecretStr
+from safir.metrics import MockEventPublisher
 
 from qservkafka.config import config
 from qservkafka.factory import Factory
@@ -100,6 +101,15 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     )
 
     assert await state_store.get_active_queries() == set()
+
+    # If Qserv was configured to intermittently fail, check that we logged
+    # metrics events recording the failures.
+    if mock_qserv.flaky:
+        events = factory.events
+        assert isinstance(events.qserv_failure, MockEventPublisher)
+        events.qserv_failure.published.assert_published(
+            [{"protocol": "HTTP"}, {"protocol": "SQL"}]
+        )
 
 
 @pytest.mark.asyncio

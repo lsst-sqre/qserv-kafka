@@ -151,6 +151,9 @@ async def wait_for_dispatch(
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
 async def test_success(
     *,
     app: FastAPI,

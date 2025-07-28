@@ -107,6 +107,11 @@ class MockQserv:
         Router for HTTP mocks.
     flaky
         Whether to fail every other request.
+
+    Attributes
+    ----------
+    flaky
+        Whether Qserv API requests intermittently fail.
     """
 
     _UPLOAD_CSV = "one\ntwo\n"
@@ -122,12 +127,14 @@ class MockQserv:
         *,
         flaky: bool = False,
     ) -> None:
+        self.flaky = flaky
+
         self._session = session
         self._respx_mock = respx_mock
 
         self._expected_job: JobRun | None
         self._immediate_success: JobRun | None
-        self._intermittent_failure: int | None = 0 if flaky else None
+        self._intermittent_failure: int | None
         self._mocks: list[MagicMock] = []
         self._next_query_id: int
         self._override_status: Response | None
@@ -202,7 +209,7 @@ class MockQserv:
         """Reset the mock to its initial state."""
         self._expected_job = None
         self._immediate_success = None
-        self._intermittent_failure = None
+        self._intermittent_failure = 0 if self.flaky else None
         self._next_query_id = 1
         self._override_status = None
         self._override_submit = None
@@ -630,7 +637,7 @@ class MockQserv:
         """Check whether to return an intermittent failure."""
         if self._intermittent_failure is not None:
             self._intermittent_failure += 1
-            return self._intermittent_failure % 2 == 0
+            return self._intermittent_failure % 2 == 1
         else:
             return False
 
