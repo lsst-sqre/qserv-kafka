@@ -171,6 +171,10 @@ class JobResultColumnType(BaseModel):
         ),
     ] = False
 
+    def is_string(self) -> bool:
+        """Check whether the underlying data type is a string."""
+        return self.datatype.is_string()
+
 
 class JobResultConfig(BaseModel):
     """Configuration for job result."""

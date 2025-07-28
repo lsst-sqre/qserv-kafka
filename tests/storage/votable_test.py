@@ -57,30 +57,26 @@ async def assert_encoded_value(
     encoded = b""
     async for blob in encoder.encode(data_generator(rows)):
         encoded += blob
-    assert encoded == b64encode(expected) + b"\n", str(column)
+    label = f"column {column!r}, data {data!r}"
+    assert encoded == b64encode(expected) + b"\n", label
 
 
 @pytest.mark.asyncio
 async def test_type_encoder() -> None:
     tests = [
+        # Numeric types.
         (
             {"name": "a", "datatype": "int"},
             1,
             b"\x00\x00\x00\x00\x01",
         ),
+        # Variable-length char strings.
         (
             {"name": "d", "datatype": "char", "arraysize": "*"},
             "something",
             b"\x00\x00\x00\x00\x09something",
         ),
-    ]
-    for column, data, expected in tests:
-        await assert_encoded_value(column, data, expected)
-
-
-@pytest.mark.asyncio
-async def test_unicode_char_variable_arrays() -> None:
-    tests = [
+        # Variable-length unicodeChar strings.
         (
             {"name": "text", "datatype": "unicodeChar", "arraysize": "*"},
             "hello",
@@ -96,20 +92,12 @@ async def test_unicode_char_variable_arrays() -> None:
             "😀",
             b"\x00\x00\x00\x00\x02\xd8=\xde\x00",
         ),
+        # Fixed-width unicodeChar strings.
         (
             {"name": "accents", "datatype": "unicodeChar", "arraysize": "*"},
             "café",
             b"\x00\x00\x00\x00\x04\x00c\x00a\x00f\x00\xe9",
         ),
-    ]
-
-    for column, data, expected in tests:
-        await assert_encoded_value(column, data, expected)
-
-
-@pytest.mark.asyncio
-async def test_unicode_char_fixed_arrays() -> None:
-    tests = [
         (
             {"name": "short", "datatype": "unicodeChar", "arraysize": "5"},
             "hi",
@@ -153,15 +141,7 @@ async def test_unicode_char_fixed_arrays() -> None:
             "😀",
             b"\x00\x00\x00",
         ),
-    ]
-
-    for column, data, expected in tests:
-        await assert_encoded_value(column, data, expected)
-
-
-@pytest.mark.asyncio
-async def test_unicode_char_bounded_variable_arrays() -> None:
-    tests = [
+        # Variable-length unicodeChar strings with length limits.
         (
             {"name": "short", "datatype": "unicodeChar", "arraysize": "5*"},
             "hi",
@@ -195,15 +175,7 @@ async def test_unicode_char_bounded_variable_arrays() -> None:
             "😀",
             b"\x00\x00\x00\x00\x00",
         ),
-    ]
-
-    for column, data, expected in tests:
-        await assert_encoded_value(column, data, expected)
-
-
-@pytest.mark.asyncio
-async def test_unicode_char_surrogate_pair_truncation() -> None:
-    tests = [
+        # unicodeChar surrogate pair truncation.
         (
             {"name": "safe", "datatype": "unicodeChar", "arraysize": "2"},
             "AB😀C",
@@ -224,6 +196,5 @@ async def test_unicode_char_surrogate_pair_truncation() -> None:
             b"\x00\x00\x00\x00\x00",
         ),
     ]
-
     for column, data, expected in tests:
         await assert_encoded_value(column, data, expected)

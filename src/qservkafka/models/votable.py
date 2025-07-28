@@ -126,9 +126,8 @@ class VOTablePrimitive(Enum):
             case "char":
                 if not isinstance(value, bytes):
                     value = str(value).encode()
-                return struct.pack(
-                    self._pack_format, value[:1] if value else b"\x00"
-                )
+                char = value[:1] if value else b"\x00"
+                return struct.pack(self._pack_format, char)
             case "unicodeChar":
                 if not isinstance(value, bytes):
                     value = str(value).encode("utf-16-be")
