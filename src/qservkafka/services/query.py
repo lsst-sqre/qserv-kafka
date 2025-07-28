@@ -134,14 +134,11 @@ class QueryService:
             msg = f"{serialization} serialization not supported"
             return self._build_invalid_request_status(job, msg)
         for column in job.result_format.column_types:
-            if (
-                not column.datatype.is_string()
-                and column.arraysize is not None
-            ):
-                msg = (
-                    "arraysize only supported for char and unicodeChar fields"
+            if not column.is_string() and column.arraysize is not None:
+                return self._build_invalid_request_status(
+                    job,
+                    "arraysize only supported for char and unicodeChar fields",
                 )
-                return self._build_invalid_request_status(job, msg)
 
         # Increment the user's running queries and make sure they have space
         # to start a new query.

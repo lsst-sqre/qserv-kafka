@@ -237,135 +237,6 @@ class VOTableEncoder:
         else:
             return column.datatype.pack(value)
 
-    def _encode_unicode_char_column(
-        self,
-        column: JobResultColumnType,
-        value_raw: Any,
-    ) -> bytes:
-        """Encode a column of type ``unicodeChar``.
-
-        Note: Due to BINARY2 constraints arraysize refers to UTF-16
-        code units (2 bytes each), not Unicode characters.
-        Characters that require surrogate pairs may be truncated.
-
-        Parameters
-        ----------
-        column
-            Column type definition.
-        value_raw
-            Value for that column.
-
-        Returns
-        -------
-        bytes
-            Serialized representation of the column.
-        """
-        if isinstance(value_raw, datetime):
-            millisecond = value_raw.microsecond // 1000
-            value_str = (
-                f"{value_raw.year:04d}-{value_raw.month:02d}"
-                f"-{value_raw.day:02d}T{value_raw.hour:02d}"
-                f":{value_raw.minute:02d}:{value_raw.second:02d}"
-                f".{millisecond:03d}"
-            )
-        else:
-            value_str = "" if value_raw is None else str(value_raw)
-
-        if value_str and column.requires_url_rewrite:
-            try:
-                base_url = urlparse(str(config.rewrite_base_url))
-                url = urlparse(value_str)
-                value_str = url._replace(netloc=base_url.netloc).geturl()
-            except Exception as e:
-                self._logger.warning(
-                    "Unable to rewrite URL", column=column.name, error=str(e)
-                )
-
-        value = value_str.encode("utf-16-be")
-
-        if column.arraysize and column.arraysize.variable:
-            return self._encode_unicode_variable_array(
-                value, column.arraysize.limit
-            )
-        elif column.arraysize and column.arraysize.limit:
-            return self._encode_unicode_fixed_array(
-                value, column.arraysize.limit
-            )
-        else:
-            return column.datatype.pack(value_str)
-
-    def _encode_unicode_variable_array(
-        self, value: bytes, limit: int | None
-    ) -> bytes:
-        """Encode variable-length unicodeChar array.
-
-        Parameters
-        ----------
-        value
-            UTF-16-BE encoded bytes.
-        limit
-            Maximum number of characters allowed, or None
-
-        Returns
-        -------
-        bytes
-            Serialized representation of the variable-length unicodeChar array.
-        """
-        if limit is not None:
-            max_bytes = limit * 2
-            if len(value) > max_bytes:
-                value = self._truncate_utf16(value, max_bytes)
-
-        char_count = len(value) // 2
-        rule = ">I" + str(len(value)) + "s"
-        return struct.pack(rule, char_count, value)
-
-    def _encode_unicode_fixed_array(self, value: bytes, limit: int) -> bytes:
-        """Encode fixed-length unicodeChar array.
-
-        Parameters
-        ----------
-        value
-            Encoded byte representation of the string.
-        limit
-            Exact number of characters the field
-
-        Returns
-        -------
-        bytes
-            Serialized representation of the fixed unicodeChar array.
-        """
-        max_bytes = limit * 2
-        if len(value) > max_bytes:
-            value = self._truncate_utf16(value, max_bytes)
-
-        rule = str(max_bytes) + "s"
-        return struct.pack(rule, value)
-
-    def _truncate_utf16(self, value: bytes, max_bytes: int) -> bytes:
-        """Truncate UTF-16-BE bytes without breaking surrogate pairs.
-
-        Parameters
-        ----------
-        value
-            UTF-16-BE encoded bytes to truncate.
-        max_bytes
-            Maximum number of bytes to keep.
-
-        Returns
-        -------
-        bytes
-            Truncated bytes.
-        """
-        max_bytes_even = max_bytes & ~1
-        truncated = value[:max_bytes_even]
-        if len(truncated) >= 2:
-            last_word = struct.unpack(">H", truncated[-2:])[0]
-            if 0xD800 <= last_word <= 0xDBFF:
-                truncated = truncated[:-2]
-
-        return truncated
-
     def _encode_row(
         self, types: list[JobResultColumnType], row: Row[Any] | tuple[Any]
     ) -> bytes:
@@ -400,6 +271,139 @@ class VOTableEncoder:
                 output += datatype.pack(value)
 
         return nulls.tobytes() + output
+
+    def _encode_unicode_char_column(
+        self,
+        column: JobResultColumnType,
+        value_raw: Any,
+    ) -> bytes:
+        """Encode a column of type ``unicodeChar``.
+
+        In the BINARY2 encoding, ``arraysize`` in the column specification
+        gives the number of UCS-2 characters, each of which are two bytes, not
+        the number of Uniocde characters. Characters that require surrogate
+        pairs will therefore take more than one slot and may cause additional
+        truncation of the string.
+
+        Parameters
+        ----------
+        column
+            Column type definition.
+        value_raw
+            Value for that column.
+
+        Returns
+        -------
+        bytes
+            Serialized representation of the column.
+        """
+        if isinstance(value_raw, datetime):
+            millisecond = value_raw.microsecond // 1000
+            value_str = (
+                f"{value_raw.year:04d}-{value_raw.month:02d}"
+                f"-{value_raw.day:02d}T{value_raw.hour:02d}"
+                f":{value_raw.minute:02d}:{value_raw.second:02d}"
+                f".{millisecond:03d}"
+            )
+        else:
+            value_str = "" if value_raw is None else str(value_raw)
+
+        # Rewrite URLs in the string if necessary.
+        if value_str and column.requires_url_rewrite:
+            try:
+                base_url = urlparse(str(config.rewrite_base_url))
+                url = urlparse(value_str)
+                value_str = url._replace(netloc=base_url.netloc).geturl()
+            except Exception as e:
+                logger = self._logger.bind(column=column.name)
+                logger.warning("Unable to rewrite URL", error=str(e))
+
+        # Encode the string. Technically this is supposed to be UCS-2, but
+        # Python doesn't support that natively and it's not clear what to do
+        # with characters that aren't representable in UCS-2. Use UTF-16
+        # instead and hope the client can cope.
+        value = value_str.encode("utf-16-be")
+
+        # Encoding varies depending on whether the string is fixed-width or
+        # variable, or has no arraysize (indicating it should be encoded as a
+        # single UCS-2 character).
+        if column.arraysize and column.arraysize.variable:
+            limit = column.arraysize.limit
+            return self._encode_unicode_variable_array(value, limit)
+        elif column.arraysize and column.arraysize.limit:
+            limit = column.arraysize.limit
+            return self._encode_unicode_fixed_array(value, limit)
+        else:
+            return column.datatype.pack(value)
+
+    def _encode_unicode_fixed_array(self, value: bytes, limit: int) -> bytes:
+        """Encode fixed-length unicodeChar array.
+
+        Parameters
+        ----------
+        value
+            Encoded byte representation of the string.
+        limit
+            Exact number of characters the field
+
+        Returns
+        -------
+        bytes
+            Serialized representation of the fixed unicodeChar array.
+        """
+        max_bytes = limit * 2
+        if len(value) > max_bytes:
+            value = self._truncate_utf16(value, max_bytes)
+        rule = str(max_bytes) + "s"
+        return struct.pack(rule, value)
+
+    def _encode_unicode_variable_array(
+        self, value: bytes, limit: int | None
+    ) -> bytes:
+        """Encode variable-length unicodeChar array.
+
+        Parameters
+        ----------
+        value
+            UTF-16-BE encoded bytes.
+        limit
+            Maximum number of characters allowed, or None
+
+        Returns
+        -------
+        bytes
+            Serialized representation of the variable-length unicodeChar array.
+        """
+        if limit is not None:
+            max_bytes = limit * 2
+            if len(value) > max_bytes:
+                value = self._truncate_utf16(value, max_bytes)
+        char_count = len(value) // 2
+        rule = ">I" + str(len(value)) + "s"
+        return struct.pack(rule, char_count, value)
+
+    def _truncate_utf16(self, value: bytes, max_bytes: int) -> bytes:
+        """Truncate UTF-16-BE bytes without breaking surrogate pairs.
+
+        Parameters
+        ----------
+        value
+            UTF-16-BE encoded bytes to truncate.
+        max_bytes
+            Maximum number of bytes to keep.
+
+        Returns
+        -------
+        bytes
+            Truncated bytes.
+        """
+        max_bytes_even = max_bytes & ~1
+        truncated = value[:max_bytes_even]
+        if len(truncated) >= 2:
+            last_word = struct.unpack(">H", truncated[-2:])[0]
+            if 0xD800 <= last_word <= 0xDBFF:
+                truncated = truncated[:-2]
+        return truncated
 
 
 class VOTableWriter:
