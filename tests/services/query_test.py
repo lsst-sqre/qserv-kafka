@@ -302,15 +302,17 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
     completed_status = read_test_job_status("upload-completed")
     started_status = read_test_job_status("upload-started")
 
+    start = datetime.now(tz=UTC)
     await assert_query_successful(
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
         expected_status=completed_status,
     )
+    finish = datetime.now(tz=UTC)
     assert mock_qserv.get_uploaded_table() is None
 
-    # Check that the correct metrics event was sent.
+    # Check that the correct metrics events were sent.
     assert isinstance(factory.events.query_success, MockEventPublisher)
     events = factory.events.query_success.published
     assert len(events) == 1
@@ -330,11 +332,26 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
         "upload_tables": 1,
         "immediate": True,
     }
+    assert isinstance(factory.events.temporary_table, MockEventPublisher)
+    events = factory.events.temporary_table.published
+    assert len(events) == 1
+    upload_event = events[0]
+    assert upload_event.model_dump(mode="json") == {
+        "job_id": job.job_id,
+        "username": job.owner,
+        "size": len(mock_qserv._UPLOAD_CSV),
+        "elapsed": ANY,
+    }
+    assert timedelta(seconds=0) <= upload_event.elapsed <= (finish - start)
 
+    # Start another upload query, but this time don't let it complete
+    # immediately. In this case, the uploaded table should still be present
+    # (not yet deleted) since the query is still running.
     mock_qserv.set_immediate_success(None)
     status = await query_service.start_query(job)
     started_status.execution_id = "2"
     assert status == started_status
     assert mock_qserv.get_uploaded_table() == job.upload_tables[0].table_name
 
+    # Only the second query should be active.
     assert await state_store.get_active_queries() == {2}
