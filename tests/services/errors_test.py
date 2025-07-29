@@ -7,6 +7,7 @@ from unittest.mock import ANY, patch
 
 import pytest
 from httpx import Response
+from safir.metrics import MockEventPublisher
 from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.config import config
@@ -137,6 +138,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
 
     # Return a normal reply from the status endpoint but mark the job as being
     # in an error state.
+    start = datetime.now(tz=UTC)
     query_status = AsyncQueryStatus(
         query_id=4,
         status=AsyncQueryPhase.FAILED,
@@ -171,6 +173,21 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     assert status.query_info.start_time <= now
     assert status.query_info.end_time
     assert status.query_info.end_time <= now
+
+    # This last case is the only case where a metrics event should have been
+    # published. We do not publish metrics events (at least at present) when
+    # starting the query fails.
+    assert isinstance(factory.events.query_failure, MockEventPublisher)
+    events = factory.events.query_failure.published
+    assert len(events) == 1
+    failure_event = events[0]
+    assert failure_event.model_dump(mode="json") == {
+        "job_id": job.job_id,
+        "username": job.owner,
+        "error": "backend_error",
+        "elapsed": ANY,
+    }
+    assert timedelta(seconds=0) < failure_event.elapsed <= (now - start)
 
     assert await state_store.get_active_queries() == set()
 
