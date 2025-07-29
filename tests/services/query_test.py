@@ -165,19 +165,31 @@ async def test_cancel(factory: Factory) -> None:
     assert status == started_status
     assert_approximately_now(status.timestamp)
     assert status.query_info
-    assert_approximately_now(status.query_info.start_time)
     start_time = status.query_info.start_time
+    assert_approximately_now(start_time)
 
     assert await state_store.get_active_queries() == {1}
 
     now = datetime.now(tz=UTC)
     status = await query_service.cancel_query(cancel)
+    finish = datetime.now(tz=UTC)
     assert status == canceled_status
     assert_approximately_now(status.timestamp)
     assert status.query_info
     assert status.query_info.start_time == start_time
     assert status.query_info.end_time
     assert status.query_info.end_time >= now
+
+    # Check that the correct metrics event was sent.
+    assert isinstance(factory.events.query_abort, MockEventPublisher)
+    events = factory.events.query_abort.published
+    assert len(events) == 1
+    assert events[0].model_dump(mode="json") == {
+        "job_id": job.job_id,
+        "username": job.owner,
+        "elapsed": ANY,
+    }
+    assert timedelta(seconds=0) < events[0].elapsed <= (finish - start_time)
 
 
 @pytest.mark.asyncio
@@ -342,7 +354,7 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
         "size": len(mock_qserv._UPLOAD_CSV),
         "elapsed": ANY,
     }
-    assert timedelta(seconds=0) <= upload_event.elapsed <= (finish - start)
+    assert timedelta(seconds=0) < upload_event.elapsed <= (finish - start)
 
     # Start another upload query, but this time don't let it complete
     # immediately. In this case, the uploaded table should still be present
