@@ -202,6 +202,11 @@ class Factory:
         self._logger = logger
 
     @property
+    def events(self) -> Events:
+        """Global shared metrics events publishers, used by the test suite."""
+        return self._context.events
+
+    @property
     def gafaelfawr_client(self) -> GafaelfawrClient:
         """Global shared caching Gafaelfawr client."""
         return self._context.gafaelfawr_client
