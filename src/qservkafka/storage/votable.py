@@ -106,7 +106,6 @@ class VOTableEncoder:
                     break
                 encoded_row = self._encode_row(self._config.column_types, row)
                 self._total_rows += 1
-                self._encoded_size += len(encoded_row)
                 encoded.write(encoded_row)
                 if self._total_rows % 100000 == 0:
                     self._logger.debug(f"Processed {self._total_rows} rows")
@@ -169,6 +168,7 @@ class VOTableEncoder:
             view.release()
             binary.seek(0)
             binary.write(leftover)
+        self._encoded_size += len(output)
         return output
 
     def _encode_char_column(

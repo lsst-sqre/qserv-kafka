@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from unittest.mock import ANY
 
 import pytest
 from pydantic import SecretStr
@@ -14,6 +15,7 @@ from qservkafka.models.kafka import JobRun, JobStatus
 from qservkafka.services.query import QueryService
 
 from ..support.data import (
+    read_test_data,
     read_test_job_cancel,
     read_test_job_run,
     read_test_job_status,
@@ -81,12 +83,48 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     expected_status = read_test_job_status("data-completed")
     state_store = factory.create_query_state_store()
 
+    start = datetime.now(tz=UTC)
     await assert_query_successful(
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
         expected_status=expected_status,
     )
+    finish = datetime.now(tz=UTC)
+    elapsed = finish - start
+
+    # Check that the correct metrics event was sent.
+    assert isinstance(factory.events.query_success, MockEventPublisher)
+    events = factory.events.query_success.published
+    assert len(events) == 1
+    success_event = events[0]
+    assert success_event.model_dump(mode="json") == {
+        "job_id": job.job_id,
+        "username": job.owner,
+        "elapsed": ANY,
+        "qserv_elapsed": ANY,
+        "result_elapsed": ANY,
+        "rows": 2,
+        "qserv_size": 250,
+        "encoded_size": len(read_test_data("results/data.binary2")),
+        "result_size": (
+            len(read_test_data("results/data.binary2"))
+            + len(job.result_format.envelope.header)
+            + len(job.result_format.envelope.footer)
+        ),
+        "rate": (
+            success_event.encoded_size / success_event.elapsed.total_seconds()
+        ),
+        "qserv_rate": None,
+        "result_rate": (
+            success_event.encoded_size
+            / success_event.result_elapsed.total_seconds()
+        ),
+        "upload_tables": 0,
+        "immediate": True,
+    }
+    for field in ("elapsed", "qserv_elapsed", "result_elapsed"):
+        assert timedelta(seconds=0) <= getattr(success_event, field) <= elapsed
 
     # It should be possible to immediately run the same query again. This
     # tests that the results were deleted from the database, and thus can be
@@ -105,9 +143,8 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     # If Qserv was configured to intermittently fail, check that we logged
     # metrics events recording the failures.
     if mock_qserv.flaky:
-        events = factory.events
-        assert isinstance(events.qserv_failure, MockEventPublisher)
-        events.qserv_failure.published.assert_published(
+        assert isinstance(factory.events.qserv_failure, MockEventPublisher)
+        factory.events.qserv_failure.published.assert_published(
             [{"protocol": "HTTP"}, {"protocol": "SQL"}]
         )
 
@@ -272,6 +309,27 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
         expected_status=completed_status,
     )
     assert mock_qserv.get_uploaded_table() is None
+
+    # Check that the correct metrics event was sent.
+    assert isinstance(factory.events.query_success, MockEventPublisher)
+    events = factory.events.query_success.published
+    assert len(events) == 1
+    assert events[0].model_dump(mode="json") == {
+        "job_id": job.job_id,
+        "username": job.owner,
+        "elapsed": ANY,
+        "qserv_elapsed": ANY,
+        "result_elapsed": ANY,
+        "rows": 2,
+        "qserv_size": 250,
+        "encoded_size": len(read_test_data("results/data.binary2")),
+        "result_size": ANY,
+        "rate": ANY,
+        "qserv_rate": ANY,
+        "result_rate": ANY,
+        "upload_tables": 1,
+        "immediate": True,
+    }
 
     mock_qserv.set_immediate_success(None)
     status = await query_service.start_query(job)

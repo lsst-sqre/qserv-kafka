@@ -91,7 +91,7 @@ class QuerySuccessEvent(BaseQueryEvent):
     encoded_size: int = Field(
         ...,
         title="Encoded data size",
-        description="Encoded data size in bytes",
+        description="Encoded data size, after base64 encoding, in bytes",
     )
 
     result_size: int = Field(
