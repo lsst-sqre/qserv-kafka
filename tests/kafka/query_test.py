@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
+from unittest.mock import ANY
 
 import pytest
 from aiokafka import AIOKafkaConsumer
@@ -13,6 +14,7 @@ from fastapi import FastAPI
 from faststream.kafka import KafkaBroker
 from httpx import Response
 from safir.datetime import current_datetime
+from safir.metrics import MockEventPublisher
 from testcontainers.redis import RedisContainer
 
 from qservkafka.config import config
@@ -187,7 +189,7 @@ async def test_success(
         await wait_for_dispatch(factory, 1)
 
         # Run the background task queue.
-        assert await run_arq_jobs() == 1
+        assert await run_arq_jobs(factory._context) == 1
         status = await wait_for_status(kafka_status_consumer, "data-completed")
         assert status.query_info
         assert status.query_info.start_time == start_time
@@ -197,6 +199,27 @@ async def test_success(
     # Ensure all query state has been deleted.
     redis_client = redis.get_client()
     assert set(redis_client.scan_iter("query:*")) == set()
+
+    # Check that the correct metrics event was sent.
+    assert isinstance(factory.events.query_success, MockEventPublisher)
+    events = factory.events.query_success.published
+    assert len(events) == 1
+    assert events[0].model_dump(mode="json") == {
+        "job_id": job.job_id,
+        "username": job.owner,
+        "elapsed": ANY,
+        "qserv_elapsed": ANY,
+        "result_elapsed": ANY,
+        "rows": 2,
+        "qserv_size": 250,
+        "encoded_size": ANY,
+        "result_size": ANY,
+        "rate": ANY,
+        "qserv_rate": ANY,
+        "result_rate": ANY,
+        "upload_tables": 0,
+        "immediate": False,
+    }
 
 
 @pytest.mark.asyncio

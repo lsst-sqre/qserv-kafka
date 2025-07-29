@@ -32,8 +32,12 @@ async def startup(ctx: dict[Any, Any]) -> None:
     )
     logger = get_logger("qservkafka").bind(worker_instance=uuid.uuid4().hex)
 
-    # Allow the test suite to override the Kafka broker to use a mock.
-    context = await ProcessContext.create(ctx.get("kafka_broker"))
+    # Allow the test suite to override the process context to, for example,
+    # provide mock metrics event publishers that are accessible to the test.
+    if "context" in ctx:
+        context = ctx["context"]
+    else:
+        context = await ProcessContext.create()
     session = await create_async_session(context.engine)
     factory = Factory(context, session, logger)
 

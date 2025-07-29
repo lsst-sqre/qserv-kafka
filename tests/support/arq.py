@@ -5,17 +5,15 @@ from __future__ import annotations
 import inspect
 
 from arq import Worker
-from faststream.kafka import KafkaBroker
 
 from qservkafka.config import config
+from qservkafka.factory import ProcessContext
 from qservkafka.workers.main import WorkerSettings
 
 __all__ = ["run_arq_jobs"]
 
 
-async def run_arq_jobs(
-    kafka_broker: KafkaBroker | None = None,
-) -> int:
+async def run_arq_jobs(context: ProcessContext | None = None) -> int:
     """Run any queued arq jobs.
 
     Returns
@@ -24,8 +22,8 @@ async def run_arq_jobs(
         Number of jobs run.
     """
     ctx = {}
-    if kafka_broker:
-        ctx["kafka_broker"] = kafka_broker
+    if context:
+        ctx["context"] = context
     WorkerSettings.redis_settings = config.arq_redis_settings
     worker_args = set(inspect.signature(Worker).parameters.keys())
     worker = Worker(
