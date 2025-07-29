@@ -79,7 +79,7 @@ async def test_success(
 
     # In practice memory usage change is never zero, so fail only if more than
     # 300KB was leaked.
-    if end_usage - start_usage >= 10_000:
+    if end_usage - start_usage >= 300_000:
         snapshot = tracemalloc.take_snapshot()
         top_stats = snapshot.statistics("lineno")
         for stat in top_stats[:10]:
