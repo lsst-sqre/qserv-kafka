@@ -61,28 +61,40 @@ async def test_success(
     expected_status = read_test_job_status("data-completed")
     mock_qserv.set_immediate_success(job)
 
+    # Run one query first to set up the various internal Python caches.
+    status = await query_service.start_query(job)
+    expected_status.execution_id = "1"
+    assert status == expected_status
+
+    # Start tracing memory.
     gc.collect()
     tracemalloc.start()
     start_usage = tracemalloc.get_traced_memory()[0]
 
-    for i in range(1, 100):
+    # Run 100 more tasks with memory tracing.
+    for i in range(2, 102):
         status = await query_service.start_query(job)
         expected_status.execution_id = str(i)
         assert status == expected_status
 
+    # Ensure all the queries have been processed.
     assert await state_store.get_active_queries() == set()
 
+    # Delete as much known stored data as possible, force garbage collection,
+    # and then stop tracing memory and gather usage.
     mock_qserv.reset()
     respx_mock.reset()
     gc.collect()
     end_usage = tracemalloc.get_traced_memory()[0]
 
-    # In practice memory usage change is never zero, so fail only if more than
-    # 1000KB was leaked.
-    if end_usage - start_usage >= 1_000_000:
+    # In practice memory usage change is never zero because Python and its
+    # libraries aggressively cache a lot of objects. Fail only if more than
+    # 200KB was leaked.
+    limit = 200_000
+    if end_usage - start_usage >= limit:
         snapshot = tracemalloc.take_snapshot()
         top_stats = snapshot.statistics("lineno")
         for stat in top_stats[:10]:
             sys.stdout.write(str(stat) + "\n")
-        assert end_usage - start_usage < 1_000_000
+        assert end_usage - start_usage < limit
     tracemalloc.stop()

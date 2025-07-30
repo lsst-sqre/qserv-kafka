@@ -10,25 +10,29 @@ from qservkafka.config import config
 from qservkafka.factory import ProcessContext
 from qservkafka.workers.main import WorkerSettings
 
-__all__ = ["run_arq_jobs"]
+__all__ = ["create_arq_worker"]
 
 
-async def run_arq_jobs(context: ProcessContext | None = None) -> int:
-    """Run any queued arq jobs.
+def create_arq_worker(context: ProcessContext | None = None) -> Worker:
+    """Create an arq worker to run queued jobs.
+
+    Parameters
+    ----------
+    context
+        Process context to use, if given.
 
     Returns
     -------
-    int
-        Number of jobs run.
+    Worker
+        arq worker.
     """
     ctx = {}
     if context:
         ctx["context"] = context
     WorkerSettings.redis_settings = config.arq_redis_settings
     worker_args = set(inspect.signature(Worker).parameters.keys())
-    worker = Worker(
+    return Worker(
         burst=True,
         ctx=ctx,
         **{k: v for k, v in vars(WorkerSettings).items() if k in worker_args},
     )
-    return await worker.run_check()

@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 import pytest
 import respx
 from aiokafka import AIOKafkaConsumer
+from arq import Worker
 from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 from faststream.kafka import KafkaBroker
@@ -25,7 +26,7 @@ from qservkafka.dependencies.context import context_dependency
 from qservkafka.factory import Factory
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 
-from ..support.arq import run_arq_jobs
+from ..support.arq import create_arq_worker
 from ..support.kafka import start_query, wait_for_dispatch, wait_for_status
 from ..support.qserv import MockQserv
 
@@ -59,6 +60,7 @@ async def run_job(
     kafka_broker: KafkaBroker,
     kafka_status_consumer: AIOKafkaConsumer,
     mock_qserv: MockQserv,
+    arq_worker: Worker,
     execution_id: int,
 ) -> None:
     """Run a single job end-to-end."""
@@ -82,7 +84,7 @@ async def run_job(
         ),
     )
     await wait_for_dispatch(factory, execution_id)
-    assert await run_arq_jobs(factory._context) == 1
+    assert await arq_worker.run_check() == execution_id
     await wait_for_status(
         kafka_status_consumer, "data-completed", execution_id=str(execution_id)
     )
@@ -101,6 +103,7 @@ async def test_leak(
     """Test for memory leaks in a full end-to-end Kafka flow."""
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
+        arq_worker = create_arq_worker(factory._context)
 
         # Run a single job to force any memory allocations that only happen
         # once, during the first job.
@@ -109,6 +112,7 @@ async def test_leak(
             kafka_broker=kafka_broker,
             kafka_status_consumer=kafka_status_consumer,
             mock_qserv=mock_qserv,
+            arq_worker=arq_worker,
             execution_id=1,
         )
 
@@ -124,6 +128,7 @@ async def test_leak(
                 kafka_broker=kafka_broker,
                 kafka_status_consumer=kafka_status_consumer,
                 mock_qserv=mock_qserv,
+                arq_worker=arq_worker,
                 execution_id=i,
             )
 
@@ -134,12 +139,14 @@ async def test_leak(
         gc.collect()
         end_usage = tracemalloc.get_traced_memory()[0]
 
-        # In practice memory usage change is never zero, so fail only if more
-        # than 1100KB was leaked.
-        if end_usage - start_usage >= 1_100_000:
+        # In practice memory usage change is never zero because Python and its
+        # libraries aggressively cache a lot of objects. Fail only if more
+        # than 700KB was leaked.
+        limit = 700_000
+        if end_usage - start_usage >= limit:
             snapshot = tracemalloc.take_snapshot()
             top_stats = snapshot.statistics("lineno")
             for stat in top_stats[:10]:
                 sys.stdout.write(str(stat) + "\n")
-            assert end_usage - start_usage < 1_100_000
+            assert end_usage - start_usage < limit
         tracemalloc.stop()

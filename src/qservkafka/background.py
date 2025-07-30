@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
 from aiojobs import Job, Scheduler
@@ -21,12 +22,10 @@ class BackgroundTaskManager:
 
     While the Qserv Kafka bridge is running, it needs to periodically check
     the status of running jobs in Qserv and send status updates for any that
-    have changed. This class manages that background task and its schedule.
-    It only does the task management; all of the work of these tasks is done
-    by methods on the underlying service objects.
-
-    This class is created during startup and tracked as part of the
-    `~controller.factory.ProcessContext`.
+    have changed, and periodically reconcile the quota information in Redis.
+    This class manages those background tasks and their schedules. It only
+    does the task management; all of the work of these tasks is done by
+    methods on the underlying service objects.
 
     Parameters
     ----------
@@ -39,7 +38,7 @@ class BackgroundTaskManager:
     def __init__(self, monitor: QueryMonitor, logger: BoundLogger) -> None:
         self._monitor = monitor
         self._logger = logger
-        self._closing = False
+        self._closing = asyncio.Event()
         self._scheduler: Scheduler | None = None
         self._tasks: list[Job] = []
 
@@ -79,14 +78,12 @@ class BackgroundTaskManager:
             self._logger.warning(msg)
             return
         self._logger.info("Stopping background tasks")
-        self._closing = True
-        for task in self._tasks:
-            await task.close()
+        self._closing.set()
         timeout = config.result_timeout.total_seconds() + 1.0
         await self._scheduler.wait_and_close(timeout=timeout)
-        self._closing = False
         self._scheduler = None
         self._tasks = []
+        self._closing = asyncio.Event()
 
     async def _loop(
         self,
@@ -112,11 +109,11 @@ class BackgroundTaskManager:
         """
         if not self._scheduler:
             raise AssertionError("Background tasks not initialized")
-        while not self._closing:
-            await asyncio.sleep(interval.total_seconds())
+        delay = interval.total_seconds()
+        while not self._closing.is_set():
             start = datetime.now(tz=UTC)
             try:
-                await self._scheduler.shield(call())
+                await call()
             except Exception:
                 # On failure, log the exception but otherwise continue as
                 # normal, including the delay. This will provide some time for
@@ -124,3 +121,5 @@ class BackgroundTaskManager:
                 elapsed = datetime.now(tz=UTC) - start
                 msg = f"Uncaught exception {description}"
                 self._logger.exception(msg, delay=elapsed.total_seconds())
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self._closing.wait(), delay)
