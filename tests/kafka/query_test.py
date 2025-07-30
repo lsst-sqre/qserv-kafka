@@ -22,7 +22,7 @@ from qservkafka.models.gafaelfawr import GafaelfawrQuota, GafaelfawrTapQuota
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 from qservkafka.models.state import RunningQuery
 
-from ..support.arq import run_arq_jobs
+from ..support.arq import create_arq_worker
 from ..support.data import read_test_job_cancel, read_test_job_run
 from ..support.gafaelfawr import MockGafaelfawr
 from ..support.kafka import start_query, wait_for_dispatch, wait_for_status
@@ -44,6 +44,7 @@ async def test_success(
 ) -> None:
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
+        arq_worker = create_arq_worker(factory._context)
 
         job = await start_query(kafka_broker, "data")
         status = await wait_for_status(kafka_status_consumer, "data-started")
@@ -67,7 +68,7 @@ async def test_success(
         await wait_for_dispatch(factory, 1)
 
         # Run the background task queue.
-        assert await run_arq_jobs(factory._context) == 1
+        assert await arq_worker.run_check() == 1
         status = await wait_for_status(kafka_status_consumer, "data-completed")
         assert status.query_info
         assert status.query_info.start_time == start_time
@@ -112,6 +113,7 @@ async def test_failure(
 ) -> None:
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
+        arq_worker = create_arq_worker(factory._context)
 
         await start_query(kafka_broker, "simple")
         status = await wait_for_status(kafka_status_consumer, "simple-started")
@@ -152,7 +154,7 @@ async def test_failure(
         await wait_for_dispatch(factory, 1)
 
         # Run the background tsk queue.
-        assert await run_arq_jobs() == 1
+        assert await arq_worker.run_check() == 1
         status = await wait_for_status(kafka_status_consumer, "simple-failed")
         assert status.timestamp == now
         assert status.query_info
@@ -182,6 +184,7 @@ async def test_qserv_error(
     """
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
+        arq_worker = create_arq_worker(factory._context)
 
         await start_query(kafka_broker, "simple")
         status = await wait_for_status(kafka_status_consumer, "simple-started")
@@ -209,7 +212,7 @@ async def test_qserv_error(
         await wait_for_dispatch(factory, 1)
 
         # Run the background tsk queue.
-        assert await run_arq_jobs() == 1
+        assert await arq_worker.run_check() == 1
         status = await wait_for_status(kafka_status_consumer, "simple-error")
 
     # Ensure all query state has been deleted.
@@ -240,7 +243,8 @@ async def test_missing_executing(
 
     # Run the backend worker. It should process the job and send the same
     # status update we already sent (since nothing has changed).
-    assert await run_arq_jobs() == 1
+    arq_worker = create_arq_worker()
+    assert await arq_worker.run_check() == 1
     await wait_for_status(kafka_status_consumer, "data-started")
 
     # The query should still be active and should no longer be marked as
@@ -321,7 +325,8 @@ async def test_upload(
     assert mock_qserv.get_uploaded_table() == table_name
 
     # Run the backend worker.
-    assert await run_arq_jobs() == 1
+    arq_worker = create_arq_worker()
+    assert await arq_worker.run_check() == 1
     await wait_for_status(kafka_status_consumer, "upload-failed")
 
     # Now that results have been processed, the table should be deleted.
@@ -354,6 +359,7 @@ async def test_quota(
 
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
+        arq_worker = create_arq_worker(factory._context)
 
         # Start a couple of queries.
         await start_query(kafka_broker, "data")
@@ -391,7 +397,7 @@ async def test_quota(
         await wait_for_dispatch(factory, 1)
 
         # Run the background task queue.
-        assert await run_arq_jobs() == 1
+        assert await arq_worker.run_check() == 1
         await wait_for_status(kafka_status_consumer, "data-completed")
 
         # Now, it should be possible to start a new query.

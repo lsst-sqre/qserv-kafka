@@ -26,7 +26,6 @@ from testcontainers.core.network import Network
 from testcontainers.mysql import MySqlContainer
 from testcontainers.redis import RedisContainer
 
-from qservkafka.background import BackgroundTaskManager
 from qservkafka.config import config
 from qservkafka.factory import Factory, ProcessContext
 from qservkafka.main import create_app
@@ -52,18 +51,6 @@ async def app(
     monkeypatch.setattr(config, "kafka", kafka_connection_settings)
     monkeypatch.setattr(config, "qserv_poll_interval", poll_interval)
     return create_app()
-
-
-@pytest_asyncio.fixture
-async def background(
-    factory: Factory, logger: BoundLogger
-) -> AsyncGenerator[BackgroundTaskManager]:
-    """Create and start the background task manager."""
-    monitor = await factory.create_query_monitor()
-    background = BackgroundTaskManager(monitor, logger)
-    await background.start()
-    yield background
-    await background.stop()
 
 
 @pytest_asyncio.fixture
