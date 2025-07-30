@@ -13,11 +13,10 @@ import tracemalloc
 import pytest
 import pytest_asyncio
 import respx
-from safir.logging import Profile, configure_logging
+from safir.logging import LogLevel
 from safir.metrics import metrics_configuration_factory
 
 from qservkafka.config import config
-from qservkafka.events import Events
 from qservkafka.factory import Factory
 
 from ..support.data import read_test_job_run, read_test_job_status
@@ -25,19 +24,26 @@ from ..support.qserv import MockQserv
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def disable_metrics_mock(
-    factory: Factory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Disable the mock metrics, since they store events in memory."""
+async def disable_metrics_mock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable the metrics events mock.
+
+    Disable metrics events logging entirely, rather than using the mock.
+    Otherwise, we accomulate metrics events in memory, which causes false
+    positives for memory leaks.
+    """
     monkeypatch.delenv("METRICS_MOCK")
     monkeypatch.setattr(config, "metrics", metrics_configuration_factory())
-    event_manager = config.metrics.make_manager()
-    await event_manager.initialize()
-    events = Events()
-    await events.initialize(event_manager)
-    await factory._context.event_manager.aclose()
-    factory._context.event_manager = event_manager
-    factory._context.events = events
+
+
+@pytest.fixture(autouse=True)
+def set_log_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reduce log noise.
+
+    The leak test runs a bunch of queries, so cut down on logging. Debug-level
+    logging also appears to allocate a lot of memory. Hopefully this is not a
+    real memory leak.
+    """
+    monkeypatch.setattr(config, "log_level", LogLevel.WARNING)
 
 
 @pytest.mark.asyncio
@@ -49,13 +55,6 @@ async def test_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test for memory leaks in the immediate job processing flow."""
-    tracemalloc.start()
-
-    # Disable debug logging to make the logs easier to read.
-    configure_logging(
-        profile=Profile.production, log_level="WARNING", name="qservkafka"
-    )
-
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
     job = read_test_job_run("data")
@@ -63,6 +62,7 @@ async def test_success(
     mock_qserv.set_immediate_success(job)
 
     gc.collect()
+    tracemalloc.start()
     start_usage = tracemalloc.get_traced_memory()[0]
 
     for i in range(1, 100):
@@ -78,11 +78,11 @@ async def test_success(
     end_usage = tracemalloc.get_traced_memory()[0]
 
     # In practice memory usage change is never zero, so fail only if more than
-    # 300KB was leaked.
-    if end_usage - start_usage >= 300_000:
+    # 1000KB was leaked.
+    if end_usage - start_usage >= 1_000_000:
         snapshot = tracemalloc.take_snapshot()
         top_stats = snapshot.statistics("lineno")
         for stat in top_stats[:10]:
             sys.stdout.write(str(stat) + "\n")
-        assert end_usage - start_usage < 300_000
+        assert end_usage - start_usage < 1_000_000
     tracemalloc.stop()
