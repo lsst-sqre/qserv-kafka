@@ -17,7 +17,7 @@ from pydantic import MySQLDsn, RedisDsn, SecretStr
 from safir.arq import ArqMode
 from safir.database import create_async_session, create_database_engine
 from safir.kafka import KafkaConnectionSettings, SecurityProtocol
-from safir.logging import LogLevel, Profile, configure_logging
+from safir.logging import configure_logging
 from safir.testing.containers import FullKafkaContainer
 from sqlalchemy.ext.asyncio import AsyncEngine
 from structlog import get_logger
@@ -184,8 +184,8 @@ async def kafka_status_consumer(
 @pytest.fixture
 def logger() -> BoundLogger:
     configure_logging(
-        profile=Profile.production,
-        log_level=LogLevel.DEBUG,
+        profile=config.profile,
+        log_level=config.log_level,
         name="qservkafka",
         add_timestamp=True,
     )
