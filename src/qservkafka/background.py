@@ -106,6 +106,22 @@ class BackgroundTaskManager:
             run, **not** the interval between the start of each run.
         description
             Description of the background task for error reporting.
+
+        Notes
+        -----
+        A previous version of this method instead cancelled the individual
+        background tasks during `stop` using `~aiojobs.Job.close` and
+        protected the execution of the underlying periodic task with
+        `~aiojobs.Scheduler.shield` so that it would still run to completion.
+        This works, but with Python 3.13.5 and aiojobs 1.4.0 it causes a
+        memory leak, apparently of data associated with each periodic task.
+
+        Because of that bug, this implementation instead uses an
+        `asyncio.Event` to signal shutdown, uses `asyncio.wait_for` on that
+        event variable to implement the delay between executions, and avoids
+        calling `~aiojobs.Scheduler.close` or `aiojobs.Job.close`, instead
+        waiting for the jobs to finish on their own after the event variable
+        is set. This appears to eliminate that cause of a memory leak.
         """
         if not self._scheduler:
             raise AssertionError("Background tasks not initialized")
