@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
-from aiojobs import Job, Scheduler
+from aiojobs import Scheduler
 from structlog.stdlib import BoundLogger
 
 from .config import config
@@ -40,18 +40,20 @@ class BackgroundTaskManager:
         self._logger = logger
         self._closing = asyncio.Event()
         self._scheduler: Scheduler | None = None
-        self._tasks: list[Job] = []
 
     async def start(self) -> None:
         """Start all background tasks.
 
-        Intended to be called during Qserv Kafka bridge startup.
+        Normally called during Qserv Kafka bridge startup from the lifespan
+        hook. The caller is responsible for calling `stop` during shutdown.
         """
         if self._scheduler:
             msg = "Background tasks already running, cannot start"
             self._logger.warning(msg)
             return
         self._scheduler = Scheduler()
+
+        # Start the background tasks.
         coros = [
             self._loop(
                 self._monitor.check_status,
@@ -66,7 +68,7 @@ class BackgroundTaskManager:
         ]
         self._logger.info("Starting background tasks")
         for coro in coros:
-            self._tasks.append(await self._scheduler.spawn(coro))
+            await self._scheduler.spawn(coro)
 
         # Give all of the newly-spawned background tasks a chance to start.
         await asyncio.sleep(0)
@@ -82,7 +84,6 @@ class BackgroundTaskManager:
         timeout = config.result_timeout.total_seconds() + 1.0
         await self._scheduler.wait_and_close(timeout=timeout)
         self._scheduler = None
-        self._tasks = []
         self._closing = asyncio.Event()
 
     async def _loop(
@@ -93,9 +94,10 @@ class BackgroundTaskManager:
     ) -> None:
         """Wrap a coroutine in a periodic scheduling loop.
 
-        The provided coroutine is run on every interval. This method always
-        delays by the interval first before running the coroutine for the
-        first time.
+        The provided coroutine is run on every interval. Each execution runs
+        to completion; shutdown, handled by setting the ``self._closing``
+        event, is checked after the execution of the coroutine and during the
+        delay before it is run again.
 
         Parameters
         ----------
@@ -106,9 +108,23 @@ class BackgroundTaskManager:
             run, **not** the interval between the start of each run.
         description
             Description of the background task for error reporting.
+
+        Notes
+        -----
+        A previous version of this method instead cancelled the individual
+        background tasks during `stop` using `~aiojobs.Job.close` and
+        protected the execution of the underlying periodic task with
+        `~aiojobs.Scheduler.shield` so that it would still run to completion.
+        This works, but with Python 3.13.5 and aiojobs 1.4.0 it causes a
+        memory leak, apparently of data associated with each periodic task.
+
+        Because of that bug, this implementation instead uses an
+        `asyncio.Event` to signal shutdown, uses `asyncio.wait_for` on that
+        event variable to implement the delay between executions, and avoids
+        calling `~aiojobs.Scheduler.close` or `aiojobs.Job.close`, instead
+        waiting for the jobs to finish on their own after the event variable
+        is set. This appears to eliminate that cause of a memory leak.
         """
-        if not self._scheduler:
-            raise AssertionError("Background tasks not initialized")
         delay = interval.total_seconds()
         while not self._closing.is_set():
             start = datetime.now(tz=UTC)

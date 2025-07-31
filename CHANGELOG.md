@@ -7,6 +7,18 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-1.2.0'></a>
+## 1.2.0 (2025-07-29)
+
+### New features
+
+- Added support for encoding `unicodeChar` fields.
+
+### Bug fixes
+
+- Fixed the `encoded_size` field of success metrics events to track the result size after base64 encoding, not before.
+- Avoid the use of `aiojobs.Scheduler.shield` in background tasks since it appears to cause a memory leak.
+
 <a id='changelog-1.1.0'></a>
 ## 1.1.0 (2025-07-21)
 
