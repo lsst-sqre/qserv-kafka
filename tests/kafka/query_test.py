@@ -302,10 +302,12 @@ async def test_upload(
 
         job = await start_query(kafka_broker, "upload")
         table_name = job.upload_tables[0].table_name
+        database_name = job.upload_tables[0].database
         status = await wait_for_status(kafka_status_consumer, "upload-started")
         assert status.query_info
         start_time = status.query_info.start_time
         assert mock_qserv.get_uploaded_table() == table_name
+        assert mock_qserv.get_uploaded_database() == database_name
 
         await mock_qserv.update_status(
             1,
@@ -321,8 +323,10 @@ async def test_upload(
         )
         await wait_for_dispatch(factory, 1)
 
-    # Before the backend worker runs, the table should still exist.
+    # Before the backend worker runs, the database and table should still
+    # exist.
     assert mock_qserv.get_uploaded_table() == table_name
+    assert mock_qserv.get_uploaded_database() == database_name
 
     # Run the backend worker.
     arq_worker = create_arq_worker()
@@ -330,6 +334,7 @@ async def test_upload(
     await wait_for_status(kafka_status_consumer, "upload-failed")
 
     # Now that results have been processed, the table should be deleted.
+    assert mock_qserv.get_uploaded_database() is None
     assert mock_qserv.get_uploaded_table() is None
 
     # Ensure all query state has been deleted.
