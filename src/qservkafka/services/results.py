@@ -434,10 +434,7 @@ class ResultProcessor:
         await self._rate_store.end_query(query.job.owner)
 
         # Delete any temporary databases.
-        databases_to_delete = set()
-        for upload in query.job.upload_tables:
-            databases_to_delete.add(upload.database)
-
+        databases_to_delete = {t.database for t in query.job.upload_tables}
         for database in databases_to_delete:
             try:
                 await self._qserv.delete_database(database)

@@ -358,6 +358,10 @@ class MockQserv:
         self._check_auth(request)
         self._check_version(request)
         assert database == self._uploaded_database
+        if self._uploaded_table is not None:
+            assert self._uploaded_table.startswith(f"{database}."), (
+                f"Uploaded table must start with '{database}.'"
+            )
         self._uploaded_database = None
         self._uploaded_table = None
         return Response(200, json={"success": 1}, request=request)
