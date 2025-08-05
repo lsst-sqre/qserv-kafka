@@ -323,6 +323,7 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
     )
     finish = datetime.now(tz=UTC)
     assert mock_qserv.get_uploaded_table() is None
+    assert mock_qserv.get_uploaded_database() is None
 
     # Check that the correct metrics events were sent.
     assert isinstance(factory.events.query_success, MockEventPublisher)
@@ -364,6 +365,7 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
     started_status.execution_id = "2"
     assert status == started_status
     assert mock_qserv.get_uploaded_table() == job.upload_tables[0].table_name
+    assert mock_qserv.get_uploaded_database() == job.upload_tables[0].database
 
     # Only the second query should be active.
     assert await state_store.get_active_queries() == {2}

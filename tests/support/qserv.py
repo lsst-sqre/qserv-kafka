@@ -142,7 +142,8 @@ class MockQserv:
         self._queries: dict[int, AsyncQueryStatus]
         self._results_stored: bool
         self._upload_delay: timedelta | None
-        self._uploaded_table: str | None
+        self._uploaded_table: str | None = None
+        self._uploaded_database: str | None = None
         self.reset()
 
     @classmethod
@@ -182,6 +183,16 @@ class MockQserv:
         """
         return self._uploaded_table
 
+    def get_uploaded_database(self) -> str | None:
+        """Get the set of uploaded database names.
+
+        Returns
+        -------
+        str | None
+            The uploaded database name or None.
+        """
+        return self._uploaded_database
+
     def register_mocks(self, mocks: list[MagicMock]) -> None:
         """Register additional magic mocks to clear on `reset`.
 
@@ -217,6 +228,7 @@ class MockQserv:
         self._results_stored = False
         self._upload_delay = None
         self._uploaded_table = None
+        self._uploaded_database = None
         for mock in self._mocks:
             mock.reset_mock()
 
@@ -324,10 +336,10 @@ class MockQserv:
         self._results_stored = False
         return Response(200, json={"success": 1}, request=request)
 
-    async def delete_table(
-        self, request: Request, database: str, table: str
+    async def delete_database(
+        self, request: Request, database: str
     ) -> Response:
-        """Delete an uploaded table.
+        """Delete an uploaded database and all its tables.
 
         Parameters
         ----------
@@ -335,8 +347,6 @@ class MockQserv:
             Incoming request.
         database
             Name of the database.
-        table
-            Name of the table.
 
         Returns
         -------
@@ -347,7 +357,12 @@ class MockQserv:
             return Response(500, text="Something failed")
         self._check_auth(request)
         self._check_version(request)
-        assert f"{database}.{table}" == self._uploaded_table
+        assert database == self._uploaded_database
+        if self._uploaded_table is not None:
+            assert self._uploaded_table.startswith(f"{database}."), (
+                f"Uploaded table must start with '{database}.'"
+            )
+        self._uploaded_database = None
         self._uploaded_table = None
         return Response(200, json={"success": 1}, request=request)
 
@@ -596,8 +611,8 @@ class MockQserv:
         expected_job = read_test_job_run("upload")
         upload_table = expected_job.upload_tables[0]
         expected = {
-            "database": upload_table.table_name.split(".", 1)[0],
-            "table": upload_table.table_name.split(".", 1)[1],
+            "database": upload_table.database,
+            "table": upload_table.table,
             "fields_terminated_by": ",",
             "charset_name": "utf8",
             "timeout": str(int(config.qserv_upload_timeout.total_seconds())),
@@ -610,8 +625,18 @@ class MockQserv:
             ),
             ("rows", ("table.csv", self._UPLOAD_CSV, "text/csv")),
         ]
+        database = upload_table.database
+
+        if self._uploaded_database is not None:
+            assert database == self._uploaded_database, (
+                f"Multiple databases in single job: expected "
+                f"'{self._uploaded_database}', "
+                f"got '{database}'"
+            )
+
         assert not self._uploaded_table, "Too many tables uploaded"
         self._uploaded_table = upload_table.table_name
+        self._uploaded_database = database
         return Response(200, json=BaseResponse(success=1).model_dump())
 
     def _check_auth(self, request: Request) -> None:
@@ -676,8 +701,8 @@ async def register_mock_qserv(
     respx_mock.post(url__regex=regex).mock(side_effect=mock.submit)
     regex = rf"{base}/ingest/csv"
     respx_mock.post(url__regex=regex).mock(side_effect=mock.upload_table)
-    regex = rf"{base}/ingest/table/(?P<database>[^/]+)/(?P<table>[^/?]+)"
-    respx_mock.delete(url__regex=regex).mock(side_effect=mock.delete_table)
+    regex = rf"{base}/ingest/database/(?P<database>[^/?]+)"
+    respx_mock.delete(url__regex=regex).mock(side_effect=mock.delete_database)
     regex = rf"{base}/query-async/(?P<query_id>[0-9]+)"
     respx_mock.delete(url__regex=regex).mock(side_effect=mock.cancel)
     regex = rf"{base}/query-async/result/(?P<query_id>[0-9]+)"

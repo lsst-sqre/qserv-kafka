@@ -261,6 +261,36 @@ class QservClient:
         """
         await self._delete(f"/ingest/table/{database}/{table}")
 
+    async def delete_database(self, database: str) -> None:
+        """Delete a user database.
+
+        Parameters
+        ----------
+        database
+            Name of the database.
+
+        Notes
+        -----
+        We delete the entire user database for each job rather than deleting
+        individual tables because we've now moved to creating a new database
+        for each new job.
+        The reason for this change is that in the current implementation of
+        QServ a failed upload can lead to a state where the user can no
+        longer upload tables to that database.
+        Also if a user attempts two simultaneous uploads, this could also
+        trigger a similar problem leaving the database in a problematic state.
+        So with a short lived database for each upload, it is now simpler
+        to just delete the whole temporary database once the job is
+        completed.
+
+
+        Raises
+        ------
+        QservApiError
+            Raised if there was some error deleting the database.
+        """
+        await self._delete(f"/ingest/database/{database}")
+
     async def get_query_results_gen(
         self, query_id: int
     ) -> AsyncGenerator[Row[Any]]:

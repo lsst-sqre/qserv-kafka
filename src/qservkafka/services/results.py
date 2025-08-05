@@ -433,15 +433,16 @@ class ResultProcessor:
         await self._state.delete_query(query.query_id)
         await self._rate_store.end_query(query.job.owner)
 
-        # Delete any temporary tables.
-        for upload in query.job.upload_tables:
+        # Delete any temporary databases.
+        databases_to_delete = {t.database for t in query.job.upload_tables}
+        for database in databases_to_delete:
             try:
-                await self._qserv.delete_table(upload.database, upload.table)
+                await self._qserv.delete_database(database)
             except QservApiError as e:
                 logger.exception(
-                    "Unable to delete temporary table, orphaning it",
+                    "Unable to delete temporary database, orphaning it",
                     error=str(e),
-                    table_name=upload.table_name,
+                    database_name=database,
                 )
 
     async def _upload_results(self, query: RunningQuery) -> UploadStats:
