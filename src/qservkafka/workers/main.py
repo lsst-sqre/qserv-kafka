@@ -8,6 +8,7 @@ from typing import Any, ClassVar
 
 from safir.database import create_async_session
 from safir.logging import configure_logging
+from safir.metrics import make_on_job_start
 from structlog import get_logger
 
 from ..config import config
@@ -41,6 +42,7 @@ async def startup(ctx: dict[Any, Any]) -> None:
     session = await create_async_session(context.engine)
     factory = Factory(context, session, logger)
 
+    ctx.update(context.arq_context_additions)
     ctx["context"] = context
     ctx["session"] = session
     ctx["factory"] = factory
@@ -70,4 +72,5 @@ class WorkerSettings:
     max_jobs = config.max_worker_jobs
     on_startup = startup
     on_shutdown = shutdown
+    on_job_start = make_on_job_start(config.arq_queue)
     redis_settings = config.arq_redis_settings
