@@ -234,11 +234,7 @@ def mysql() -> Generator[MySqlContainer]:
 @pytest.fixture
 def redis(redis_container: RedisContainer) -> RedisContainer:
     """Wrap the session fixture to clear data before each test."""
-    redis_client = redis_container.get_client()
-    for key in redis_client.scan_iter("query:*"):
-        redis_client.delete(key)
-    for key in redis_client.scan_iter("rate:*"):
-        redis_client.delete(key)
+    redis_container.get_client().flushall()
     return redis_container
 
 

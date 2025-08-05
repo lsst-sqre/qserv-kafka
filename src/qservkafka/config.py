@@ -6,6 +6,7 @@ from datetime import timedelta
 from typing import Any, Self
 
 from arq.connections import RedisSettings
+from arq.constants import default_queue_name
 from httpx import USE_CLIENT_DEFAULT, BasicAuth
 from pydantic import (
     Field,
@@ -36,6 +37,12 @@ class Config(BaseSettings):
         ArqMode.production,
         title="arq queue mode",
         description="Used by the test suite to switch to a mock queue",
+    )
+
+    arq_queue: str = Field(
+        default_queue_name,
+        title="arq queue",
+        description="The arq queue name that worker will listen on",
     )
 
     consumer_group_id: str | None = Field(
