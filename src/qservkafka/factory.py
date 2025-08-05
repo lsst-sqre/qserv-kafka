@@ -13,7 +13,12 @@ from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
 from safir.arq import ArqMode, ArqQueue, MockArqQueue, RedisArqQueue
 from safir.database import create_database_engine
-from safir.metrics import EventManager, initialize_arq_metrics
+from safir.metrics import (
+    ARQ_EVENTS_CONTEXT_KEY,
+    ArqEvents,
+    EventManager,
+    initialize_arq_metrics,
+)
 from safir.redis import PydanticRedisStorage
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
 from structlog import get_logger
@@ -68,6 +73,9 @@ class ProcessContext:
 
     events: Events
     """Event publishers for metrics events."""
+
+    arq_events: ArqEvents
+    """Event publishers for generic arq metrics events."""
 
     arq_context_additions: dict[Any, Any]
     """Items to put into the Arq worker context in the startup function."""
@@ -151,6 +159,7 @@ class ProcessContext:
         await events.initialize(event_manager)
         arq_context: dict[Any, Any] = {}
         await initialize_arq_metrics(event_manager, arq_context)
+        arq_events = arq_context[ARQ_EVENTS_CONTEXT_KEY]
 
         # Create a shared caching Gafaelfawr client.
         logger = get_logger("qservkafka")
@@ -165,6 +174,7 @@ class ProcessContext:
             gafaelfawr_client=gafaelfawr_client,
             events=events,
             arq_context_additions=arq_context,
+            arq_events=arq_events,
             redis=redis_client,
         )
 
@@ -259,7 +269,9 @@ class Factory:
         """
         if config.arq_mode == ArqMode.production:
             settings = config.arq_redis_settings
-            arq_queue: ArqQueue = await RedisArqQueue.initialize(settings)
+            arq_queue: ArqQueue = await RedisArqQueue.initialize(
+                settings, default_queue_name=config.arq_queue
+            )
         else:
             arq_queue = MockArqQueue()
         return QueryMonitor(

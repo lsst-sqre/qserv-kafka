@@ -37,6 +37,9 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[project.scripts]
+qservkafka_publish_periodic_metrics = "qservkafka.periodic_metrics:publish_periodic_metrics"
+
 [project.urls]
 Homepage = "https://qserv-kafka.lsst.io"
 Source = "https://github.com/lsst-sqre/qserv-kafka"

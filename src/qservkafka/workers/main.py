@@ -65,6 +65,7 @@ class WorkerSettings:
     """Configuration for the arq worker."""
 
     functions: ClassVar[list[Callable]] = [handle_finished_query]
+    queue_name = config.arq_queue
     job_completion_wait = int(
         (config.result_timeout + ARQ_TIMEOUT_GRACE).total_seconds()
     )
