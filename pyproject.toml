@@ -44,6 +44,11 @@ qservkafka_publish_periodic_metrics = "qservkafka.periodic_metrics:publish_perio
 Homepage = "https://qserv-kafka.lsst.io"
 Source = "https://github.com/lsst-sqre/qserv-kafka"
 
+[tool.uv.sources]
+safir = { git = "https://github.com/lsst-sqre/safir", branch = "u/danfuchs/debug-time-in-queue", subdirectory = "safir" }
+
+safir-arq = { git = "https://github.com/lsst-sqre/safir", branch = "u/danfuchs/debug-time-in-queue", subdirectory = "safir-arq" }
+
 [build-system]
 requires = ["setuptools>=61", "wheel", "setuptools_scm[toml]>=6.2"]
 build-backend = "setuptools.build_meta"
