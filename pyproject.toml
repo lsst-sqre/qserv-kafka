@@ -31,11 +31,14 @@ dependencies = [
     "pydantic>=2.11",
     "pydantic-settings>=2.8",
     "redis>=5",
-    "safir[arq,db,redis]>=11.3.0",
+    "safir[arq,db,redis]>=11.3.1",
     "uvicorn[standard]>=0.34",
     "vo-models>=0.4",
 ]
 dynamic = ["version"]
+
+[project.scripts]
+qserv-kafka = "qservkafka.cli:main"
 
 [project.urls]
 Homepage = "https://qserv-kafka.lsst.io"
