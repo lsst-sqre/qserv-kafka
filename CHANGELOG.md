@@ -7,6 +7,23 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-1.3.0'></a>
+## 1.3.0 (2025-08-06)
+
+### New features
+
+- Per-job generic arq metrics: publish an [ArqQueueJobEvent](https://safir.lsst.io/user-guide/arq.html#per-job-metrics) with a `time_in_queue` field at the start of every job.
+
+  Uses the [Safir generic arq metrics](https://safir.lsst.io/user-guide/arq.html#per-job-metrics).
+
+- Add a script for publishing an [ArqQueueStatsEvent](https://safir.lsst.io/api/safir.metrics.ArqQueueStatsEvent.html#safir.metrics.ArqQueueStatsEvent). This should be called periodically, probably by a Kubernetes `CronJob`.
+
+  Uses [Safir generic arq metrics](https://safir.lsst.io/user-guide/arq.html#periodic-metrics).
+
+### Other changes
+
+- Changed table upload process to delete user database instead of tables
+
 <a id='changelog-1.2.0'></a>
 ## 1.2.0 (2025-07-29)
 
