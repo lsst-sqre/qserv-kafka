@@ -70,7 +70,8 @@ class WorkerSettings:
     )
     job_timeout = config.result_timeout + ARQ_TIMEOUT_GRACE
     max_jobs = config.max_worker_jobs
+    on_job_start = make_on_job_start(config.arq_queue)
     on_startup = startup
     on_shutdown = shutdown
-    on_job_start = make_on_job_start(config.arq_queue)
+    queue_name = config.arq_queue
     redis_settings = config.arq_redis_settings

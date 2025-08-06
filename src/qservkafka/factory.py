@@ -259,7 +259,9 @@ class Factory:
         """
         if config.arq_mode == ArqMode.production:
             settings = config.arq_redis_settings
-            arq_queue: ArqQueue = await RedisArqQueue.initialize(settings)
+            arq_queue: ArqQueue = await RedisArqQueue.initialize(
+                settings, default_queue_name=config.arq_queue
+            )
         else:
             arq_queue = MockArqQueue()
         return QueryMonitor(
