@@ -1,6 +1,6 @@
 """Helpers for publishing periodic metrics."""
 
-from safir.metrics import ArqEvents, publish_queue_stats
+from safir.metrics.arq import ArqEvents, publish_queue_stats
 
 from .config import config
 
