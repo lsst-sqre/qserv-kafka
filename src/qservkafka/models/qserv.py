@@ -45,6 +45,7 @@ class AsyncQueryPhase(StrEnum):
     EXECUTING = "EXECUTING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    FAILED_LR = "FAILED_LR"
     ABORTED = "ABORTED"
 
 

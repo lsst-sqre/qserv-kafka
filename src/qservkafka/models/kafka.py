@@ -456,6 +456,7 @@ class JobErrorCode(StrEnum):
     backend_error = "backend_error"
     backend_internal_error = "backend_internal_error"
     backend_request_error = "backend_request_error"
+    backend_results_too_large = "backend_results_too_large"
     backend_sql_error = "backend_sql_error"
     invalid_request = "invalid_request"
     quota_exceeded = "quota_exceeded"
