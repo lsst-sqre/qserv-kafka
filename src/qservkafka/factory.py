@@ -13,7 +13,8 @@ from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
 from safir.arq import ArqMode, ArqQueue, MockArqQueue, RedisArqQueue
 from safir.database import create_database_engine
-from safir.metrics import EventManager, initialize_arq_metrics
+from safir.metrics import EventManager
+from safir.metrics.arq import initialize_arq_metrics
 from safir.redis import PydanticRedisStorage
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
 from structlog import get_logger

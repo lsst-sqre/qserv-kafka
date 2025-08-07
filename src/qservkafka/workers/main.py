@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 
 from safir.database import create_async_session
 from safir.logging import configure_logging
-from safir.metrics import make_on_job_start
+from safir.metrics.arq import make_on_job_start
 from structlog import get_logger
 
 from ..config import config
