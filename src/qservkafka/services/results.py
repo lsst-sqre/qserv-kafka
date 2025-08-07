@@ -151,7 +151,7 @@ class ResultProcessor:
                 result = await self._build_completed_status(
                     full_query, initial=initial
                 )
-            case AsyncQueryPhase.FAILED:
+            case AsyncQueryPhase.FAILED | AsyncQueryPhase.FAILED_LR:
                 result = await self._build_failed_status(full_query)
             case _:  # pragma: no cover
                 raise ValueError(f"Unknown phase {status.status}")
@@ -386,8 +386,19 @@ class ResultProcessor:
             Status for the query.
         """
         metadata = query.job.to_job_metadata()
+        if query.status.status == AsyncQueryPhase.FAILED_LR:
+            msg = "Query failed in backend because results were too large"
+            code = JobErrorCode.backend_results_too_large
+            error = (
+                "Query results are too large to return; please narrow your"
+                " query and try again"
+            )
+        else:
+            msg = "Backend reported query failure"
+            code = JobErrorCode.backend_error
+            error = "Query failed in backend"
         self._logger.warning(
-            "Backend reported query failure",
+            msg,
             **query.to_logging_context(),
             query=metadata.model_dump(mode="json", exclude_none=True),
             status=query.status.model_dump(mode="json", exclude_none=True),
@@ -398,7 +409,7 @@ class ResultProcessor:
         event = QueryFailureEvent(
             job_id=query.job.job_id,
             username=query.job.owner,
-            error=JobErrorCode.backend_error,
+            error=code,
             elapsed=datetime.now(tz=UTC) - query.start,
         )
         await self._events.query_failure.publish(event)
@@ -408,10 +419,7 @@ class ResultProcessor:
             timestamp=query.status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.ERROR,
             query_info=query.to_job_query_info(finished=True),
-            error=JobError(
-                code=JobErrorCode.backend_error,
-                message="Query failed in backend",
-            ),
+            error=JobError(code=code, message=error),
             metadata=metadata,
         )
 

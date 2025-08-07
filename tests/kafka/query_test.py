@@ -169,6 +169,54 @@ async def test_failure(
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
+async def test_too_large(
+    *,
+    app: FastAPI,
+    kafka_broker: KafkaBroker,
+    kafka_status_consumer: AIOKafkaConsumer,
+    mock_qserv: MockQserv,
+    redis: RedisContainer,
+) -> None:
+    async with LifespanManager(app):
+        factory = context_dependency.create_factory()
+        arq_worker = create_arq_worker(factory._context)
+
+        await start_query(kafka_broker, "simple")
+        status = await wait_for_status(kafka_status_consumer, "simple-started")
+        assert status.query_info
+        start_time = status.query_info.start_time
+
+        now = current_datetime()
+        await mock_qserv.update_status(
+            1,
+            AsyncQueryStatus(
+                query_id=1,
+                status=AsyncQueryPhase.FAILED_LR,
+                total_chunks=10,
+                completed_chunks=8,
+                collected_bytes=860211304,
+                query_begin=start_time,
+                last_update=now,
+            ),
+        )
+        await wait_for_dispatch(factory, 1)
+
+        # Run the background tsk queue.
+        assert await arq_worker.run_check() == 1
+        status = await wait_for_status(kafka_status_consumer, "simple-large")
+        assert status.timestamp == now
+        assert status.query_info
+        assert status.query_info.start_time == start_time
+        assert status.query_info.end_time
+        assert status.query_info.end_time >= now
+
+    # Ensure all query state has been deleted.
+    redis_client = redis.get_client()
+    assert set(redis_client.scan_iter("query:*")) == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
 async def test_qserv_error(
     *,
     app: FastAPI,
