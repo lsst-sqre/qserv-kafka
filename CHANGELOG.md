@@ -12,35 +12,27 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 ### Other changes
 
-- Change safir arq metrics import to be compatible with the latest safir version
+- Update the arq metrics support to be compatible with the latest Safir release.
 
 <a id='changelog-1.3.0'></a>
 ## 1.3.0 (2025-08-06)
 
 ### New features
 
-- Per-job generic arq metrics: publish an [ArqQueueJobEvent](https://safir.lsst.io/user-guide/arq.html#per-job-metrics) with a `time_in_queue` field at the start of every job.
-
-  Uses the [Safir generic arq metrics](https://safir.lsst.io/user-guide/arq.html#per-job-metrics).
-
-- Add a script for publishing an [ArqQueueStatsEvent](https://safir.lsst.io/api/safir.metrics.ArqQueueStatsEvent.html#safir.metrics.ArqQueueStatsEvent). This should be called periodically, probably by a Kubernetes `CronJob`.
-
-  Uses [Safir generic arq metrics](https://safir.lsst.io/user-guide/arq.html#periodic-metrics).
-
-### Other changes
-
-- Changed table upload process to delete user database instead of tables
+- When cleaning up after completed queries that included user table uploads, delete the entire database rather than only the table. The TAP server side now specifies a separate user database per query with uploaded tables. Deleting the entire database simplifies error handling in Qserv.
+- At the start of every worker job to process query results, publish an [ArqQueueJobEvent](https://safir.lsst.io/user-guide/arq.html#per-job-metrics) with a `time_in_queue` field. This will allow us to monitor whether waiting for a result worker is causing query delays.
+- Add a command-line interface for publishing an [ArqQueueStatsEvent](https://safir.lsst.io/api/safir.metrics.ArqQueueStatsEvent.html#safir.metrics.ArqQueueStatsEvent). This is called periodically from a Kubernetes `CronJob`.
 
 <a id='changelog-1.2.0'></a>
 ## 1.2.0 (2025-07-29)
 
 ### New features
 
-- Added support for encoding `unicodeChar` fields.
+- Add support for encoding `unicodeChar` fields in results, with correct truncation before surrogate pairs if the value is (in violation of the VOTable specification) UTF-16. Currently, this will only arise for queries with user table uploads where the user specified that a field had the `unicodeChar` type. This type is deprecated; better Unicode support will be added in the future based on the outcome of ongoing IVOA discussions.
 
 ### Bug fixes
 
-- Fixed the `encoded_size` field of success metrics events to track the result size after base64 encoding, not before.
+- Fix the `encoded_size` field of success metrics events to track the result size after base64 encoding, not before.
 - Avoid the use of `aiojobs.Scheduler.shield` in background tasks since it appears to cause a memory leak.
 
 <a id='changelog-1.1.0'></a>
