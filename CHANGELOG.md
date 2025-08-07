@@ -7,6 +7,13 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-1.4.0'></a>
+## 1.4.0 (2025-08-07)
+
+### Other changes
+
+- Change safir arq metrics import to be compatible with the latest safir version
+
 <a id='changelog-1.3.0'></a>
 ## 1.3.0 (2025-08-06)
 
