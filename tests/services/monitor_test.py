@@ -10,9 +10,12 @@ from safir.datetime import current_datetime
 from testcontainers.redis import RedisContainer
 
 from qservkafka.factory import Factory
-from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 
-from ..support.data import read_test_job_run, read_test_job_status
+from ..support.data import (
+    read_test_job_run,
+    read_test_job_status,
+    read_test_qserv_status,
+)
 from ..support.qserv import MockQserv
 
 
@@ -32,18 +35,12 @@ async def test_dispatch(factory: Factory, mock_qserv: MockQserv) -> None:
 
     qserv_status = mock_qserv.get_status(1)
     now = current_datetime()
-    await mock_qserv.update_status(
-        1,
-        AsyncQueryStatus(
-            query_id=1,
-            status=AsyncQueryPhase.COMPLETED,
-            total_chunks=10,
-            completed_chunks=10,
-            collected_bytes=250,
-            query_begin=qserv_status.query_begin,
-            last_update=now,
-        ),
+    qserv_status = read_test_qserv_status(
+        "simple-completed",
+        query_begin=qserv_status.query_begin,
+        last_update=now,
     )
+    await mock_qserv.update_status(1, qserv_status)
 
     query = await state_store.get_query(1)
     assert query

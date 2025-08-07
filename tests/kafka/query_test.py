@@ -19,11 +19,14 @@ from testcontainers.redis import RedisContainer
 from qservkafka.config import config
 from qservkafka.dependencies.context import context_dependency
 from qservkafka.models.gafaelfawr import GafaelfawrQuota, GafaelfawrTapQuota
-from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 from qservkafka.models.state import RunningQuery
 
 from ..support.arq import create_arq_worker
-from ..support.data import read_test_job_cancel, read_test_job_run
+from ..support.data import (
+    read_test_job_cancel,
+    read_test_job_run,
+    read_test_qserv_status,
+)
 from ..support.gafaelfawr import MockGafaelfawr
 from ..support.kafka import start_query, wait_for_dispatch, wait_for_status
 from ..support.qserv import MockQserv
@@ -52,18 +55,12 @@ async def test_success(
         start_time = status.query_info.start_time
 
         await mock_qserv.store_results(job)
-        await mock_qserv.update_status(
-            1,
-            AsyncQueryStatus(
-                query_id=1,
-                status=AsyncQueryPhase.COMPLETED,
-                total_chunks=10,
-                completed_chunks=10,
-                collected_bytes=250,
-                query_begin=start_time,
-                last_update=datetime.now(tz=UTC),
-            ),
+        qserv_status = read_test_qserv_status(
+            "data-completed",
+            query_begin=start_time,
+            last_update=current_datetime(),
         )
+        await mock_qserv.update_status(1, qserv_status)
 
         await wait_for_dispatch(factory, 1)
 
@@ -90,7 +87,7 @@ async def test_success(
         "qserv_elapsed": ANY,
         "result_elapsed": ANY,
         "rows": 2,
-        "qserv_size": 250,
+        "qserv_size": qserv_status.collected_bytes,
         "encoded_size": ANY,
         "result_size": ANY,
         "rate": ANY,
@@ -121,36 +118,20 @@ async def test_failure(
         start_time = status.query_info.start_time
 
         now = current_datetime()
-        await mock_qserv.update_status(
-            1,
-            AsyncQueryStatus(
-                query_id=1,
-                status=AsyncQueryPhase.EXECUTING,
-                total_chunks=10,
-                completed_chunks=5,
-                collected_bytes=150,
-                query_begin=start_time,
-                last_update=now,
-            ),
+        qserv_status = read_test_qserv_status(
+            "simple-partial", query_begin=start_time, last_update=now
         )
+        await mock_qserv.update_status(1, qserv_status)
         status = await wait_for_status(kafka_status_consumer, "simple-partial")
         assert status.timestamp == now
         assert status.query_info
         assert status.query_info.start_time == start_time
 
         now = current_datetime()
-        await mock_qserv.update_status(
-            1,
-            AsyncQueryStatus(
-                query_id=1,
-                status=AsyncQueryPhase.FAILED,
-                total_chunks=10,
-                completed_chunks=8,
-                collected_bytes=200,
-                query_begin=start_time,
-                last_update=now,
-            ),
+        qserv_status = read_test_qserv_status(
+            "simple-failed", query_begin=start_time, last_update=now
         )
+        await mock_qserv.update_status(1, qserv_status)
         await wait_for_dispatch(factory, 1)
 
         # Run the background tsk queue.
@@ -187,18 +168,10 @@ async def test_too_large(
         start_time = status.query_info.start_time
 
         now = current_datetime()
-        await mock_qserv.update_status(
-            1,
-            AsyncQueryStatus(
-                query_id=1,
-                status=AsyncQueryPhase.FAILED_LR,
-                total_chunks=10,
-                completed_chunks=8,
-                collected_bytes=860211304,
-                query_begin=start_time,
-                last_update=now,
-            ),
+        qserv_status = read_test_qserv_status(
+            "simple-large", query_begin=start_time, last_update=now
         )
+        await mock_qserv.update_status(1, qserv_status)
         await wait_for_dispatch(factory, 1)
 
         # Run the background tsk queue.
@@ -239,24 +212,14 @@ async def test_qserv_error(
         assert status.query_info
         start_time = status.query_info.start_time
 
-        mock_qserv.set_status_response(
-            Response(
-                200,
-                json={"success": 0, "error": "Some error"},
-            )
+        error_json = {"success": 0, "error": "Some error"}
+        mock_qserv.set_status_response(Response(200, json=error_json))
+        qserv_status = read_test_qserv_status(
+            "simple-completed",
+            query_begin=start_time,
+            last_update=current_datetime(),
         )
-        await mock_qserv.update_status(
-            1,
-            AsyncQueryStatus(
-                query_id=1,
-                status=AsyncQueryPhase.COMPLETED,
-                total_chunks=10,
-                completed_chunks=10,
-                collected_bytes=250,
-                query_begin=start_time,
-                last_update=datetime.now(tz=UTC),
-            ),
-        )
+        await mock_qserv.update_status(1, qserv_status)
         await wait_for_dispatch(factory, 1)
 
         # Run the background tsk queue.
@@ -357,18 +320,12 @@ async def test_upload(
         assert mock_qserv.get_uploaded_table() == table_name
         assert mock_qserv.get_uploaded_database() == database_name
 
-        await mock_qserv.update_status(
-            1,
-            AsyncQueryStatus(
-                query_id=1,
-                status=AsyncQueryPhase.FAILED,
-                total_chunks=10,
-                completed_chunks=8,
-                collected_bytes=200,
-                query_begin=start_time,
-                last_update=datetime.now(tz=UTC),
-            ),
+        qserv_status = read_test_qserv_status(
+            "upload-failed",
+            query_begin=start_time,
+            last_update=current_datetime(),
         )
+        await mock_qserv.update_status(1, qserv_status)
         await wait_for_dispatch(factory, 1)
 
     # Before the backend worker runs, the database and table should still
@@ -403,12 +360,10 @@ async def test_quota(
 ) -> None:
     redis_client = redis.get_client()
     job = read_test_job_run("data")
-    mock_gafaelfawr.set_quota(
-        job.owner,
-        GafaelfawrQuota(
-            tap={config.tap_service: GafaelfawrTapQuota(concurrent=2)}
-        ),
+    quota = GafaelfawrQuota(
+        tap={config.tap_service: GafaelfawrTapQuota(concurrent=2)}
     )
+    mock_gafaelfawr.set_quota(job.owner, quota)
 
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
@@ -435,18 +390,12 @@ async def test_quota(
 
         # Let the first query finish.
         await mock_qserv.store_results(job)
-        await mock_qserv.update_status(
-            1,
-            AsyncQueryStatus(
-                query_id=1,
-                status=AsyncQueryPhase.COMPLETED,
-                total_chunks=10,
-                completed_chunks=10,
-                collected_bytes=250,
-                query_begin=start_time,
-                last_update=datetime.now(tz=UTC),
-            ),
+        qserv_status = read_test_qserv_status(
+            "data-completed",
+            query_begin=start_time,
+            last_update=current_datetime(),
         )
+        await mock_qserv.update_status(1, qserv_status)
         await wait_for_dispatch(factory, 1)
 
         # Run the background task queue.
