@@ -116,6 +116,7 @@ class QueryMonitor:
             query.status.update_from(status)
             update = self._results.build_executing_status(query)
             await self._state.update_status(query.query_id, query.status)
+            logger = self._logger.bind(**query.to_logging_context())
             logger.debug("Sending status update for running query")
             return update
         else:
