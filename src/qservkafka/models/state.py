@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Self, override
 
 from pydantic import BaseModel, Field
 from safir.datetime import format_datetime_for_logging
@@ -89,3 +89,11 @@ class RunningQuery(Query):
             completed_chunks=self.status.completed_chunks,
             end_time=datetime.now(tz=UTC) if finished else None,
         )
+
+    @override
+    def to_logging_context(self) -> dict[str, Any]:
+        result = super().to_logging_context()
+        result["total_chunks"] = self.status.total_chunks
+        result["completed_chunks"] = self.status.completed_chunks
+        result["qserv_size"] = self.status.collected_bytes
+        return result

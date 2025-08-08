@@ -11,6 +11,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from safir.pydantic import UtcDatetime
 
 __all__ = [
+    "AsyncProcessStatus",
     "AsyncQueryPhase",
     "AsyncQueryStatus",
     "AsyncStatusResponse",
@@ -49,8 +50,14 @@ class AsyncQueryPhase(StrEnum):
     ABORTED = "ABORTED"
 
 
-class AsyncQueryStatus(BaseModel):
-    """Status information for a query."""
+class AsyncProcessStatus(BaseModel):
+    """Process status for a query.
+
+    This is the subset of information that we retrieve about running queries,
+    as opposed to the full query status in `AsyncQueryStatus`. It is used to
+    determine if we need to send a status update message to Kafka and to
+    determine if the query is finished.
+    """
 
     model_config = ConfigDict(validate_by_name=True)
 
@@ -70,16 +77,6 @@ class AsyncQueryStatus(BaseModel):
         BeforeValidator(lambda v: 0 if v is None else v),
     ]
 
-    collected_bytes: Annotated[
-        int,
-        Field(
-            title="Size of results",
-            description="Size of results collected so far in bytes",
-            validation_alias="collectedBytes",
-        ),
-        BeforeValidator(lambda v: 0 if v is None else v),
-    ] = 0
-
     query_begin: Annotated[
         UtcDatetime,
         Field(title="Query start time", validation_alias="queryBeginEpoch"),
@@ -92,6 +89,84 @@ class AsyncQueryStatus(BaseModel):
             lambda u: None if isinstance(u, int) and u == 0 else u
         ),
     ] = None
+
+    def is_different_than(self, new: AsyncProcessStatus) -> bool:
+        """Whether a new process status represents a change worth an update."""
+        return (
+            self.status != new.status
+            or self.total_chunks != new.total_chunks
+            or self.completed_chunks != new.completed_chunks
+            or self.last_update != new.last_update
+        )
+
+    def update_from(self, new: AsyncProcessStatus) -> None:
+        """Copy updated information from a new process status.
+
+        This avoids the need to make another Qserv REST API call to return the
+        full query status when the only change is forward progress on a
+        running query.
+        """
+        self.total_chunks = new.total_chunks
+        self.completed_chunks = new.completed_chunks
+        self.last_update = new.last_update
+
+
+class AsyncQueryStatus(AsyncProcessStatus):
+    """Status information for a query.
+
+    This includes the additional fields that are only available via the REST
+    API.
+    """
+
+    query: Annotated[str | None, Field(title="Query text")] = None
+
+    error: Annotated[
+        str | None,
+        Field(title="Error for failed query"),
+        BeforeValidator(lambda v: v if v else None),
+    ] = None
+
+    czar_id: Annotated[
+        int | None,
+        Field(title="Qserv czar processing query", validation_alias="czarId"),
+    ] = None
+
+    czar_type: Annotated[
+        str | None,
+        Field(
+            title="Type of Qserv czar processing query",
+            validation_alias="czarType",
+        ),
+    ] = None
+
+    collected_bytes: Annotated[
+        int,
+        Field(
+            title="Size of results",
+            description="Size of results collected so far in bytes",
+            validation_alias="collectedBytes",
+        ),
+        BeforeValidator(lambda v: 0 if v is None else v),
+    ] = 0
+
+    final_rows: Annotated[
+        int | None, Field(title="Rows in result", validation_alias="finalRows")
+    ] = None
+
+    def to_process_status(self) -> AsyncProcessStatus:
+        """Convert to an `AsyncProcessStatus`.
+
+        Used primarily by the test suite to compare a full `AsyncQueryStatus`
+        to an `AsyncProcessStatus`.
+        """
+        return AsyncProcessStatus(
+            query_id=self.query_id,
+            status=self.status,
+            total_chunks=self.total_chunks,
+            completed_chunks=self.completed_chunks,
+            query_begin=self.query_begin,
+            last_update=self.last_update,
+        )
 
 
 class AsyncStatusResponse(BaseResponse):

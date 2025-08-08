@@ -5,7 +5,7 @@
   "status": "ERROR",
   "error": {
     "code": "backend_results_too_large",
-    "message": "Query results are too large to return; please narrow your query and try again"
+    "message": "Query results are too large to return; please narrow your query and try again: MERGE_ERROR 1470 (QI=404591:81; cancelling the query, queryResult table result_404591 is too large at 571829258 bytes, max allowed size is 536870912 bytes) 2025-07-21T05:36:23+0000"
   },
   "query_info": {
     "start_time": 1743540791,

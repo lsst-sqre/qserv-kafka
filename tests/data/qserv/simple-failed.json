@@ -2,6 +2,7 @@
   "queryId": 1,
   "query": "SELECT TOP 10 * FROM table",
   "status": "FAILED",
+  "error": "Some Qserv error",
   "totalChunks": 10,
   "completedChunks": 8,
   "collectedBytes": 200,
