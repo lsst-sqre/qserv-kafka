@@ -7,6 +7,22 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-2.0.0'></a>
+## 2.0.0 (2025-08-08)
+
+### Backwards-incompatible changes
+
+- Request version 47 of the Qserv REST API instead of version 43. This only applies if the Qserv Kafka bridge is configured to send versions in REST API requests.
+
+### New features
+
+- Add support for the Qserv `FAILED_LR` status, which indicates that a query failed because the results were too large. Return a hopefully user-understandable error message in that case that asks the user to narrow their query.
+- Read the error message for a query that failed in Qserv and include that error in the error message sent back to the user.
+
+### Other changes
+
+- Include more status information from Qserv in log messages.
+
 <a id='changelog-1.4.0'></a>
 ## 1.4.0 (2025-08-07)
 
