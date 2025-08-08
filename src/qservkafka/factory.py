@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ssl
 from dataclasses import dataclass
-from typing import Any, Self
+from typing import Self
 
 from faststream.kafka import KafkaBroker
 from httpx import AsyncClient, Limits
@@ -14,7 +14,6 @@ from redis.backoff import ExponentialBackoff
 from safir.arq import ArqMode, ArqQueue, MockArqQueue, RedisArqQueue
 from safir.database import create_database_engine
 from safir.metrics import EventManager
-from safir.metrics.arq import initialize_arq_metrics
 from safir.redis import PydanticRedisStorage
 from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
 from structlog import get_logger
@@ -69,9 +68,6 @@ class ProcessContext:
 
     events: Events
     """Event publishers for metrics events."""
-
-    arq_context_additions: dict[Any, Any]
-    """Items to put into the Arq worker context in the startup function."""
 
     redis: Redis
     """Connection pool for state-tracking Redis."""
@@ -150,8 +146,6 @@ class ProcessContext:
         await event_manager.initialize()
         events = Events()
         await events.initialize(event_manager)
-        arq_context: dict[Any, Any] = {}
-        await initialize_arq_metrics(event_manager, arq_context)
 
         # Create a shared caching Gafaelfawr client.
         logger = get_logger("qservkafka")
@@ -165,7 +159,6 @@ class ProcessContext:
             event_manager=event_manager,
             gafaelfawr_client=gafaelfawr_client,
             events=events,
-            arq_context_additions=arq_context,
             redis=redis_client,
         )
 
