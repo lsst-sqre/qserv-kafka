@@ -42,7 +42,12 @@ from qservkafka.models.qserv import (
 from qservkafka.storage import qserv
 from qservkafka.storage.qserv import API_VERSION
 
-from .data import read_test_data, read_test_job_run, read_test_json
+from .data import (
+    read_test_data,
+    read_test_job_run,
+    read_test_json,
+    read_test_qserv_status,
+)
 
 __all__ = ["MockQserv", "register_mock_qserv"]
 
@@ -486,32 +491,28 @@ class MockQserv:
         self._next_query_id += 1
         now = current_datetime()
         if self._immediate_success:
-            self._queries[query_id] = AsyncQueryStatus(
+            self._queries[query_id] = read_test_qserv_status(
+                "data-completed",
                 query_id=query_id,
-                status=AsyncQueryPhase.COMPLETED,
-                total_chunks=10,
-                completed_chunks=10,
-                collected_bytes=250,
                 query_begin=now,
                 last_update=now,
             )
             await self.store_results(self._immediate_success)
         else:
-            self._queries[query_id] = AsyncQueryStatus(
+            status = read_test_qserv_status(
+                "data-executing",
                 query_id=query_id,
-                status=AsyncQueryPhase.EXECUTING,
-                total_chunks=10,
-                completed_chunks=0,
                 query_begin=now,
                 last_update=now,
             )
+            self._queries[query_id] = status
             async with self._session.begin():
                 process = _Process(
                     id=query_id,
                     submitted=now,
                     updated=now,
-                    chunks=10,
-                    chunks_comp=0,
+                    chunks=status.total_chunks,
+                    chunks_comp=status.completed_chunks,
                 )
                 self._session.add(process)
         return Response(

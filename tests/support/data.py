@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import ANY
 
 from qservkafka.models.kafka import JobCancel, JobRun, JobStatus
+from qservkafka.models.qserv import AsyncQueryStatus
 
 __all__ = [
     "read_test_data",
@@ -15,6 +17,7 @@ __all__ = [
     "read_test_job_status",
     "read_test_job_status_json",
     "read_test_json",
+    "read_test_qserv_status",
 ]
 
 
@@ -156,3 +159,40 @@ def read_test_job_status_json(filename: str) -> dict[str, Any]:
         if result["queryInfo"].get("endTime"):
             result["queryInfo"]["endTime"] = ANY
     return result
+
+
+def read_test_qserv_status(
+    filename: str,
+    *,
+    query_id: int | None = None,
+    query_begin: datetime | None = None,
+    last_update: datetime | None = None,
+) -> AsyncQueryStatus:
+    """Read the result of q Qserv query status API call.
+
+    Parameters
+    ----------
+    filename
+        File to read relative to the test :file:`qserv` directory, without the
+        ``.json`` suffix.
+    query_id
+        Override the ``execution_id`` number.
+    query_begin
+        Override the ``query_begin`` timestamp.
+    last_update
+        Override the ``last_update`` timestamp.
+
+    Returns
+    -------
+    AsyncQueryStatus
+        Parsed contents of the file.
+    """
+    model_data = read_test_json(f"qserv/{filename}")
+    model = AsyncQueryStatus.model_validate(model_data)
+    if query_id:
+        model.query_id = query_id
+    if query_begin:
+        model.query_begin = query_begin.replace(microsecond=0)
+    if last_update:
+        model.last_update = last_update.replace(microsecond=0)
+    return model

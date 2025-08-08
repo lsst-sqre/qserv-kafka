@@ -1,0 +1,10 @@
+{
+  "queryId": 1,
+  "query": "SELECT TOP 10 * FROM table",
+  "status": "COMPLETED",
+  "totalChunks": 10,
+  "completedChunks": 10,
+  "collectedBytes": 250,
+  "queryBeginEpoch": 1754607182,
+  "lastUpdateEpoch": 1754607184
+}

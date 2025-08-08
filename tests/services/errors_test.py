@@ -7,6 +7,7 @@ from unittest.mock import ANY, patch
 
 import pytest
 from httpx import Response
+from safir.datetime import current_datetime
 from safir.metrics import MockEventPublisher
 from vo_models.uws.types import ExecutionPhase
 
@@ -34,7 +35,6 @@ async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     job = read_test_job_run("simple")
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    now = datetime.now(tz=UTC)
 
     # HTTP failure starting the job.
     mock_qserv.set_submit_response(Response(500))
@@ -42,7 +42,7 @@ async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     expected = JobStatus(
         job_id=job.job_id,
         execution_id=None,
-        timestamp=now,
+        timestamp=datetime.now(tz=UTC),
         status=ExecutionPhase.ERROR,
         error=JobError(code=JobErrorCode.backend_request_error, message=""),
         metadata=job.to_job_metadata(),
@@ -83,7 +83,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     job = read_test_job_run("simple")
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    now = datetime.now(tz=UTC)
+    now = current_datetime()
 
     # HTTP failure getting the job status.
     mock_qserv.set_status_response(Response(500))
@@ -105,11 +105,8 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     assert_approximately_now(status.timestamp)
 
     # Invalid response from the status endpoint.
-    mock_qserv.set_status_response(
-        Response(
-            200, json={"success": 1, "status": {"queryId": 1, "status": "FOO"}}
-        )
-    )
+    error_json = {"success": 1, "status": {"queryId": 1, "status": "FOO"}}
+    mock_qserv.set_status_response(Response(200, json=error_json))
     status = await query_service.start_query(job)
     expected.execution_id = "2"
     expected.error.code = JobErrorCode.backend_internal_error
@@ -118,16 +115,12 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     assert "Qserv request failed: " in status.error.message
 
     # Error returned from the status endpoint.
-    mock_qserv.set_status_response(
-        Response(
-            200,
-            json={
-                "success": 0,
-                "error": "Some error",
-                "error_ext": {"foo": "bar"},
-            },
-        )
-    )
+    error_json = {
+        "success": 0,
+        "error": "Some error",
+        "error_ext": {"foo": "bar"},
+    }
+    mock_qserv.set_status_response(Response(200, json=error_json))
     status = await query_service.start_query(job)
     expected.execution_id = "3"
     expected.error.code = JobErrorCode.backend_error
@@ -138,7 +131,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
 
     # Return a normal reply from the status endpoint but mark the job as being
     # in an error state.
-    start = datetime.now(tz=UTC)
+    start = current_datetime()
     query_status = AsyncQueryStatus(
         query_id=4,
         status=AsyncQueryPhase.FAILED,
@@ -146,17 +139,10 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
         completed_chunks=4,
         collected_bytes=150,
         query_begin=now,
-        last_update=now,
+        last_update=start,
     )
-    mock_qserv.set_status_response(
-        Response(
-            200,
-            json={
-                "success": 1,
-                "status": query_status.model_dump(mode="json"),
-            },
-        )
-    )
+    error_json = {"success": 1, "status": query_status.model_dump(mode="json")}
+    mock_qserv.set_status_response(Response(200, json=error_json))
     status = await query_service.start_query(job)
     now = datetime.now(tz=UTC)
     expected.execution_id = "4"
@@ -172,7 +158,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     assert status == expected
     assert status.query_info.start_time <= now
     assert status.query_info.end_time
-    assert status.query_info.end_time <= now
+    assert start <= status.query_info.end_time <= now
 
     # This last case is the only case where a metrics event should have been
     # published. We do not publish metrics events (at least at present) when
@@ -196,7 +182,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
 async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    now = datetime.now(tz=UTC)
+    now = current_datetime()
 
     job = read_test_job_run("tabledata")
     status = await query_service.start_query(job)
@@ -242,7 +228,7 @@ async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
     job = read_test_job_run("data")
-    now = datetime.now(tz=UTC)
+    now = current_datetime()
 
     mock_qserv.set_immediate_success(job)
     results_sql = "SELECT * FROM nonexistent"
@@ -286,7 +272,7 @@ async def test_upload_timeout(
     expected = JobStatus(
         job_id=job.job_id,
         execution_id="1",
-        timestamp=datetime.now(tz=UTC),
+        timestamp=current_datetime(),
         status=ExecutionPhase.ERROR,
         error=JobError(
             code=JobErrorCode.result_timeout,

@@ -24,9 +24,9 @@ from safir.metrics import metrics_configuration_factory
 from qservkafka.config import config
 from qservkafka.dependencies.context import context_dependency
 from qservkafka.factory import Factory
-from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 
 from ..support.arq import create_arq_worker
+from ..support.data import read_test_qserv_status
 from ..support.kafka import start_query, wait_for_dispatch, wait_for_status
 from ..support.qserv import MockQserv
 
@@ -71,18 +71,13 @@ async def run_job(
     assert status.query_info
     start_time = status.query_info.start_time
     await mock_qserv.store_results(job)
-    await mock_qserv.update_status(
-        execution_id,
-        AsyncQueryStatus(
-            query_id=execution_id,
-            status=AsyncQueryPhase.COMPLETED,
-            total_chunks=10,
-            completed_chunks=10,
-            collected_bytes=250,
-            query_begin=start_time,
-            last_update=datetime.now(tz=UTC),
-        ),
+    qserv_status = read_test_qserv_status(
+        "data-completed",
+        query_id=execution_id,
+        query_begin=start_time,
+        last_update=datetime.now(tz=UTC),
     )
+    await mock_qserv.update_status(execution_id, qserv_status)
     await wait_for_dispatch(factory, execution_id)
     assert await arq_worker.run_check() == execution_id
     await wait_for_status(
