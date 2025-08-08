@@ -9,7 +9,7 @@ from structlog.stdlib import BoundLogger
 
 from ..events import Events
 from ..models.kafka import JobStatus
-from ..models.qserv import AsyncQueryPhase, AsyncQueryStatus
+from ..models.qserv import AsyncProcessStatus, AsyncQueryPhase
 from ..models.state import RunningQuery
 from ..storage.qserv import QservClient
 from ..storage.rate import RateLimitStore
@@ -74,7 +74,7 @@ class QueryMonitor:
                 await self._results.publish_status(update)
 
     async def check_query(
-        self, query: RunningQuery, status: AsyncQueryStatus | None
+        self, query: RunningQuery, status: AsyncProcessStatus | None
     ) -> JobStatus | None:
         """Check the status of one Qserv query.
 
@@ -110,12 +110,12 @@ class QueryMonitor:
         # re-retrieve the status from Qserv and may at that point find that it
         # is completed.
         if status and status.status == AsyncQueryPhase.EXECUTING:
-            if query.status == status:
+            if not query.status.is_different_than(status):
                 logger.debug("Running query has not changed state")
                 return None
-            query.status = status
+            query.status.update_from(status)
             update = self._results.build_executing_status(query)
-            await self._state.update_status(query.query_id, status)
+            await self._state.update_status(query.query_id, query.status)
             logger.debug("Sending status update for running query")
             return update
         else:

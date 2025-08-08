@@ -35,6 +35,7 @@ from ..exceptions import (
 )
 from ..models.kafka import JobRun, JobTableUpload
 from ..models.qserv import (
+    AsyncProcessStatus,
     AsyncQueryPhase,
     AsyncQueryStatus,
     AsyncStatusResponse,
@@ -347,7 +348,7 @@ class QservClient:
         return result.status
 
     @_retry(qserv_protocol=QservProtocol.SQL)
-    async def list_running_queries(self) -> dict[int, AsyncQueryStatus]:
+    async def list_running_queries(self) -> dict[int, AsyncProcessStatus]:
         """Return information about all running queries.
 
         Returns
@@ -368,7 +369,7 @@ class QservClient:
                     async for row in result:
                         msg = "Saw running query"
                         self.logger.debug(msg, query=row._asdict())
-                        processes[row.id] = AsyncQueryStatus(
+                        processes[row.id] = AsyncProcessStatus(
                             query_id=row.id,
                             status=AsyncQueryPhase.EXECUTING,
                             total_chunks=row.chunks,

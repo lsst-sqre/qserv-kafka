@@ -189,13 +189,7 @@ class ResultProcessor:
         JobStatus
             Status for the query.
         """
-        self._logger.info(
-            "Job aborted",
-            **query.to_logging_context(),
-            total_chunks=query.status.total_chunks,
-            completed_chunks=query.status.completed_chunks,
-            result_bytes=query.status.collected_bytes,
-        )
+        self._logger.info("Job aborted", **query.to_logging_context())
         timestamp = query.status.last_update or datetime.now(tz=UTC)
         event = QueryAbortEvent(
             job_id=query.job.job_id,
@@ -275,7 +269,6 @@ class ResultProcessor:
         logger.info(
             "Job complete and results uploaded",
             rows=stats.rows,
-            qserv_size=query.status.collected_bytes,
             encoded_size=stats.data_bytes,
             total_size=stats.total_bytes,
             elapsed=(now - query.start).total_seconds(),
@@ -397,14 +390,13 @@ class ResultProcessor:
             msg = "Backend reported query failure"
             code = JobErrorCode.backend_error
             error = "Query failed in backend"
+        if query.status.error:
+            error = f"{error}: {query.status.error}"
         self._logger.warning(
             msg,
             **query.to_logging_context(),
             query=metadata.model_dump(mode="json", exclude_none=True),
             status=query.status.model_dump(mode="json", exclude_none=True),
-            total_chunks=query.status.total_chunks,
-            completed_chunks=query.status.completed_chunks,
-            result_bytes=query.status.collected_bytes,
         )
         event = QueryFailureEvent(
             job_id=query.job.job_id,

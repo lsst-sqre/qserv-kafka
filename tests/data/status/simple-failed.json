@@ -5,7 +5,7 @@
   "status": "ERROR",
   "error": {
     "code": "backend_error",
-    "message": "Query failed in backend"
+    "message": "Query failed in backend: Some Qserv error"
   },
   "query_info": {
     "start_time": 1743540791,
