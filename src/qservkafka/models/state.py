@@ -95,5 +95,6 @@ class RunningQuery(Query):
         result = super().to_logging_context()
         result["total_chunks"] = self.status.total_chunks
         result["completed_chunks"] = self.status.completed_chunks
-        result["qserv_size"] = self.status.collected_bytes
+        if self.status.collected_bytes:
+            result["qserv_size"] = self.status.collected_bytes
         return result
