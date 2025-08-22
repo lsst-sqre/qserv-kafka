@@ -7,6 +7,14 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-3.0.0'></a>
+## 3.0.0 (2025-08-22)
+
+### Backwards-incompatible changes
+
+- Set character set to `utf8mb4` and collation to `utf8mb4_unicode_520_ci` when creating user-uploaded tables in Qserv. This requires version 49 of the Qserv REST API and allows the full range of valid UTF-8 characters and forces a matching collation, instead of using the non-matching collation default in API version 49.
+- Request version 49 of the Qserv REST API instead of version 47. This only applies if the Qserv Kafka bridge is configured to send versions in REST API requests.
+
 <a id='changelog-2.0.0'></a>
 ## 2.0.0 (2025-08-08)
 
