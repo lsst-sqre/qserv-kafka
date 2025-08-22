@@ -244,7 +244,7 @@ class ResultProcessor:
         now = datetime.now(tz=UTC)
         qserv_end = query.status.last_update or now
         qserv_elapsed = qserv_end - query.status.query_begin
-        qserv_elapsed_sec = qserv_elapsed.total_seconds()
+        qserv_elapsed_sec = int(qserv_elapsed.total_seconds())
         if qserv_elapsed.total_seconds() > 0:
             qserv_rate = query.status.collected_bytes / qserv_elapsed_sec
         else:
@@ -272,7 +272,7 @@ class ResultProcessor:
             encoded_size=stats.data_bytes,
             total_size=stats.total_bytes,
             elapsed=(now - query.start).total_seconds(),
-            qserv_elapsed=qserv_elapsed.total_seconds(),
+            qserv_elapsed=qserv_elapsed_sec,
             result_elapsed=stats.elapsed.total_seconds(),
         )
 
