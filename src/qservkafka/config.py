@@ -233,6 +233,12 @@ class Config(BaseSettings):
         ),
     )
 
+    subscriber_workers: int = Field(
+        10,
+        title="Kafka consumer workers",
+        description="Max workers for the Kafka job run topic",
+    )
+
     tap_service: str = Field(
         ...,
         title="TAP service name",

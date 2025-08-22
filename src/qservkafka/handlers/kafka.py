@@ -57,6 +57,7 @@ def register_kafka_handlers(kafka_router: KafkaRouter) -> None:
         config.job_run_topic,
         auto_offset_reset="earliest",
         group_id=config.consumer_group_id,
+        max_workers=config.subscriber_workers,
     )(status_publisher(job_run))
     kafka_router.subscriber(
         config.job_cancel_topic,
