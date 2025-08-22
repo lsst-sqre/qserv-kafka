@@ -435,7 +435,8 @@ class QservClient:
                 "database": upload.database,
                 "table": upload.table,
                 "fields_terminated_by": ",",
-                "charset_name": "utf8",
+                "charset_name": "utf8mb4",
+                "collation_name": "utf8mb4_unicode_520_ci",
                 "timeout": int(config.qserv_upload_timeout.total_seconds()),
             },
             files=(
