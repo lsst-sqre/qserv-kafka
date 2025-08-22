@@ -615,7 +615,8 @@ class MockQserv:
             "database": upload_table.database,
             "table": upload_table.table,
             "fields_terminated_by": ",",
-            "charset_name": "utf8",
+            "charset_name": "utf8mb4",
+            "collation_name": "utf8mb4_unicode_520_ci",
             "timeout": str(int(config.qserv_upload_timeout.total_seconds())),
         }
         assert data == expected
