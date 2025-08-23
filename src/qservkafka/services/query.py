@@ -112,6 +112,34 @@ class QueryService:
         # Return an appropriate status update for the job's current status.
         return await self._results.build_query_status(query)
 
+    async def handle_cancel(self, message: JobCancel) -> None:
+        """Handle an incoming cancel request.
+
+        Cancel the running query if necessary and publish any status update.
+
+        Parameters
+        ----------
+        message
+            Request to cancel the query.
+        """
+        status = await self.cancel_query(message)
+        if status:
+            await self._results.publish_status(status)
+
+    async def handle_query(self, job: JobRun) -> None:
+        """Handle an incoming request to run a query.
+
+        Start the query if possible and publish the status of the query as a
+        Kafka message.
+
+        Parameters
+        ----------
+        job
+            Query job to start.
+        """
+        status = await self.start_query(job)
+        await self._results.publish_status(status)
+
     async def start_query(self, job: JobRun) -> JobStatus:
         """Start a new query and return its initial status.
 
