@@ -10,6 +10,7 @@ from structlog import get_logger
 from structlog.stdlib import BoundLogger
 
 from ..factory import Factory, ProcessContext
+from ..tasks import TaskManager
 
 __all__ = [
     "ConsumerContext",
@@ -28,6 +29,9 @@ class ConsumerContext:
     factory: Factory
     """The component factory."""
 
+    tasks: TaskManager
+    """Manager for the query processing tasks."""
+
 
 class ContextDependency:
     """Provide per-message context as a dependency for a FastStream consumer.
@@ -41,6 +45,9 @@ class ContextDependency:
     def __init__(self) -> None:
         self._process_context: ProcessContext | None = None
         self._session: async_scoped_session | None = None
+
+        self._logger = get_logger("qservkafka")
+        self._tasks = TaskManager(self._logger)
 
     async def __call__(
         self, message: KafkaMessage
@@ -58,18 +65,18 @@ class ContextDependency:
             record = record[0]
 
         # Add the Kafka context to the logger
-        logger = get_logger("qservkafka")
         kafka_context = {
             "topic": record.topic,
             "offset": record.offset,
             "partition": record.partition,
         }
-        logger = logger.bind(kafka=kafka_context)
+        logger = self._logger.bind(kafka=kafka_context)
 
         try:
             yield ConsumerContext(
                 logger=logger,
                 factory=Factory(self._process_context, self._session, logger),
+                tasks=self._tasks,
             )
         finally:
             # Cleanly shut down any session that was created from the shared
@@ -78,6 +85,9 @@ class ContextDependency:
 
     async def aclose(self) -> None:
         """Clean up the per-process singletons."""
+        reaped = await self._tasks.reap_tasks()
+        while reaped > 0:
+            reaped = await self._tasks.reap_tasks()
         self._session = None
         if self._process_context:
             await self._process_context.aclose()
@@ -107,6 +117,10 @@ class ContextDependency:
         self._process_context = await ProcessContext.create()
         engine = self._process_context.engine
         self._session = await create_async_session(engine)
+
+    async def reap_tasks(self) -> None:
+        """Wait for all running tasks and start queued tasks if needed."""
+        await self._tasks.reap_tasks()
 
 
 context_dependency = ContextDependency()

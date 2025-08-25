@@ -11,7 +11,8 @@ from aiojobs import Scheduler
 from structlog.stdlib import BoundLogger
 
 from .config import config
-from .constants import RATE_LIMIT_RECONCILE_INTERVAL
+from .constants import RATE_LIMIT_RECONCILE_INTERVAL, REAP_TASKS_INTERVAL
+from .dependencies.context import context_dependency
 from .services.monitor import QueryMonitor
 
 __all__ = ["BackgroundTaskManager"]
@@ -64,6 +65,11 @@ class BackgroundTaskManager:
                 self._monitor.reconcile_rate_limits,
                 RATE_LIMIT_RECONCILE_INTERVAL,
                 "reconciling rate limits",
+            ),
+            self._loop(
+                context_dependency.reap_tasks,
+                REAP_TASKS_INTERVAL,
+                "reaping query creation tasks",
             ),
         ]
         self._logger.info("Starting background tasks")

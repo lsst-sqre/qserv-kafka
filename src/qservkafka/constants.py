@@ -10,6 +10,7 @@ __all__ = [
     "GAFAELFAWR_CACHE_SIZE",
     "MAXIMUM_QUERY_LIFETIME",
     "RATE_LIMIT_RECONCILE_INTERVAL",
+    "REAP_TASKS_INTERVAL",
     "REDIS_BACKOFF_MAX",
     "REDIS_BACKOFF_START",
     "REDIS_POOL_SIZE",
@@ -57,6 +58,9 @@ self-heal inconsistencies. Unfortunately, this too can create its own
 inconsistencies since it reconciles against a data snapshot, so running it too
 frequently can create more problems than it solves.
 """
+
+REAP_TASKS_INTERVAL = timedelta(seconds=10)
+"""How frequently to reap query creation tasks."""
 
 REDIS_BACKOFF_MAX = 1.0
 """Maximum delay (in seconds) to wait after a Redis failure."""
