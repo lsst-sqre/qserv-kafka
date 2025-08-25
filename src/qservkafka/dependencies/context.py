@@ -3,15 +3,14 @@
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 
-from aiojobs import Scheduler
 from faststream.kafka.fastapi import KafkaMessage
 from safir.database import create_async_session
 from sqlalchemy.ext.asyncio import async_scoped_session
 from structlog import get_logger
 from structlog.stdlib import BoundLogger
 
-from ..config import config
 from ..factory import Factory, ProcessContext
+from ..tasks import TaskManager
 
 __all__ = [
     "ConsumerContext",
@@ -30,8 +29,8 @@ class ConsumerContext:
     factory: Factory
     """The component factory."""
 
-    scheduler: Scheduler
-    """Scheduler that manages the query processing tasks."""
+    tasks: TaskManager
+    """Manager for the query processing tasks."""
 
 
 class ContextDependency:
@@ -45,16 +44,16 @@ class ContextDependency:
 
     def __init__(self) -> None:
         self._process_context: ProcessContext | None = None
-        self._scheduler: Scheduler | None = None
         self._session: async_scoped_session | None = None
+
+        self._logger = get_logger("qservkafka")
+        self._tasks = TaskManager(self._logger)
 
     async def __call__(
         self, message: KafkaMessage
     ) -> AsyncGenerator[ConsumerContext]:
         """Create a per-request context."""
         if not self._process_context or not self._session:
-            raise RuntimeError("Context dependency not initialized")
-        if self._scheduler is None:
             raise RuntimeError("Context dependency not initialized")
 
         # The underlying Kafka messages can either be a single message or a
@@ -66,19 +65,18 @@ class ContextDependency:
             record = record[0]
 
         # Add the Kafka context to the logger
-        logger = get_logger("qservkafka")
         kafka_context = {
             "topic": record.topic,
             "offset": record.offset,
             "partition": record.partition,
         }
-        logger = logger.bind(kafka=kafka_context)
+        logger = self._logger.bind(kafka=kafka_context)
 
         try:
             yield ConsumerContext(
                 logger=logger,
                 factory=Factory(self._process_context, self._session, logger),
-                scheduler=self._scheduler,
+                tasks=self._tasks,
             )
         finally:
             # Cleanly shut down any session that was created from the shared
@@ -87,9 +85,9 @@ class ContextDependency:
 
     async def aclose(self) -> None:
         """Clean up the per-process singletons."""
-        if self._scheduler:
-            await self._scheduler.wait_and_close()
-            self._scheduler = None
+        reaped = await self._tasks.reap_tasks()
+        while reaped > 0:
+            reaped = await self._tasks.reap_tasks()
         self._session = None
         if self._process_context:
             await self._process_context.aclose()
@@ -119,8 +117,10 @@ class ContextDependency:
         self._process_context = await ProcessContext.create()
         engine = self._process_context.engine
         self._session = await create_async_session(engine)
-        timeout = config.result_timeout.total_seconds()
-        self._scheduler = Scheduler(wait_timeout=timeout)
+
+    async def reap_tasks(self) -> None:
+        """Wait for all running tasks and start queued tasks if needed."""
+        await self._tasks.reap_tasks()
 
 
 context_dependency = ContextDependency()

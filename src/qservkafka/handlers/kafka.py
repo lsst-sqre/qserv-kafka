@@ -23,7 +23,7 @@ async def job_run(
     context: Annotated[ConsumerContext, Depends(context_dependency)],
 ) -> None:
     query_service = context.factory.create_query_service()
-    await context.scheduler.spawn(query_service.handle_query(message))
+    context.tasks.start(query_service.handle_query(message))
 
 
 async def job_cancel(
@@ -31,7 +31,7 @@ async def job_cancel(
     context: Annotated[ConsumerContext, Depends(context_dependency)],
 ) -> None:
     query_service = context.factory.create_query_service()
-    await context.scheduler.spawn(query_service.handle_cancel(message))
+    context.tasks.start(query_service.handle_cancel(message))
 
 
 def register_kafka_handlers(kafka_router: KafkaRouter) -> None:

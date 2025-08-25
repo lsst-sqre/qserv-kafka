@@ -127,6 +127,9 @@ async def test_leak(
                 execution_id=i,
             )
 
+        # Ensure all query creation tasks have been reaped.
+        await context_dependency.reap_tasks()
+
         # Delete as much known stored data as possible, force garbage
         # collection, and then stop tracing memory and gather usage.
         mock_qserv.reset()
