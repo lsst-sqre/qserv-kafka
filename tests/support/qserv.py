@@ -17,17 +17,12 @@ from urllib.parse import parse_qs, urlparse
 import respx
 from httpx import Request, Response
 from multipart import MultipartParser, parse_options_header
-from safir.database import (
-    create_async_session,
-    datetime_to_db,
-    initialize_database,
-)
+from safir.database import datetime_to_db, initialize_database
 from safir.datetime import current_datetime
 from sqlalchemy import BigInteger, Double, String, delete, select
 from sqlalchemy.dialects.mysql import DATETIME
-from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from structlog import get_logger
 from structlog.stdlib import BoundLogger
 
 from qservkafka.config import config
@@ -106,8 +101,8 @@ class MockQserv:
 
     Parameters
     ----------
-    session
-        Database session.
+    sessionmaker
+        Factory for database sessions.
     respx_mock
         Router for HTTP mocks.
     flaky
@@ -127,14 +122,14 @@ class MockQserv:
 
     def __init__(
         self,
-        session: async_scoped_session,
+        sessionmaker: async_sessionmaker,
         respx_mock: respx.Router,
         *,
         flaky: bool = False,
     ) -> None:
         self.flaky = flaky
 
-        self._session = session
+        self._sessionmaker = sessionmaker
         self._respx_mock = respx_mock
 
         self._expected_job: JobRun | None
@@ -217,9 +212,10 @@ class MockQserv:
         query_id
             Qserv query ID.
         """
-        async with self._session.begin():
-            stmt = delete(_Process).where(_Process.id == query_id)
-            await self._session.execute(stmt)
+        async with self._sessionmaker() as session:
+            async with session.begin():
+                stmt = delete(_Process).where(_Process.id == query_id)
+                await session.execute(stmt)
 
     def reset(self) -> None:
         """Reset the mock to its initial state."""
@@ -336,8 +332,9 @@ class MockQserv:
         self._check_auth(request)
         self._check_version(request)
         assert self._results_stored
-        async with self._session.begin():
-            await self._session.execute(delete(_Result))
+        async with self._sessionmaker() as session:
+            async with session.begin():
+                await session.execute(delete(_Result))
         self._results_stored = False
         return Response(200, json={"success": 1}, request=request)
 
@@ -457,12 +454,13 @@ class MockQserv:
         self._respx_mock.put(url).mock(side_effect=self.upload)
         assert not self._results_stored
         data = read_test_json("results/data")
-        async with self._session.begin():
-            for row in data:
-                if row["j"] is not None:
-                    row["j"] = datetime.fromisoformat(row["j"] + "Z")
-                result = _Result(**row)
-                self._session.add(result)
+        async with self._sessionmaker() as session:
+            async with session.begin():
+                for row in data:
+                    if row["j"] is not None:
+                        row["j"] = datetime.fromisoformat(row["j"] + "Z")
+                    result = _Result(**row)
+                    session.add(result)
         self._results_stored = True
         self._expected_job = job
 
@@ -506,15 +504,16 @@ class MockQserv:
                 last_update=now,
             )
             self._queries[query_id] = status
-            async with self._session.begin():
-                process = _Process(
-                    id=query_id,
-                    submitted=now,
-                    updated=now,
-                    chunks=status.total_chunks,
-                    chunks_comp=status.completed_chunks,
-                )
-                self._session.add(process)
+            async with self._sessionmaker() as session:
+                async with session.begin():
+                    process = _Process(
+                        id=query_id,
+                        submitted=now,
+                        updated=now,
+                        chunks=status.total_chunks,
+                        chunks_comp=status.completed_chunks,
+                    )
+                    session.add(process)
         return Response(
             200, json={"success": 1, "query_id": query_id}, request=request
         )
@@ -533,14 +532,15 @@ class MockQserv:
         """
         assert query_id in self._queries
         if status.status == AsyncQueryPhase.EXECUTING:
-            async with self._session.begin():
-                stmt = select(_Process).where(_Process.id == query_id)
-                results = await self._session.execute(stmt)
-                process = results.scalars().first()
-                assert process
-                assert status.last_update
-                process.updated = datetime_to_db(status.last_update)
-                process.chunks_comp = status.completed_chunks
+            async with self._sessionmaker() as session:
+                async with session.begin():
+                    stmt = select(_Process).where(_Process.id == query_id)
+                    results = await session.execute(stmt)
+                    process = results.scalars().first()
+                    assert process
+                    assert status.last_update
+                    process.updated = datetime_to_db(status.last_update)
+                    process.chunks_comp = status.completed_chunks
         else:
             await self.remove_running_query(query_id)
         self._queries[query_id] = status
@@ -696,8 +696,8 @@ async def register_mock_qserv(
     MockQserv
         Mock Qserv API object.
     """
-    session = await create_async_session(engine, get_logger("qservkafka"))
-    mock = MockQserv(session, respx_mock, flaky=flaky)
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    mock = MockQserv(sessionmaker, respx_mock, flaky=flaky)
     base = re.escape(str(base_url).rstrip("/"))
     regex = rf"{base}/query-async"
     respx_mock.post(url__regex=regex).mock(side_effect=mock.submit)

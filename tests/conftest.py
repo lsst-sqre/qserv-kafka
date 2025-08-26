@@ -15,7 +15,7 @@ from faststream.kafka import KafkaBroker, TestKafkaBroker
 from httpx import ASGITransport, AsyncClient
 from pydantic import MySQLDsn, RedisDsn, SecretStr
 from safir.arq import ArqMode
-from safir.database import create_async_session, create_database_engine
+from safir.database import create_database_engine
 from safir.kafka import KafkaConnectionSettings, SecurityProtocol
 from safir.logging import configure_logging
 from safir.testing.containers import FullKafkaContainer
@@ -99,8 +99,7 @@ async def factory(
     async with TestKafkaBroker(kafka_broker) as mock_broker:
         context = await ProcessContext.create(mock_broker)
         async with aclosing(context):
-            session = await create_async_session(engine, logger)
-            yield Factory(context, session, logger)
+            yield Factory(context, logger)
     await kafka_broker.stop()
 
 

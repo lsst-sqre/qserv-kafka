@@ -15,7 +15,7 @@ from safir.arq import ArqMode, ArqQueue, MockArqQueue, RedisArqQueue
 from safir.database import create_database_engine
 from safir.metrics import EventManager
 from safir.redis import PydanticRedisStorage
-from sqlalchemy.ext.asyncio import AsyncEngine, async_scoped_session
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from structlog import get_logger
 from structlog.stdlib import BoundLogger
 
@@ -56,6 +56,9 @@ class ProcessContext:
 
     engine: AsyncEngine
     """Database engine."""
+
+    sessionmaker: async_sessionmaker
+    """Factory for database sessions."""
 
     kafka_broker: KafkaBroker
     """Kafka broker to use for publishing messages from background jobs."""
@@ -155,6 +158,7 @@ class ProcessContext:
         return cls(
             http_client=http_client,
             engine=engine,
+            sessionmaker=async_sessionmaker(engine, expire_on_commit=False),
             kafka_broker=kafka_broker,
             event_manager=event_manager,
             gafaelfawr_client=gafaelfawr_client,
@@ -185,8 +189,6 @@ class Factory:
     ----------
     context
         Shared process context.
-    session
-        Database session.
     logger
         Logger to use for errors.
     """
@@ -194,11 +196,9 @@ class Factory:
     def __init__(
         self,
         context: ProcessContext,
-        session: async_scoped_session,
         logger: BoundLogger,
     ) -> None:
         self._context = context
-        self._session = session
         self._logger = logger
 
     @property
@@ -235,7 +235,7 @@ class Factory:
             Client for the Qserv API.
         """
         return QservClient(
-            session=self._session,
+            sessionmaker=self._context.sessionmaker,
             http_client=self._context.http_client,
             events=self._context.events,
             logger=self._logger,
