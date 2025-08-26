@@ -302,8 +302,9 @@ class QueryService:
                 error=e.to_job_error(),
                 metadata=metadata,
             )
+        created = datetime.now(tz=UTC)
         logger.info("Started query", qserv_id=str(query_id))
 
         # Analyze the initial status and return it.
-        query = Query(query_id=query_id, job=job, start=start)
+        query = Query(query_id=query_id, job=job, start=start, created=created)
         return await self._results.build_query_status(query, initial=True)
