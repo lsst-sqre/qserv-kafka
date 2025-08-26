@@ -240,6 +240,11 @@ class ResultProcessor:
         except (QservApiError, UploadWebError, TimeoutError) as e:
             return await self._build_exception_status(query, e)
 
+        # Can be removed and created made non-optional after the upgrade is
+        # fully deployed.
+        if not query.created:
+            query.created = query.start
+
         # Send a metrics event for the job completion and log it.
         now = datetime.now(tz=UTC)
         qserv_end = query.status.last_update or now

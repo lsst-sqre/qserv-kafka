@@ -24,6 +24,10 @@ class Query(BaseModel):
 
     start: Annotated[datetime, Field(title="Receipt time of query")]
 
+    created: Annotated[
+        datetime | None, Field(title="Creation time of Qserv query")
+    ] = None
+
     job: Annotated[JobRun, Field(title="Full job request")]
 
     def to_logging_context(self) -> dict[str, Any]:
@@ -40,8 +44,6 @@ class RunningQuery(Query):
     """Represents a running Qserv query with a known status."""
 
     status: Annotated[AsyncQueryStatus, Field(title="Last known status")]
-
-    created: Annotated[datetime, Field(title="Creation time of Qserv query")]
 
     result_queued: Annotated[
         bool, Field(title="Whether queued for result procesing")
@@ -66,7 +68,7 @@ class RunningQuery(Query):
         return cls(
             query_id=query.query_id,
             start=query.start,
-            created=datetime.now(tz=UTC),
+            created=query.created,
             job=query.job,
             status=status,
             result_queued=False,
