@@ -41,6 +41,8 @@ class RunningQuery(Query):
 
     status: Annotated[AsyncQueryStatus, Field(title="Last known status")]
 
+    created: Annotated[datetime, Field(title="Creation time of Qserv query")]
+
     result_queued: Annotated[
         bool, Field(title="Whether queued for result procesing")
     ]
@@ -64,6 +66,7 @@ class RunningQuery(Query):
         return cls(
             query_id=query.query_id,
             start=query.start,
+            created=datetime.now(tz=UTC),
             job=query.job,
             status=status,
             result_queued=False,

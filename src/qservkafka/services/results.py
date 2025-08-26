@@ -249,12 +249,14 @@ class ResultProcessor:
             qserv_rate = query.status.collected_bytes / qserv_elapsed_sec
         else:
             qserv_rate = None
+        submit_elapsed = query.created - query.start
         event = QuerySuccessEvent(
             job_id=query.job.job_id,
             username=query.job.owner,
             elapsed=now - query.start,
             qserv_elapsed=qserv_elapsed,
             result_elapsed=stats.elapsed,
+            submit_elapsed=submit_elapsed,
             rows=stats.rows,
             qserv_size=query.status.collected_bytes,
             encoded_size=stats.data_bytes,
@@ -274,6 +276,7 @@ class ResultProcessor:
             elapsed=(now - query.start).total_seconds(),
             qserv_elapsed=qserv_elapsed_sec,
             result_elapsed=stats.elapsed.total_seconds(),
+            submit_elapsed=submit_elapsed.total_seconds(),
         )
 
         # Delete the results.

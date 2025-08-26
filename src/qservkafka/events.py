@@ -57,7 +57,7 @@ class QuerySuccessEvent(BaseQueryEvent):
 
     elapsed: timedelta = Field(
         ...,
-        title="Query time (seconds)",
+        title="Query time",
         description=(
             "Time elapsed from initial receipt of the Kafka request to upload"
             " of results and sending of the completion Kafka message"
@@ -66,15 +66,24 @@ class QuerySuccessEvent(BaseQueryEvent):
 
     qserv_elapsed: timedelta = Field(
         ...,
-        title="Qserv processing time (seconds)",
+        title="Qserv processing time",
         description="How long it took for Qserv to process the query",
     )
 
     result_elapsed: timedelta = Field(
         ...,
-        title="Result processing time (seconds)",
+        title="Result processing time",
         description=(
             "How long it took to retrieve, encode, and upload the results"
+        ),
+    )
+
+    submit_elapsed: timedelta = Field(
+        ...,
+        title="Job submission time",
+        description=(
+            "How long it took from receipt of the Kafka message to successful"
+            " creation of the query job in Qserv"
         ),
     )
 
