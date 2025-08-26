@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy.ext.asyncio import async_scoped_session
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
@@ -22,7 +21,6 @@ async def handle_finished_query(ctx: dict[Any, Any], query_id: int) -> None:
         Qserv query ID of completed query.
     """
     factory: Factory = ctx["factory"]
-    session: async_scoped_session = ctx["session"]
     logger: BoundLogger = ctx["logger"]
     state = factory.create_query_state_store()
 
@@ -30,10 +28,7 @@ async def handle_finished_query(ctx: dict[Any, Any], query_id: int) -> None:
     if not query:
         return
     processor = factory.create_result_processor()
-    try:
-        status = await processor.build_query_status(query)
-    finally:
-        await session.remove()
+    status = await processor.build_query_status(query)
     if status.status == ExecutionPhase.EXECUTING:
         logger.warning(
             "Apparently completed job still executing",

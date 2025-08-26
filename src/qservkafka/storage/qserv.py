@@ -21,7 +21,7 @@ from safir.database import datetime_from_db
 from safir.slack.blockkit import SlackWebException
 from sqlalchemy import Row, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import async_scoped_session
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from structlog.stdlib import BoundLogger
 
 from ..config import config
@@ -178,8 +178,8 @@ class QservClient:
 
     Parameters
     ----------
-    session
-        Database session.
+    sessionmaker
+        Factory for database sessions.
     http_client
         HTTP client to use.
     events
@@ -200,7 +200,7 @@ class QservClient:
     def __init__(
         self,
         *,
-        session: async_scoped_session,
+        sessionmaker: async_sessionmaker,
         http_client: AsyncClient,
         events: Events,
         logger: BoundLogger,
@@ -208,7 +208,7 @@ class QservClient:
         self.events = events
         self.logger = logger
 
-        self._session = session
+        self._sessionmaker = sessionmaker
         self._client = http_client
 
     async def cancel_query(self, query_id: int) -> None:
@@ -319,14 +319,15 @@ class QservClient:
         stmt = text(_query_results_sql(query_id))
         results = None
         try:
-            async with self._session.begin():
-                results = await self._session.stream(stmt)
-                results = results.yield_per(100)
-                try:
-                    async for result in results:
-                        yield result
-                finally:
-                    await results.close()
+            async with self._sessionmaker() as session:
+                async with session.begin():
+                    results = await session.stream(stmt)
+                    results = results.yield_per(100)
+                    try:
+                        async for result in results:
+                            yield result
+                    finally:
+                        await results.close()
         except SQLAlchemyError as e:
             raise QservApiSqlError.from_exception(e) from e
 
@@ -362,23 +363,24 @@ class QservClient:
             Raised if there was some error retrieving status.
         """
         try:
-            async with self._session.begin():
-                result = await self._session.stream(text(_query_list_sql()))
-                processes = {}
-                try:
-                    async for row in result:
-                        msg = "Saw running query"
-                        self.logger.debug(msg, query=row._asdict())
-                        processes[row.id] = AsyncProcessStatus(
-                            query_id=row.id,
-                            status=AsyncQueryPhase.EXECUTING,
-                            total_chunks=row.chunks,
-                            completed_chunks=row.chunks_comp,
-                            query_begin=datetime_from_db(row.submitted),
-                            last_update=datetime_from_db(row.updated),
-                        )
-                finally:
-                    await result.close()
+            async with self._sessionmaker() as session:
+                async with session.begin():
+                    result = await session.stream(text(_query_list_sql()))
+                    processes = {}
+                    try:
+                        async for row in result:
+                            msg = "Saw running query"
+                            self.logger.debug(msg, query=row._asdict())
+                            processes[row.id] = AsyncProcessStatus(
+                                query_id=row.id,
+                                status=AsyncQueryPhase.EXECUTING,
+                                total_chunks=row.chunks,
+                                completed_chunks=row.chunks_comp,
+                                query_begin=datetime_from_db(row.submitted),
+                                last_update=datetime_from_db(row.updated),
+                            )
+                    finally:
+                        await result.close()
         except SQLAlchemyError as e:
             raise QservApiSqlError.from_exception(e) from e
         self.logger.debug("Listed running queries", count=len(processes))

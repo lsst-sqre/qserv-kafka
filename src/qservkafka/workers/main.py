@@ -6,7 +6,6 @@ import uuid
 from collections.abc import Callable
 from typing import Any, ClassVar
 
-from safir.database import create_async_session
 from safir.logging import configure_logging
 from safir.metrics.arq import initialize_arq_metrics, make_on_job_start
 from structlog import get_logger
@@ -39,9 +38,7 @@ async def startup(ctx: dict[Any, Any]) -> None:
         context = ctx["context"]
     else:
         context = await ProcessContext.create()
-
-    session = await create_async_session(context.engine)
-    factory = Factory(context, session, logger)
+    factory = Factory(context, logger)
 
     # Metrics initialization must be done exactly once. If not done at all,
     # the on_job_start function fails; if done more than once, Safir's metrics
@@ -53,7 +50,6 @@ async def startup(ctx: dict[Any, Any]) -> None:
         ctx["metrics_initialized"] = True
 
     ctx["context"] = context
-    ctx["session"] = session
     ctx["factory"] = factory
     ctx["logger"] = logger
 

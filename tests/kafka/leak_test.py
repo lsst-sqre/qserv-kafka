@@ -129,6 +129,7 @@ async def test_leak(
 
         # Delete as much known stored data as possible, force garbage
         # collection, and then stop tracing memory and gather usage.
+        del arq_worker
         mock_qserv.reset()
         respx_mock.reset()
         gc.collect()
@@ -136,8 +137,8 @@ async def test_leak(
 
         # In practice memory usage change is never zero because Python and its
         # libraries aggressively cache a lot of objects. Fail only if more
-        # than 700KB was leaked.
-        limit = 700_000
+        # than 300KiB was leaked.
+        limit = 300_000
         if end_usage - start_usage >= limit:
             snapshot = tracemalloc.take_snapshot()
             top_stats = snapshot.statistics("lineno")
