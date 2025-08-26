@@ -104,6 +104,7 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
         "elapsed": ANY,
         "qserv_elapsed": ANY,
         "result_elapsed": ANY,
+        "submit_elapsed": ANY,
         "rows": 2,
         "qserv_size": 250,
         "encoded_size": len(read_test_data("results/data.binary2")),
@@ -123,7 +124,12 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
         "upload_tables": 0,
         "immediate": True,
     }
-    for field in ("elapsed", "qserv_elapsed", "result_elapsed"):
+    for field in (
+        "elapsed",
+        "qserv_elapsed",
+        "result_elapsed",
+        "submit_elapsed",
+    ):
         assert timedelta(seconds=0) <= getattr(success_event, field) <= elapsed
 
     # It should be possible to immediately run the same query again. This
@@ -335,6 +341,7 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
         "elapsed": ANY,
         "qserv_elapsed": ANY,
         "result_elapsed": ANY,
+        "submit_elapsed": ANY,
         "rows": 2,
         "qserv_size": 250,
         "encoded_size": len(read_test_data("results/data.binary2")),

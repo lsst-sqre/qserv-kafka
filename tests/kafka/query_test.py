@@ -86,6 +86,7 @@ async def test_success(
         "elapsed": ANY,
         "qserv_elapsed": ANY,
         "result_elapsed": ANY,
+        "submit_elapsed": ANY,
         "rows": 2,
         "qserv_size": qserv_status.collected_bytes,
         "encoded_size": ANY,
