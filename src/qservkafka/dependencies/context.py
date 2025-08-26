@@ -3,12 +3,10 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from aiojobs import Scheduler
 from faststream.kafka.fastapi import KafkaMessage
 from structlog import get_logger
 from structlog.stdlib import BoundLogger
 
-from ..config import config
 from ..factory import Factory, ProcessContext
 
 __all__ = [
@@ -28,9 +26,6 @@ class ConsumerContext:
     factory: Factory
     """The component factory."""
 
-    scheduler: Scheduler
-    """Scheduler that manages the query processing tasks."""
-
 
 class ContextDependency:
     """Provide per-message context as a dependency for a FastStream consumer.
@@ -43,11 +38,10 @@ class ContextDependency:
 
     def __init__(self) -> None:
         self._process_context: ProcessContext | None = None
-        self._scheduler: Scheduler | None = None
 
     async def __call__(self, message: KafkaMessage) -> ConsumerContext:
         """Create a per-request context."""
-        if not self._process_context or self._scheduler is None:
+        if not self._process_context:
             raise RuntimeError("Context dependency not initialized")
 
         # The underlying Kafka messages can either be a single message or a
@@ -71,14 +65,10 @@ class ContextDependency:
         return ConsumerContext(
             logger=logger,
             factory=Factory(self._process_context, logger),
-            scheduler=self._scheduler,
         )
 
     async def aclose(self) -> None:
         """Clean up the per-process singletons."""
-        if self._scheduler is not None:
-            await self._scheduler.wait_and_close()
-            self._scheduler = None
         if self._process_context:
             await self._process_context.aclose()
         self._process_context = None
@@ -95,18 +85,16 @@ class ContextDependency:
         Factory
             Newly-constructed factory.
         """
-        if not self._process_context or self._scheduler is None:
+        if not self._process_context:
             raise RuntimeError("Context dependency not initialized")
         logger = get_logger("qservkafka")
         return Factory(self._process_context, logger)
 
     async def initialize(self) -> None:
         """Initialize the process-wide shared context."""
-        if self._process_context or self._scheduler is not None:
+        if self._process_context:
             await self.aclose()
         self._process_context = await ProcessContext.create()
-        timeout = config.result_timeout.total_seconds()
-        self._scheduler = Scheduler(wait_timeout=timeout)
 
 
 context_dependency = ContextDependency()
