@@ -70,22 +70,16 @@ def _query_list_sql() -> str:
     """.strip()
 
 
-def _query_results_sql(query_id: int) -> str:
+def _query_results_sql() -> str:
     """Generate the SQL query to get Qserv query results.
-
-    Parameters
-    ----------
-    query_id
-        Qserv query ID.
 
     Returns
     -------
     str
-        SQL that returns the results of that query.
+        SQL that returns the results of that query. The ``:id`` bind variable
+        must be set to the query ID.
     """
-    if not isinstance(query_id, int):
-        raise TypeError(f'query_id "{query_id}" is not int')
-    return f"SELECT * FROM qserv_result({query_id!s})"  # noqa: S608
+    return "SELECT * FROM qserv_result(:id)"
 
 
 @overload
@@ -316,12 +310,12 @@ class QservClient:
         QservApiSqlError
             Raised if there was some error retrieving results.
         """
-        stmt = text(_query_results_sql(query_id))
+        stmt = text(_query_results_sql())
         results = None
         try:
             async with self._sessionmaker() as session:
                 async with session.begin():
-                    results = await session.stream(stmt)
+                    results = await session.stream(stmt, {"id": query_id})
                     results = results.yield_per(100)
                     try:
                         async for result in results:
