@@ -23,7 +23,6 @@ from .config import config
 from .constants import (
     REDIS_BACKOFF_MAX,
     REDIS_BACKOFF_START,
-    REDIS_POOL_SIZE,
     REDIS_POOL_TIMEOUT,
     REDIS_RETRIES,
     REDIS_TIMEOUT,
@@ -115,7 +114,7 @@ class ProcessContext:
         redis_pool = BlockingConnectionPool.from_url(
             str(config.redis_url),
             password=redis_password,
-            max_connections=REDIS_POOL_SIZE,
+            max_connections=config.redis_max_connections,
             retry=Retry(backoff, REDIS_RETRIES),
             retry_on_timeout=True,
             socket_keepalive=True,

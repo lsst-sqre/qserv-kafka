@@ -70,7 +70,17 @@ class Config(BaseSettings):
         "lsst.tap.job-delete", title="Topic for job cancellation requests"
     )
 
-    job_run_batch_size: int = Field(20, title="Batch size for job requests")
+    job_run_batch_size: int = Field(10, title="Batch size for job requests")
+
+    job_run_max_bytes: int = Field(
+        10 * 1024 * 1024,
+        title="Batch size in bytes for job requests",
+        description=(
+            "Wide queries may result in Kafka messages that are 500KiB or"
+            " larger, so this number should be at least the batch size"
+            " times the maximum typical size of a query request"
+        ),
+    )
 
     job_run_topic: str = Field(
         "lsst.tap.job-run", title="Topic for job requests"
@@ -85,7 +95,12 @@ class Config(BaseSettings):
     )
 
     max_worker_jobs: int = Field(
-        5, title="Simultaneous result worker jobs per pod"
+        2,
+        title="Concurrent result worker jobs per pod",
+        description=(
+            "Result workers can only use one CPU and are CPU-bound, so setting"
+            " this value higher than 2 will normally not be helpful"
+        ),
     )
 
     metrics: MetricsConfiguration = Field(
@@ -97,6 +112,16 @@ class Config(BaseSettings):
 
     profile: Profile = Field(
         Profile.production, title="Application logging profile"
+    )
+
+    redis_max_connections: int = Field(
+        15,
+        title="Redis connection pool size",
+        description=(
+            "Should be larger than the batch size to handle simultaneous"
+            " quota requests for the batch, plus an extra connection for"
+            " the background monitor and another for cancel messages"
+        ),
     )
 
     redis_password: SecretStr = Field(
@@ -114,7 +139,7 @@ class Config(BaseSettings):
     )
 
     qserv_database_overflow: int = Field(
-        100,
+        20,
         title="Qserv MySQL connection overflow",
         description=(
             "The maximum number of connections to open to the Qserv MySQL"
@@ -125,7 +150,7 @@ class Config(BaseSettings):
     )
 
     qserv_database_pool_size: int = Field(
-        20,
+        10,
         title="Qserv MySQL pool size",
         description=(
             "Number of Qserv MySQL connections to keep open. The number of"
@@ -143,11 +168,13 @@ class Config(BaseSettings):
     )
 
     qserv_rest_max_connections: int = Field(
-        20,
+        15,
         title="Max Qserv REST API connections",
         description=(
             "How many connections the bridge will open to the Qserv REST API"
-            " simultaneously"
+            " simultaneously. This should be set to a little larger than the"
+            " job run queue batch size to provide some headroom for the"
+            " job monitor and any cancel processing."
         ),
     )
 
