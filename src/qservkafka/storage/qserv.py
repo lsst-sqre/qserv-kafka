@@ -607,6 +607,7 @@ class QservClient:
             params["version"] = str(API_VERSION)
         body_dict = body.model_dump(mode="json", exclude_none=True)
         url = str(config.qserv_rest_url).rstrip("/") + route
+        start = datetime.now(tz=UTC)
         try:
             r = await self._client.post(
                 url,
@@ -616,7 +617,11 @@ class QservClient:
             )
             r.raise_for_status()
             self.logger.debug(
-                "Qserv API reply", method="POST", url=url, result=r.json()
+                "Qserv API reply",
+                method="POST",
+                url=url,
+                result=r.json(),
+                elapsed=(datetime.now(tz=UTC) - start).total_seconds(),
             )
             return self._parse_response(url, r, result_type)
         except HTTPError as e:
