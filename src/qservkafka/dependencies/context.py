@@ -63,7 +63,8 @@ class ContextDependency:
 
         # Return the per-message context.
         return ConsumerContext(
-            logger=logger, factory=Factory(self._process_context, logger)
+            logger=logger,
+            factory=Factory(self._process_context, logger),
         )
 
     async def aclose(self) -> None:

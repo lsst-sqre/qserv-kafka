@@ -83,7 +83,11 @@ async def wait_for_status(
 
     # Get the status message from Kafka and do the equality check
     raw_message = await kafka_status_consumer.getone()
-    message = json.loads(raw_message.value.decode())
+    try:
+        message = json.loads(raw_message.value.decode())
+    except json.JSONDecodeError as e:
+        msg = f"cannot decode message {raw_message.value.decode()}"
+        raise AssertionError(msg) from e
     assert message == expected
 
     # Check the timestamps and update the model to match the received message.

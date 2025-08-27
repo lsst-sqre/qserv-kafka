@@ -70,6 +70,8 @@ class Config(BaseSettings):
         "lsst.tap.job-delete", title="Topic for job cancellation requests"
     )
 
+    job_run_batch_size: int = Field(20, title="Batch size for job requests")
+
     job_run_topic: str = Field(
         "lsst.tap.job-run", title="Topic for job requests"
     )
