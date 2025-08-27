@@ -52,6 +52,8 @@ def register_kafka_handlers(kafka_router: KafkaRouter) -> None:
         config.job_run_topic,
         auto_offset_reset="earliest",
         batch=True,
+        fetch_max_bytes=config.job_run_max_bytes,
+        max_partition_fetch_bytes=config.job_run_max_bytes,
         group_id=config.consumer_group_id,
         max_records=config.job_run_batch_size,
     )(job_run)
