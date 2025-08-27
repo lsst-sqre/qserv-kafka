@@ -7,6 +7,26 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-3.1.0'></a>
+## 3.1.0 (2025-08-27)
+
+### New features
+
+- Accept batches of query jobs up to a configurable batch size and send them to Qserv in parallel to increase throughput. The size of the batch is controlled by the new configuration setting `job_run_batch_size`. The Qserv Kafka bridge previously was not keeping up with large numbers of small, wide queries.
+- Add a new configuration setting, `job_run_max_bytes`, to increase the size of a batch the bridge will read from Kafka at one time.
+- Add a new configuration setting, `redis_max_connections`, to tune the size of the Redis connection pool.
+
+### Bug fixes
+
+- Update collation for user tables to `utf8mb4_uca1400_ai_ci`, which uses a newer version of the Unicode standard.
+- Change the default for `max_worker_jobs` to 2, matching the Phalanx configuration. Because worker jobs are CPU-bound, there's rarely a reason to increase the number of jobs per worker higher than this.
+- Changed the defaults for the Qserv database connection pool and REST connection pool to align with the default for the message batch size.
+- Limit the Qserv database connection pool size in remote workers to the number of simultaneous jobs that worker is willing to handle, rather than using the full pool size of the frontend (which is massive overkill for a typical worker).
+
+### Other changes
+
+- Add `submit_elapsed` to successful query metrics, which tracks the elapsed time from the receipt of the query to successfully starting the query in Qserv.
+
 <a id='changelog-3.0.0'></a>
 ## 3.0.0 (2025-08-22)
 
