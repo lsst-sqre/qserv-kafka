@@ -268,16 +268,14 @@ class QservClient:
         -----
         We delete the entire user database for each job rather than deleting
         individual tables because we've now moved to creating a new database
-        for each new job.
-        The reason for this change is that in the current implementation of
-        QServ a failed upload can lead to a state where the user can no
-        longer upload tables to that database.
-        Also if a user attempts two simultaneous uploads, this could also
-        trigger a similar problem leaving the database in a problematic state.
-        So with a short lived database for each upload, it is now simpler
-        to just delete the whole temporary database once the job is
-        completed.
+        for each new job. This is because a failed upload can currently leave
+        Qserv in a state where the user can no longer upload tables to that
+        database. Also, if a user attempts two simultaneous uploads, that
+        could trigger a similar problem.
 
+        With a short lived database for each upload, we can delete the entire
+        temporary database oncd the job is completed and not have to worry
+        about interactions with other queries.
 
         Raises
         ------
