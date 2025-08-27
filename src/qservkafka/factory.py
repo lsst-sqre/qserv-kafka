@@ -78,6 +78,8 @@ class ProcessContext:
     async def create(
         cls,
         kafka_broker: KafkaBroker | None = None,
+        *,
+        qserv_database_pool_size: int | None = None,
     ) -> Self:
         """Create a new process context from a database engine.
 
@@ -85,12 +87,19 @@ class ProcessContext:
         ----------
         kafka_broker
             If not `None`, use this Kafka broker instead of making a new one.
+        qserv_database_pool_size
+            If not `None`, override the default database pool size. This is
+            used by result workers, since they only need one connection per
+            worker job.
 
         Returns
         -------
         ProcessContext
             Shared context for a Qserv Kafka bridge process.
         """
+        if not qserv_database_pool_size:
+            qserv_database_pool_size = config.qserv_database_pool_size
+
         # Qserv currently uses a self-signed certificate.
         limits = Limits(max_connections=config.qserv_rest_max_connections)
         http_client = AsyncClient(
@@ -129,7 +138,7 @@ class ProcessContext:
             config.qserv_database_password,
             connect_args={"ssl": ssl_context},
             max_overflow=config.qserv_database_overflow,
-            pool_size=config.qserv_database_pool_size,
+            pool_size=qserv_database_pool_size,
         )
 
         # Create a Kafka broker used for background tasks. This needs to be a

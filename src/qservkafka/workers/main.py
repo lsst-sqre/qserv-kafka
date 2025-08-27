@@ -37,7 +37,9 @@ async def startup(ctx: dict[Any, Any]) -> None:
     if "context" in ctx:
         context = ctx["context"]
     else:
-        context = await ProcessContext.create()
+        context = await ProcessContext.create(
+            qserv_database_pool_size=config.max_worker_jobs
+        )
     factory = Factory(context, logger)
 
     # Metrics initialization must be done exactly once. If not done at all,
