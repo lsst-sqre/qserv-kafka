@@ -18,6 +18,7 @@ from typing import Any, Concatenate, overload
 from httpx import AsyncClient, HTTPError, Response
 from pydantic import BaseModel, ValidationError
 from safir.database import datetime_from_db
+from safir.datetime import format_datetime_for_logging
 from safir.slack.blockkit import SlackWebException
 from sqlalchemy import Row, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -462,13 +463,19 @@ class QservClient:
         else:
             params = None
         url = str(config.qserv_rest_url).rstrip("/") + route
+        start = datetime.now(tz=UTC)
         try:
             r = await self._client.delete(
                 url, params=params, auth=config.rest_authentication
             )
             r.raise_for_status()
             self.logger.debug(
-                "Qserv API reply", method="DELETE", url=url, result=r.json()
+                "Qserv API reply",
+                method="DELETE",
+                url=url,
+                result=r.json(),
+                start=format_datetime_for_logging(start),
+                elapsed=(datetime.now(tz=UTC) - start).total_seconds(),
             )
             self._parse_response(url, r, BaseResponse)
         except HTTPError as e:
@@ -621,6 +628,7 @@ class QservClient:
                 method="POST",
                 url=url,
                 result=r.json(),
+                start=format_datetime_for_logging(start),
                 elapsed=(datetime.now(tz=UTC) - start).total_seconds(),
             )
             return self._parse_response(url, r, result_type)
