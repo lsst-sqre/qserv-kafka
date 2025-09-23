@@ -6,10 +6,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import ANY
 
 from qservkafka.models.kafka import JobCancel, JobRun, JobStatus
 from qservkafka.models.qserv import AsyncQueryStatus
+
+from ..support.constants import ANY_DATETIME, ANY_OPTIONAL_DATETIME
 
 __all__ = [
     "read_test_data",
@@ -129,11 +130,11 @@ def read_test_job_status(filename: str) -> JobStatus:
         Parsed contents of the file.
     """
     result = JobStatus.model_validate(read_test_json(f"status/{filename}"))
-    result.timestamp = ANY
+    result.timestamp = ANY_DATETIME
     if result.query_info:
-        result.query_info.start_time = ANY
+        result.query_info.start_time = ANY_DATETIME
         if result.query_info.end_time:
-            result.query_info.end_time = ANY
+            result.query_info.end_time = ANY_OPTIONAL_DATETIME
     return result
 
 
@@ -153,11 +154,11 @@ def read_test_job_status_json(filename: str) -> dict[str, Any]:
     """
     model = JobStatus.model_validate(read_test_json(f"status/{filename}"))
     result = model.model_dump(mode="json")
-    result["timestamp"] = ANY
+    result["timestamp"] = ANY_DATETIME
     if result.get("queryInfo"):
-        result["queryInfo"]["startTime"] = ANY
+        result["queryInfo"]["startTime"] = ANY_DATETIME
         if result["queryInfo"].get("endTime"):
-            result["queryInfo"]["endTime"] = ANY
+            result["queryInfo"]["endTime"] = ANY_DATETIME
     return result
 
 
