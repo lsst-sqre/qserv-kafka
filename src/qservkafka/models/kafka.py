@@ -36,6 +36,8 @@ __all__ = [
     "JobErrorCode",
     "JobMetadata",
     "JobQueryInfo",
+    "JobResultColumnType",
+    "JobResultConfig",
     "JobResultEnvelope",
     "JobResultFormat",
     "JobResultInfo",
@@ -117,6 +119,7 @@ class JobResultType(StrEnum):
     """Possible types for the output format of results."""
 
     VOTable = "VOTable"
+    Parquet = "Parquet"
 
 
 class JobResultSerialization(StrEnum):
@@ -138,12 +141,13 @@ class JobResultFormat(BaseModel):
     ]
 
     serialization: Annotated[
-        JobResultSerialization,
+        JobResultSerialization | None,
         Field(
             title="Serialization of result",
-            description="Serialization format of the result",
+            description="Serialization format of the result "
+            "(only applies to VOTable output)",
         ),
-    ]
+    ] = None
 
 
 class JobResultColumnType(BaseModel):
