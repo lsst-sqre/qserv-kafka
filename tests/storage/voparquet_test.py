@@ -90,13 +90,8 @@ async def assert_parquet_data(
     try:
         table = pq.read_table(temp_path)
 
-        assert len(table) == expected_rows, (
-            f"Expected {expected_rows} rows, got {len(table)}"
-        )
-        assert list(table.column_names) == expected_columns, (
-            f"Expected columns {expected_columns}"
-            f", got {list(table.column_names)}"
-        )
+        assert len(table) == expected_rows
+        assert list(table.column_names) == expected_columns
 
         if expected_types:
             for col, expected_type in expected_types.items():
@@ -318,9 +313,7 @@ async def test_maxrec_limit() -> None:
         tmp.flush()
         table = pq.read_table(tmp.name)
 
-        assert len(table) == 3, (
-            f"Expected 3 rows due to maxrec, got {len(table)}"
-        )
+        assert len(table) == 3
         assert table["obj_id"][0].as_py() == 0
         assert table["obj_id"][2].as_py() == 2
 
@@ -355,12 +348,8 @@ async def test_encoder_properties() -> None:
 
     chunks = [chunk async for chunk in encoder.encode(data_generator(data))]
 
-    assert encoder.total_rows == 5, (
-        f"Expected 5 rows, got {encoder.total_rows}"
-    )
-    assert encoder.encoded_size > 0, "Encoded size should be positive"
+    assert encoder.total_rows == 5
+    assert encoder.encoded_size > 0
 
     total_size = sum(len(chunk) for chunk in chunks)
-    assert encoder.encoded_size == total_size, (
-        "Encoded size should match actual data size"
-    )
+    assert encoder.encoded_size == total_size

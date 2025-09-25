@@ -110,6 +110,14 @@ class Config(BaseSettings):
 
     name: str = Field("qserv-kafka", title="Name of application")
 
+    parquet_batch_size: int = Field(
+        2000,
+        title="VOParquet encoding batch size",
+        description=(
+            "Number of rows to batch together when encoding Parquet files."
+        ),
+    )
+
     profile: Profile = Field(
         Profile.production, title="Application logging profile"
     )
