@@ -9,6 +9,7 @@ from datetime import timedelta
 from enum import Enum
 from typing import Annotated, Any, Self
 
+import pyarrow as pa
 from pydantic import BaseModel, Field, PlainSerializer, PlainValidator
 
 __all__ = [
@@ -89,22 +90,30 @@ class VOTablePrimitive(Enum):
     is set for that type.
     """
 
-    boolean = ("boolean", "1s")
-    char = ("char", "c")
-    unicode_char = ("unicodeChar", "2s")
-    double = ("double", ">d")
-    float = ("float", ">f")
-    short = ("short", ">h")
-    int = ("int", ">l")
-    long = ("long", ">q")
+    boolean = ("boolean", "1s", pa.bool_())
+    char = ("char", "c", pa.string())
+    unicode_char = ("unicodeChar", "2s", pa.string())
+    double = ("double", ">d", pa.float64())
+    float = ("float", ">f", pa.float32())
+    short = ("short", ">h", pa.int16())
+    int = ("int", ">l", pa.int32())
+    long = ("long", ">q", pa.int64())
 
     def __new__(cls, *args: Any) -> Self:
         obj = object.__new__(cls)
         obj._value_ = args[0]
         return obj
 
-    def __init__(self, _: str, pack_format: str) -> None:
+    def __init__(
+        self, _: str, pack_format: str, arrow_type: pa.DataType
+    ) -> None:
         self._pack_format = pack_format
+        self._arrow_type = arrow_type
+
+    @property
+    def arrow_type(self) -> pa.DataType:
+        """Get the corresponding PyArrow data type."""
+        return self._arrow_type
 
     def pack(self, value: Any) -> bytes:
         """Serialize a value of the corresponding data type to BINARY2.

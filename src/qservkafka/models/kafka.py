@@ -179,6 +179,20 @@ class JobResultColumnType(BaseModel):
         """Check whether the underlying data type is a string."""
         return self.datatype.is_string()
 
+    def is_array(self) -> bool | None:
+        """Determine if the column is an array.
+
+        Returns
+        -------
+        bool
+            True if the column is an array otherwise False.
+        """
+        if not self.arraysize:
+            return False
+        if self.arraysize.variable:
+            return True
+        return self.arraysize.limit is not None and self.arraysize.limit > 1
+
 
 class JobResultConfig(BaseModel):
     """Configuration for job result."""

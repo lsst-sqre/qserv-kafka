@@ -21,21 +21,14 @@ from ..events import (
     QuerySuccessEvent,
 )
 from ..exceptions import QservApiError, QservApiSqlError, UploadWebError
-from ..models.kafka import (
-    JobError,
-    JobErrorCode,
-    JobResultConfig,
-    JobResultInfo,
-    JobResultType,
-    JobStatus,
-)
+from ..models.kafka import JobError, JobErrorCode, JobResultInfo, JobStatus
 from ..models.qserv import AsyncQueryPhase
 from ..models.state import Query, RunningQuery
 from ..models.votable import UploadStats
 from ..storage.qserv import QservClient
 from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
-from ..storage.votable import OutputFormat, VOTableWriter
+from ..storage.votable import VOTableWriter
 
 __all__ = ["ResultProcessor"]
 
@@ -488,28 +481,16 @@ class ResultProcessor:
         results = self._qserv.get_query_results_gen(query.query_id)
         timeout = config.result_timeout.total_seconds()
 
-        output_format = self._determine_output_format(query.job.result_format)
-
         async with asyncio.timeout(timeout):
             size = await self._votable.store(
                 query.job.result_url,
                 query.job.result_format,
                 results,
-                format_type=output_format,
                 maxrec=query.job.maxrec,
             )
             return UploadStats(
                 elapsed=datetime.now(tz=UTC) - result_start, **asdict(size)
             )
-
-    def _determine_output_format(
-        self, result_config: JobResultConfig
-    ) -> OutputFormat:
-        """Determine output format from job configuration."""
-        if result_config.format.type == JobResultType.Parquet:
-            return OutputFormat.Parquet
-        else:
-            return OutputFormat.VOTable
 
     async def _upload_results_with_retry(
         self, query: RunningQuery, logger: BoundLogger
