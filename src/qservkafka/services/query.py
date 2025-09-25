@@ -18,6 +18,7 @@ from ..models.kafka import (
     JobError,
     JobErrorCode,
     JobResultSerialization,
+    JobResultType,
     JobRun,
     JobStatus,
 )
@@ -157,10 +158,17 @@ class QueryService:
         query_for_logging = metadata.model_dump(mode="json", exclude_none=True)
 
         # Check that the job request is supported.
+        result_type = job.result_format.format.type
         serialization = job.result_format.format.serialization
-        if serialization != JobResultSerialization.BINARY2:
-            msg = f"{serialization} serialization not supported"
-            return self._build_invalid_request_status(job, msg)
+
+        if result_type == JobResultType.VOTable:
+            if not serialization:
+                msg = "VOTable format requires serialization"
+                return self._build_invalid_request_status(job, msg)
+            if serialization != JobResultSerialization.BINARY2:
+                msg = f"{serialization} serialization not supported"
+                return self._build_invalid_request_status(job, msg)
+
         for column in job.result_format.column_types:
             if not column.is_string() and column.arraysize is not None:
                 m = "arraysize only supported for char and unicodeChar fields"

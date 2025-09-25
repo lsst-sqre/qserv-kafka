@@ -22,6 +22,7 @@ from qservkafka.models.kafka import (
 from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
 from qservkafka.storage import qserv
 
+from ..support.constants import ANY_DATETIME, ANY_STRING
 from ..support.data import read_test_job_cancel, read_test_job_run
 from ..support.datetime import assert_approximately_now
 from ..support.qserv import MockQserv
@@ -47,9 +48,9 @@ async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
         error=JobError(code=JobErrorCode.backend_request_error, message=""),
         metadata=job.to_job_metadata(),
     )
-    expected.timestamp = ANY
+    expected.timestamp = ANY_DATETIME
     assert expected.error
-    expected.error.message = ANY
+    expected.error.message = ANY_STRING
     assert status == expected
     assert status.error
     assert "Status 500 from POST" in status.error.message
@@ -96,9 +97,9 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
         error=JobError(code=JobErrorCode.backend_request_error, message=""),
         metadata=job.to_job_metadata(),
     )
-    expected.timestamp = ANY
+    expected.timestamp = ANY_DATETIME
     assert expected.error
-    expected.error.message = ANY
+    expected.error.message = ANY_STRING
     assert status == expected
     assert status.error
     assert "Status 500 from GET" in status.error.message
@@ -197,7 +198,7 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
         ),
         metadata=job.to_job_metadata(),
     )
-    expected.timestamp = ANY
+    expected.timestamp = ANY_DATETIME
     assert expected.error
     assert status == expected
 
@@ -214,7 +215,7 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
         ),
         metadata=job.to_job_metadata(),
     )
-    expected.timestamp = ANY
+    expected.timestamp = ANY_DATETIME
     assert status == expected
 
     assert await state_store.get_active_queries() == set()
@@ -244,8 +245,8 @@ async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
         metadata=job.to_job_metadata(),
     )
     assert expected.error
-    expected.error.message = ANY
-    expected.timestamp = ANY
+    expected.error.message = ANY_STRING
+    expected.timestamp = ANY_DATETIME
     assert status == expected
     assert_approximately_now(status.timestamp)
 
@@ -280,7 +281,7 @@ async def test_upload_timeout(
         ),
         metadata=job.to_job_metadata(),
     )
-    expected.timestamp = ANY
+    expected.timestamp = ANY_DATETIME
     assert status == expected
     assert_approximately_now(status.timestamp)
 

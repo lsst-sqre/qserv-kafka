@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -36,6 +36,8 @@ __all__ = [
     "JobErrorCode",
     "JobMetadata",
     "JobQueryInfo",
+    "JobResultColumnType",
+    "JobResultConfig",
     "JobResultEnvelope",
     "JobResultFormat",
     "JobResultInfo",
@@ -117,6 +119,7 @@ class JobResultType(StrEnum):
     """Possible types for the output format of results."""
 
     VOTable = "VOTable"
+    Parquet = "Parquet"
 
 
 class JobResultSerialization(StrEnum):
@@ -138,12 +141,13 @@ class JobResultFormat(BaseModel):
     ]
 
     serialization: Annotated[
-        JobResultSerialization,
+        JobResultSerialization | None,
         Field(
             title="Serialization of result",
-            description="Serialization format of the result",
+            description="Serialization format of the result "
+            "(only applies to VOTable output)",
         ),
-    ]
+    ] = None
 
 
 class JobResultColumnType(BaseModel):
@@ -174,6 +178,20 @@ class JobResultColumnType(BaseModel):
     def is_string(self) -> bool:
         """Check whether the underlying data type is a string."""
         return self.datatype.is_string()
+
+    def is_array(self) -> Literal[0] | bool | None:
+        """Determine if the column is an array.
+
+        Returns
+        -------
+        bool
+            True if the column is an array otherwise False.
+        """
+        if not self.arraysize:
+            return False
+        if self.arraysize.variable:
+            return True
+        return self.arraysize.limit and self.arraysize.limit > 1
 
 
 class JobResultConfig(BaseModel):

@@ -480,6 +480,7 @@ class ResultProcessor:
         result_start = datetime.now(tz=UTC)
         results = self._qserv.get_query_results_gen(query.query_id)
         timeout = config.result_timeout.total_seconds()
+
         async with asyncio.timeout(timeout):
             size = await self._votable.store(
                 query.job.result_url,
