@@ -1,4 +1,4 @@
-"""Writer for BINARY2-encoded VOTables."""
+"""Writer for BINARY2-encoded VOTables and Parquet files."""
 
 from __future__ import annotations
 
@@ -11,22 +11,97 @@ from io import BytesIO
 from typing import Any
 from urllib.parse import urlparse
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 from bitstring import BitArray
 from httpx import AsyncClient, HTTPError
 from pydantic import HttpUrl
 from sqlalchemy import Row
 from structlog.stdlib import BoundLogger
 
-from ..config import config
+from ..config import config as global_config
 from ..constants import UPLOAD_BUFFER_SIZE
 from ..exceptions import UploadWebError
-from ..models.kafka import JobResultColumnType, JobResultConfig
+from ..models.kafka import JobResultColumnType, JobResultConfig, JobResultType
 from ..models.votable import EncodedSize, VOTablePrimitive
 
 _BASE64_LINE_LENGTH = 64
 """Maximum length of a base64-encoded line in BINARY2 output."""
 
-__all__ = ["VOTableEncoder", "VOTableWriter"]
+
+__all__ = [
+    "VOParquetEncoder",
+    "VOTableEncoder",
+    "VOTableWriter",
+]
+
+pa.set_memory_pool(pa.system_memory_pool())
+
+
+class StreamingAdapter:
+    """Streaming adapter that serves as a buffer between for streaming Parquet
+    pyarrow's ParquetWriter and an async generator that yields bytes.
+
+    Adapted from the StackOverflow example to work with PyArrow ParquetWriter.
+    https://stackoverflow.com/questions/64791558/
+    create-parquet-files-from-stream-in-python-in-memory-efficient-manner
+    """
+
+    def __init__(self) -> None:
+        self._buffer = BytesIO()
+        self._written = 0
+        self._closed = False
+
+    def flush_buffer(self) -> bytes:
+        """Flush the buffer and return bytes for yielding."""
+        b = self._buffer.getvalue()
+        self._buffer.seek(0)
+        self._buffer.truncate(0)
+        return b
+
+    def write(self, b: bytes) -> None:
+        """Write bytes to the buffer."""
+        self._buffer.write(b)
+        self._written += len(b)
+
+    @property
+    def written(self) -> int:
+        """Total bytes written to the buffer."""
+        return self._written
+
+    @property
+    def closed(self) -> bool:
+        """Whether the buffer is closed."""
+        return self._closed
+
+    def tell(self) -> int:
+        """Return total bytes written."""
+        return self._written
+
+    def close(self) -> None:
+        """Mark buffer as closed."""
+        self._closed = True
+        if self._buffer:
+            self._buffer.seek(0)
+            self._buffer.truncate(0)
+            self._buffer.close()
+        self._written = 0
+
+    def flush(self) -> None:
+        """Flush method required by some writers."""
+
+
+def _rewrite_url(value_str: str, column_name: str, logger: BoundLogger) -> str:
+    """Shared URL rewriting logic."""
+    try:
+        base_url = urlparse(str(global_config.rewrite_base_url))
+        url = urlparse(value_str)
+        return url._replace(netloc=base_url.netloc).geturl()
+    except Exception as e:
+        logger.warning(
+            "Unable to rewrite URL", column=column_name, error=str(e)
+        )
+        return value_str
 
 
 class VOTableEncoder:
@@ -217,14 +292,7 @@ class VOTableEncoder:
         else:
             value_str = "" if value_raw is None else str(value_raw)
         if value_str and column.requires_url_rewrite:
-            try:
-                base_url = urlparse(str(config.rewrite_base_url))
-                url = urlparse(value_str)
-                value_str = url._replace(netloc=base_url.netloc).geturl()
-            except Exception as e:
-                self._logger.warning(
-                    "Unable to rewrite URL", column=column.name, error=str(e)
-                )
+            value_str = _rewrite_url(value_str, column.name, self._logger)
         value = value_str.encode()
         if column.arraysize and column.arraysize.variable:
             if column.arraysize.limit:
@@ -311,7 +379,7 @@ class VOTableEncoder:
         # Rewrite URLs in the string if necessary.
         if value_str and column.requires_url_rewrite:
             try:
-                base_url = urlparse(str(config.rewrite_base_url))
+                base_url = urlparse(str(global_config.rewrite_base_url))
                 url = urlparse(value_str)
                 value_str = url._replace(netloc=base_url.netloc).geturl()
             except Exception as e:
@@ -406,21 +474,292 @@ class VOTableEncoder:
         return truncated
 
 
-class VOTableWriter:
-    """Streaming BINARY2 VOTable writer.
+class VOParquetEncoder:
+    """VOParquet encoder for generating VOParquet data with embedded VOTable
+    metadata as described in the specification:
+    https://www.ivoa.net/documents/Notes/VOParquet/.
 
-    Supports streaming encoding into a (subset of) the VOTable BINARY2 format
-    given a generator of data rows and a set of type definitions. This custom
-    encoder is used in preference to, e.g., the encoder provided by astropy
-    because it can encode one result row at a time without holding the full
-    data in memory.
+    This encoder uses PyArrow to write Parquet data directly to an
+    in-memory buffer, which is then streamed to the caller.
 
     Parameters
     ----------
-    http_client
-        HTTP client to use for uploads.
+    config
+        Configuration for the output format. Includes the header, footer, and
+        type information. The type information must exactly match the columns
+        of the results. This is not checked.
     logger
         Logger to use.
+    overflow
+        If `True`, use the overflow footer in the embedded VOTable metadata.
+    """
+
+    def __init__(
+        self,
+        config: JobResultConfig,
+        logger: BoundLogger,
+        *,
+        overflow: bool = False,
+    ) -> None:
+        self._batch_size = global_config.parquet_batch_size
+        self._config = config
+        self._logger = logger
+        self._predetermined_overflow = overflow
+        self._total_rows = 0
+        self._encoded_size = 0
+        self._column_names = [col.name for col in config.column_types]
+        self._arrow_schema = self._build_arrow_schema()
+        self._schema_with_metadata = self._build_schema_with_metadata(
+            overflow=self._predetermined_overflow
+        )
+
+    @property
+    def total_rows(self) -> int:
+        """Total number of rows encoded."""
+        return self._total_rows
+
+    @property
+    def encoded_size(self) -> int:
+        """Size of the encoded Parquet data."""
+        return self._encoded_size
+
+    @property
+    def total_size(self) -> int:
+        """Total size of the output, same as encoded_size."""
+        return self._encoded_size
+
+    async def encode(
+        self,
+        results: AsyncGenerator[Row[Any] | tuple[Any]],
+        *,
+        maxrec: int | None = None,
+    ) -> AsyncGenerator[bytes]:
+        """Encode results to VOParquet encoding.
+
+        Parameters
+        ----------
+        results
+            Async generator that yields one result row at a time.
+        maxrec
+            Maximum record limit, if not `None`.
+
+        Yields
+        ------
+        bytes
+            Encoded data suitable for writing to a file or sending via an HTTP
+            ``PUT`` request.
+        """
+        buffer = StreamingAdapter()
+        writer = pq.ParquetWriter(
+            buffer,
+            self._schema_with_metadata,
+            compression="snappy",
+            use_dictionary=False,
+        )
+
+        current_batch = []
+        batch = None
+        try:
+            async for row in results:
+                if maxrec is not None and self._total_rows >= maxrec:
+                    break
+
+                processed_row = self._process_row_for_parquet(row)
+                current_batch.append(processed_row)
+                self._total_rows += 1
+
+                if len(current_batch) >= self._batch_size:
+                    batch = self._batch_to_arrow_record_batch(current_batch)
+                    current_batch.clear()
+
+                    writer.write_batch(
+                        batch=batch, row_group_size=self._batch_size
+                    )
+                    buffered_bytes = buffer.flush_buffer()
+
+                    if buffered_bytes:
+                        yield buffered_bytes
+
+                    if self._total_rows % 100000 == 0:
+                        self._logger.info(
+                            f"Processed {self._total_rows:,} rows"
+                        )
+
+            if current_batch:
+                batch = self._batch_to_arrow_record_batch(current_batch)
+                writer.write_batch(batch)
+
+            writer.close()
+            final_bytes = buffer.flush_buffer()
+
+            if final_bytes:
+                yield final_bytes
+
+            self._encoded_size = buffer.written
+        finally:
+            await asyncio.shield(results.aclose())
+
+    def _batch_to_arrow_record_batch(
+        self, batch_data: list[dict[str, Any]]
+    ) -> pa.RecordBatch:
+        """Convert batch data to Arrow RecordBatch for streaming.
+
+        Parameters
+        ----------
+        batch_data
+            List of processed row dictionaries.
+
+        Returns
+        -------
+        pa.RecordBatch
+            Arrow RecordBatch containing the batch data.
+
+        """
+        if not batch_data:
+            return pa.record_batch([], schema=self._arrow_schema)
+
+        arrays = []
+        for i, col_name in enumerate(self._column_names):
+            column_data = [row[col_name] for row in batch_data]
+            expected_type = self._arrow_schema.field(i).type
+            array = pa.array(column_data, type=expected_type)
+            arrays.append(array)
+
+        return pa.RecordBatch.from_arrays(arrays, names=self._column_names)
+
+    def _build_schema_with_metadata(self, *, overflow: bool) -> pa.Schema:
+        """Build Arrow schema with VOParquet metadata.
+
+        Parameters
+        ----------
+        overflow
+            If True use the overflow footer in the embedded VOTable metadata.
+
+        Returns
+        -------
+        pa.Schema
+            Arrow schema with embedded VOTable metadata.
+        """
+        if overflow:
+            footer = self._config.envelope.footer_overflow.encode().decode()
+        else:
+            footer = self._config.envelope.footer.encode().decode()
+
+        votable_xml = self._config.envelope.header.encode().decode() + footer
+
+        metadata = {
+            "IVOA.VOTable-Parquet.version": "1.0",
+            "IVOA.VOTable-Parquet.content": votable_xml,
+        }
+
+        return self._arrow_schema.with_metadata(metadata)
+
+    def _build_arrow_schema(self) -> pa.Schema:
+        """Build Arrow schema with proper type mapping.
+
+        Returns
+        -------
+        pa.Schema
+            Arrow schema corresponding to the VOTable column types.
+
+        """
+        fields = []
+
+        for col in self._config.column_types:
+            arrow_type = self._map_votable_to_arrow_type(col)
+            fields.append(pa.field(col.name, arrow_type))
+
+        return pa.schema(fields)
+
+    def _map_votable_to_arrow_type(
+        self, col: JobResultColumnType
+    ) -> pa.DataType:
+        """Map VOTable column type to Arrow type.
+
+        Parameters
+        ----------
+        col
+            VOTable column type.
+
+        Returns
+        -------
+        pa.DataType
+            Corresponding Arrow data type.
+        """
+        base_type = col.datatype.arrow_type
+
+        if col.is_array():
+            return pa.list_(base_type)
+        return base_type
+
+    def _process_row_for_parquet(
+        self, row: Row[Any] | tuple[Any]
+    ) -> dict[str, Any]:
+        """Process row for the VOParquet format.
+
+        Parameters
+        ----------
+        row
+            Input row from the result set.
+
+        Returns
+        -------
+        dict[str, Any]
+            Processed row as a dictionary suitable for Parquet encoding.
+        """
+        processed: dict[str, Any] = {}
+
+        for i, col_name in enumerate(self._column_names):
+            value = row[i]
+            column = self._config.column_types[i]
+
+            if value is None:
+                processed[col_name] = None
+            elif column.datatype == VOTablePrimitive.boolean:
+                processed[col_name] = bool(value)
+            elif column.is_array():
+                result = value if isinstance(value, list) else [value]
+                limit = column.arraysize.limit if column.arraysize else None
+                if limit is not None and len(result) > limit:
+                    result = result[:limit]
+                processed[col_name] = result
+            elif column.datatype in (
+                VOTablePrimitive.char,
+                VOTablePrimitive.unicode_char,
+            ):
+                if isinstance(value, datetime):
+                    millisecond = value.microsecond // 1000
+                    value_str = (
+                        f"{value.year:04d}-{value.month:02d}"
+                        f"-{value.day:02d}T{value.hour:02d}"
+                        f":{value.minute:02d}:{value.second:02d}"
+                        f".{millisecond:03d}"
+                    )
+                else:
+                    value_str = str(value)
+
+                # Apply URL rewriting
+                if value_str and column.requires_url_rewrite:
+                    value_str = _rewrite_url(
+                        value_str, column.name, self._logger
+                    )
+
+                # Apply length limit if specified
+                if column.arraysize and column.arraysize.limit is not None:
+                    value_str = value_str[: column.arraysize.limit]
+
+                processed[col_name] = value_str
+            else:
+                processed[col_name] = value
+
+        return processed
+
+
+class VOTableWriter:
+    """Writer supporting both VOTable BINARY2 and VOParquet formats.
+
+    Both formats embed complete VOTable metadata - BINARY2 as wrapper XML,
+    Parquet as embedded metadata following VOParquet 1.0 specification.
     """
 
     def __init__(self, http_client: AsyncClient, logger: BoundLogger) -> None:
@@ -434,8 +773,9 @@ class VOTableWriter:
         results: AsyncGenerator[Row[Any]],
         *,
         maxrec: int | None = None,
+        overflow: bool = False,
     ) -> EncodedSize:
-        """Store the encoded VOTable via an HTTP PUT.
+        """Store the encoded VOTable or VOParquet result via an HTTP PUT.
 
         Parameters
         ----------
@@ -446,7 +786,7 @@ class VOTableWriter:
             and type information. The type information must exactly match the
             columns of the results. This is not checked.
         results
-            Async generator that yields one result row at a time.
+            Async generator that yields one result row (or batch) at a time.
         maxrec
             Maximum record limit, if not `None`.
 
@@ -460,10 +800,20 @@ class VOTableWriter:
         UploadWebError
             Raised if there was a failure to upload the results.
         """
-        encoder = VOTableEncoder(config, self._logger)
+        encoder: VOParquetEncoder | VOTableEncoder
+        if config.format.type == JobResultType.Parquet:
+            encoder = VOParquetEncoder(
+                config,
+                self._logger,
+                overflow=overflow,
+            )
+            mime_type = "application/vnd.apache.parquet"
+        else:  # VOTable
+            encoder = VOTableEncoder(config, self._logger)
+            mime_type = "application/x-votable+xml; serialization=binary2"
+
         generator = encoder.encode(results, maxrec=maxrec)
         try:
-            mime_type = "application/x-votable+xml; serialization=binary2"
             r = await self._client.put(
                 str(url),
                 headers={"Content-Type": mime_type},
@@ -474,6 +824,7 @@ class VOTableWriter:
             raise UploadWebError.from_exception(e) from e
         finally:
             await generator.aclose()
+
         return EncodedSize(
             rows=encoder.total_rows,
             data_bytes=encoder.encoded_size,
