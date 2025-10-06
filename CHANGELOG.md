@@ -7,6 +7,17 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-3.2.0'></a>
+## 3.2.0 (2025-10-06)
+
+### New features
+
+- Add VOParquet Encoder implementation using pyarrow.
+
+### Other changes
+
+- Fix mypy issue with ANY.
+
 <a id='changelog-3.1.0'></a>
 ## 3.1.0 (2025-08-27)
 
