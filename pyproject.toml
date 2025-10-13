@@ -164,3 +164,9 @@ new_fragment_template = "file:changelog.d/_template.md.jinja"
 skip_fragments = "_template.md.jinja"
 
 [tool.setuptools_scm]
+
+[tool.uv]
+override-dependencies = [
+    # https://github.com/spacetelescope/vo-models/issues/32
+    "pydantic-xml[lxml]<2.18",
+]
