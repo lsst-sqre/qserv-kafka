@@ -11,6 +11,7 @@ from safir.slack.blockkit import (
     SlackTextField,
     SlackWebException,
 )
+from safir.slack.sentry import SentryEventInfo
 from sqlalchemy.exc import SQLAlchemyError
 
 from .models.kafka import JobError, JobErrorCode
@@ -89,6 +90,14 @@ class QservApiFailedError(QservApiError):
             result.blocks.append(block)
         return result
 
+    @override
+    def to_sentry(self) -> SentryEventInfo:
+        info = super().to_sentry()
+        info.tags["url"] = self.url
+        if self.detail:
+            info.attachments["Error details"] = self.detail
+        return info
+
 
 class QservApiProtocolError(QservApiError):
     """A Qserv REST API returned unexpected results.
@@ -119,6 +128,12 @@ class QservApiProtocolError(QservApiError):
         result = super().to_slack()
         result.fields.append(SlackTextField(heading="URL", text=self.url))
         return result
+
+    @override
+    def to_sentry(self) -> SentryEventInfo:
+        info = super().to_sentry()
+        info.tags["url"] = self.url
+        return info
 
 
 class QservApiSqlError(QservApiError):
