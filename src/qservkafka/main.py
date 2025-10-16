@@ -7,8 +7,10 @@ from importlib.metadata import metadata, version
 from fastapi import FastAPI
 from faststream.kafka.fastapi import KafkaRouter
 from safir.logging import configure_logging, configure_uvicorn_logging
+from safir.sentry import initialize_sentry
 from structlog import get_logger
 
+from . import __version__
 from .background import BackgroundTaskManager
 from .config import config
 from .dependencies.context import context_dependency
@@ -25,6 +27,7 @@ def create_app() -> FastAPI:
     for FastAPI) so that the test suite can configure Kafka before creating
     the Kafka router.
     """
+    initialize_sentry(release=__version__)
     configure_logging(
         profile=config.profile,
         log_level=config.log_level,
