@@ -9,6 +9,7 @@ from arq.connections import RedisSettings
 from arq.constants import default_queue_name
 from httpx import USE_CLIENT_DEFAULT, BasicAuth
 from pydantic import (
+    BaseModel,
     Field,
     HttpUrl,
     MySQLDsn,
@@ -24,6 +25,28 @@ from safir.metrics import MetricsConfiguration, metrics_configuration_factory
 from safir.pydantic import EnvRedisDsn, HumanTimedelta
 
 __all__ = ["Config", "config"]
+
+
+class SentryConfig(BaseModel):
+    """Sentry configuration for qserv-kafka.
+
+    This configuration is not used internally because we want to initialize
+    Sentry directly from environment variables before the config initialized.
+    It has to be present in the Config model because we want to forbid unknown
+    configuration settings, but we want to specify the values for these env
+    vars under the ``config`` key in Phalanx. If we don't declare these
+    settings in the Config model, then we'd get an error when we try to
+    instantiate it.
+    """
+
+    enabled: bool = Field(False, title="Whether to send exceptions to Sentry")
+    traces_sample_rate: float = Field(
+        0.0,
+        title="Sentry trace sample rate",
+        description="The percentage of traces to be sent to sentry.",
+        ge=0.0,
+        le=1.0,
+    )
 
 
 class Config(BaseSettings):
@@ -107,6 +130,8 @@ class Config(BaseSettings):
         default_factory=metrics_configuration_factory,
         title="Metrics configuration",
     )
+
+    sentry: SentryConfig | None = Field(None, title="Sentry configuration")
 
     name: str = Field("qserv-kafka", title="Name of application")
 

@@ -8,8 +8,10 @@ from typing import Any, ClassVar
 
 from safir.logging import configure_logging
 from safir.metrics.arq import initialize_arq_metrics, make_on_job_start
+from safir.sentry import initialize_sentry
 from structlog import get_logger
 
+from .. import __version__
 from ..config import config
 from ..constants import ARQ_TIMEOUT_GRACE
 from ..factory import Factory, ProcessContext
@@ -24,6 +26,7 @@ async def startup(ctx: dict[Any, Any]) -> None:
     ctx
         Worker context.
     """
+    initialize_sentry(release=__version__)
     configure_logging(
         profile=config.profile,
         log_level=config.log_level,
