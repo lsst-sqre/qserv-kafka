@@ -20,6 +20,7 @@ from pydantic import BaseModel, ValidationError
 from safir.database import datetime_from_db
 from safir.datetime import format_datetime_for_logging
 from safir.slack.blockkit import SlackWebException
+from safir.slack.webhook import SlackWebhookClient
 from sqlalchemy import Row, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -143,6 +144,9 @@ def _retry[**P, T](
                 except (QservApiSqlError, SlackWebException):
                     delay = config.qserv_retry_delay.total_seconds()
                     msg = f"Qserv API call failed, retrying after {delay}s"
+
+                    # We don't want to notify Sentry or Slack about exceptions
+                    # here because we are going to retry.
                     client.logger.exception(msg)
                     event = QservFailureEvent(protocol=qserv_protocol)
                     await client.events.qserv_failure.publish(event)
@@ -179,6 +183,8 @@ class QservClient:
         HTTP client to use.
     events
         Metrics events publishers.
+    slack_client
+        Client to send errors to Slack
     logger
         Logger to use.
 
@@ -187,6 +193,9 @@ class QservClient:
     events
         Metrics events publishers. This is a public attribute so that it can
         be used by the retry decorator.
+    slack_client
+        Client to send errors to Slack. This is a public attribute so that it
+        can be used by the retry decorator
     logger
         Logger to use. This is a public attribute so that it can be used by
         the retry decorator.
@@ -198,9 +207,11 @@ class QservClient:
         sessionmaker: async_sessionmaker,
         http_client: AsyncClient,
         events: Events,
+        slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
     ) -> None:
         self.events = events
+        self.slack_client = slack_client
         self.logger = logger
 
         self._sessionmaker = sessionmaker

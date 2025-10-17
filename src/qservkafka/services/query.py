@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from safir.sentry import report_exception
+from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
@@ -49,6 +51,8 @@ class QueryService:
         Client for quota information.
     events
         Metrics events publishers.
+    slack_client
+        Client to send errors to Slack
     logger
         Logger to use.
     """
@@ -62,6 +66,7 @@ class QueryService:
         rate_limit_store: RateLimitStore,
         gafaelfawr_client: GafaelfawrClient,
         events: Events,
+        slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
     ) -> None:
         self._qserv = qserv_client
@@ -70,6 +75,7 @@ class QueryService:
         self._rate_store = rate_limit_store
         self._gafaelfawr = gafaelfawr_client
         self._events = events
+        self._slack_client = slack_client
         self._logger = logger
 
     async def cancel_query(self, message: JobCancel) -> JobStatus | None:
@@ -91,7 +97,8 @@ class QueryService:
         )
         try:
             query_id = int(message.execution_id)
-        except Exception:
+        except Exception as e:
+            await report_exception(e, self._slack_client)
             logger.exception("Invalid exectionID in cancel message")
             return None
         logger = logger.bind(qserv_id=str(query_id))
@@ -107,6 +114,7 @@ class QueryService:
         try:
             await self._qserv.cancel_query(query_id)
         except QservApiError as e:
+            await report_exception(e, self._slack_client)
             logger.exception("Failed to cancel query", error=str(e))
             return None
 
@@ -309,6 +317,7 @@ class QueryService:
                 msg = "Unable to retrieve table to upload"
             else:
                 msg = "Unable to upload table"
+            await report_exception(e, self._slack_client)
             logger.exception(msg, error=str(e))
             return JobStatus(
                 job_id=job.job_id,
@@ -329,6 +338,7 @@ class QueryService:
                 msg = "Query rejected by Qserv"
                 logger.info(msg, error=str(e), detail=e.detail)
             else:
+                await report_exception(e, self._slack_client)
                 logger.exception("Unable to start query", error=str(e))
             return JobStatus(
                 job_id=job.job_id,

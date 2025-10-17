@@ -15,6 +15,7 @@ from safir.arq import ArqMode, ArqQueue, MockArqQueue, RedisArqQueue
 from safir.database import create_database_engine
 from safir.metrics import EventManager
 from safir.redis import PydanticRedisStorage
+from safir.slack.webhook import SlackWebhookClient
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from structlog.stdlib import BoundLogger, get_logger
 
@@ -63,6 +64,9 @@ class ProcessContext:
 
     event_manager: EventManager
     """Manager for publishing metrics events."""
+
+    slack_client: SlackWebhookClient | None
+    """Client for sending Slack error notifications."""
 
     gafaelfawr_client: GafaelfawrClient
     """Shared caching Gafaelfawr client."""
@@ -157,9 +161,23 @@ class ProcessContext:
         events = Events()
         await events.initialize(event_manager)
 
-        # Create a shared caching Gafaelfawr client.
         logger = get_logger("qservkafka")
-        gafaelfawr_client = GafaelfawrClient(http_client, logger)
+
+        # Create a Slack client for notifying on errors
+        if config.slack.enabled:
+            if config.slack.webhook is None:
+                msg = "Slack: if enabled is true, then webhook must be set"
+                raise RuntimeError(msg)
+            slack_client = SlackWebhookClient(
+                hook_url=config.slack.webhook,
+                application="qserv-kafka",
+                logger=logger,
+            )
+        else:
+            slack_client = None
+
+        # Create a shared caching Gafaelfawr client.
+        gafaelfawr_client = GafaelfawrClient(http_client, slack_client, logger)
 
         # Return the newly-constructed context.
         return cls(
@@ -168,6 +186,7 @@ class ProcessContext:
             sessionmaker=async_sessionmaker(engine, expire_on_commit=False),
             kafka_broker=kafka_broker,
             event_manager=event_manager,
+            slack_client=slack_client,
             gafaelfawr_client=gafaelfawr_client,
             events=events,
             redis=redis_client,
@@ -218,6 +237,11 @@ class Factory:
         """Global shared caching Gafaelfawr client."""
         return self._context.gafaelfawr_client
 
+    @property
+    def slack_client(self) -> SlackWebhookClient | None:
+        """Global shared Slack error notification client."""
+        return self._context.slack_client
+
     def create_query_state_store(self) -> QueryStateStore:
         """Create the storage client for query state.
 
@@ -245,6 +269,7 @@ class Factory:
             sessionmaker=self._context.sessionmaker,
             http_client=self._context.http_client,
             events=self._context.events,
+            slack_client=self._context.slack_client,
             logger=self._logger,
         )
 
@@ -295,6 +320,7 @@ class Factory:
             rate_limit_store=self.create_rate_limit_store(),
             gafaelfawr_client=self.gafaelfawr_client,
             events=self._context.events,
+            slack_client=self._context.slack_client,
             logger=self._logger,
         )
 
@@ -315,6 +341,7 @@ class Factory:
             kafka_broker=self._context.kafka_broker,
             rate_limit_store=self.create_rate_limit_store(),
             events=self._context.events,
+            slack_client=self._context.slack_client,
             logger=self._logger,
         )
 

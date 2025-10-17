@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from typing import assert_never
 
 from faststream.kafka import KafkaBroker
+from safir.sentry import report_exception
+from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
@@ -50,6 +52,8 @@ class ResultProcessor:
         Storage for rate limiting.
     events
         Metrics events publishers.
+    slack_client
+        Client to send errors to Slack
     logger
         Logger to use.
     """
@@ -63,6 +67,7 @@ class ResultProcessor:
         kafka_broker: KafkaBroker,
         rate_limit_store: RateLimitStore,
         events: Events,
+        slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
     ) -> None:
         self._qserv = qserv_client
@@ -71,6 +76,7 @@ class ResultProcessor:
         self._kafka = kafka_broker
         self._rate_store = rate_limit_store
         self._events = events
+        self._slack_client = slack_client
         self._logger = logger
 
     def build_executing_status(self, query: RunningQuery) -> JobStatus:
@@ -124,6 +130,7 @@ class ResultProcessor:
         try:
             status = await self._qserv.get_query_status(query.query_id)
         except QservApiError as e:
+            await report_exception(e, slack_client=self._slack_client)
             logger.exception("Unable to get job status", error=str(e))
             update = JobStatus(
                 job_id=query.job.job_id,
@@ -287,7 +294,8 @@ class ResultProcessor:
         # Delete the results.
         try:
             await self._qserv.delete_result(query.query_id)
-        except QservApiError:
+        except QservApiError as e:
+            await report_exception(e, slack_client=self._slack_client)
             logger.exception("Cannot delete results")
 
         # Return the resulting status.
@@ -336,9 +344,11 @@ class ResultProcessor:
                     msg = "Unable to upload results"
                 else:
                     msg = "Unable to retrieve results"
+                await report_exception(exc, slack_client=self._slack_client)
                 logger.exception(msg, error=str(exc), elapsed=elapsed_seconds)
                 error = exc.to_job_error()
             case TimeoutError():
+                await report_exception(exc, slack_client=self._slack_client)
                 logger.exception(
                     "Retrieving and uploading results timed out",
                     elapsed=elapsed_seconds,
@@ -447,6 +457,7 @@ class ResultProcessor:
             try:
                 await self._qserv.delete_database(database)
             except QservApiError as e:
+                await report_exception(e, slack_client=self._slack_client)
                 logger.exception(
                     "Unable to delete temporary database, orphaning it",
                     error=str(e),
@@ -536,6 +547,9 @@ class ResultProcessor:
                     await self._events.qserv_failure.publish(event)
                 else:
                     msg = f"Upload of results failed, retrying after {delay}s"
+
+                # We don't want to notify Sentry or Slack about exceptions
+                # here because we are going to retry.
                 logger.exception(msg)
                 await asyncio.sleep(delay)
 
