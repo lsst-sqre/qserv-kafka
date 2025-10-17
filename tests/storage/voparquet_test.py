@@ -11,7 +11,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from sqlalchemy import Row
-from structlog import get_logger
+from structlog.stdlib import get_logger
 
 from qservkafka.models.kafka import (
     JobResultColumnType,

@@ -16,8 +16,7 @@ from safir.database import create_database_engine
 from safir.metrics import EventManager
 from safir.redis import PydanticRedisStorage
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
-from structlog import get_logger
-from structlog.stdlib import BoundLogger
+from structlog.stdlib import BoundLogger, get_logger
 
 from .config import config
 from .constants import (

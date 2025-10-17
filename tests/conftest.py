@@ -20,8 +20,7 @@ from safir.kafka import KafkaConnectionSettings, SecurityProtocol
 from safir.logging import configure_logging
 from safir.testing.containers import FullKafkaContainer
 from sqlalchemy.ext.asyncio import AsyncEngine
-from structlog import get_logger
-from structlog.stdlib import BoundLogger
+from structlog.stdlib import BoundLogger, get_logger
 from testcontainers.core.network import Network
 from testcontainers.mysql import MySqlContainer
 from testcontainers.redis import RedisContainer
