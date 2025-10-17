@@ -27,6 +27,29 @@ from safir.pydantic import EnvRedisDsn, HumanTimedelta
 __all__ = ["Config", "config"]
 
 
+class SlackConfig(BaseSettings):
+    enabled: bool = Field(
+        False,
+        title="Slack enabled",
+        description="Whether to send exception notifications to Slack",
+        validation_alias="QSERV_KAFKA_SLACK_ENABLED",
+    )
+
+    webhook: SecretStr | None = Field(
+        None,
+        title="Slack webhook for alerts",
+        description="alerts will be posted to this Slack webhook",
+        validation_alias="QSERV_KAFKA_SLACK_WEBHOOK",
+    )
+
+    @model_validator(mode="after")
+    def validate_config(self) -> Self:
+        if self.enabled and self.webhook is None:
+            msg = "Slack: if enabled is true, then webhook must be set"
+            raise ValueError(msg)
+        return self
+
+
 class SentryConfig(BaseModel):
     """Sentry configuration for qserv-kafka.
 
@@ -132,6 +155,8 @@ class Config(BaseSettings):
     )
 
     sentry: SentryConfig | None = Field(None, title="Sentry configuration")
+
+    slack: SlackConfig = Field(SlackConfig(), title="Slack configuration")
 
     name: str = Field("qserv-kafka", title="Name of application")
 
