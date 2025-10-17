@@ -23,6 +23,7 @@ async def job_run(
     messages: list[JobRun],
     context: Annotated[ConsumerContext, Depends(context_dependency)],
 ) -> None:
+    _ = 1 / 0
     query_service = context.factory.create_query_service()
     jobs = [query_service.handle_query(m) for m in messages]
     await asyncio.gather(*jobs)
