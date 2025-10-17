@@ -10,6 +10,7 @@ from safir.kafka import FastStreamErrorHandler
 from safir.logging import configure_logging, configure_uvicorn_logging
 from safir.sentry import initialize_sentry
 from safir.slack.webhook import SlackRouteErrorHandler
+from sentry_sdk.integrations.logging import LoggingIntegration
 from structlog.stdlib import get_logger
 
 from . import __version__
@@ -29,7 +30,9 @@ def create_app() -> FastAPI:
     for FastAPI) so that the test suite can configure Kafka before creating
     the Kafka router.
     """
-    initialize_sentry(release=__version__)
+    initialize_sentry(
+        release=__version__, disabled_integrations=[LoggingIntegration]
+    )
     configure_logging(
         profile=config.profile,
         log_level=config.log_level,
