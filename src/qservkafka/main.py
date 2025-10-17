@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from faststream.kafka.fastapi import KafkaRouter
 from safir.logging import configure_logging, configure_uvicorn_logging
 from safir.sentry import initialize_sentry
-from structlog import get_logger
+from structlog.stdlib import get_logger
 
 from . import __version__
 from .background import BackgroundTaskManager

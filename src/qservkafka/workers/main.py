@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 from safir.logging import configure_logging
 from safir.metrics.arq import initialize_arq_metrics, make_on_job_start
 from safir.sentry import initialize_sentry
-from structlog import get_logger
+from structlog.stdlib import get_logger
 
 from .. import __version__
 from ..config import config

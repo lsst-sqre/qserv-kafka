@@ -4,8 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from faststream.kafka.fastapi import KafkaMessage
-from structlog import get_logger
-from structlog.stdlib import BoundLogger
+from structlog.stdlib import BoundLogger, get_logger
 
 from ..factory import Factory, ProcessContext
 
