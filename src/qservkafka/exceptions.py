@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, Self, override
+from typing import Any, ClassVar, Self, override
 
+from safir.sentry import report_exception
 from safir.slack.blockkit import (
     SlackCodeBlock,
     SlackException,
@@ -12,7 +13,9 @@ from safir.slack.blockkit import (
     SlackWebException,
 )
 from safir.slack.sentry import SentryEventInfo
+from safir.slack.webhook import SlackWebhookClient
 from sqlalchemy.exc import SQLAlchemyError
+from structlog.stdlib import BoundLogger
 
 from .models.kafka import JobError, JobErrorCode
 from .models.qserv import BaseResponse
@@ -27,6 +30,36 @@ __all__ = [
     "TableUploadWebError",
     "UploadWebError",
 ]
+
+
+async def log_and_report(
+    exc: Exception,
+    slack_client: SlackWebhookClient | None,
+    logger: BoundLogger,
+    msg: str | None,
+    *args: Any,
+    **kwargs: Any,
+) -> None:
+    """Log an exception and report it to configured notification services.
+
+    Any additional args and kwargs will be passed to the ``logger.exception``
+    method.
+
+    Parameters
+    ----------
+    exc
+        The exception to log and report
+    slack_client
+        A slack client to use to notify Slack about the exception. If this is
+        none, then we won't send a Slack notification, though we will send a
+        Sentry notification if that integration is configured.
+    logger
+        The logger to use to log the exception
+    msg
+        The event message to log
+    """
+    logger.exception(msg, *args, **kwargs)
+    await report_exception(exc, slack_client=slack_client)
 
 
 class QueryError(SlackException):
