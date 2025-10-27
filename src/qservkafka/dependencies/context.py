@@ -32,7 +32,7 @@ class ContextDependency:
 
     Each message handler class gets a `ConsumerContext`. To save overhead, the
     portions of the context that are shared by all requests are collected into
-    the single process-global `~unfurlbot.factory.ProcessContext` and reused
+    the single process-global `~qservkafka.factory.ProcessContext` and reused
     with each request.
     """
 
