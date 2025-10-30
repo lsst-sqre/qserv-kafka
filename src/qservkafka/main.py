@@ -14,7 +14,6 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from structlog.stdlib import get_logger
 
 from . import __version__
-from .background import BackgroundTaskManager
 from .config import config
 from .dependencies.context import context_dependency
 from .handlers.internal import internal_router
@@ -69,10 +68,7 @@ def create_app() -> FastAPI:
         await context_dependency.initialize()
         logger = get_logger("qservkafka")
         factory = context_dependency.create_factory()
-        monitor = await factory.create_query_monitor()
-        background = BackgroundTaskManager(
-            monitor, factory.slack_client, logger
-        )
+        background = await factory.create_background_task_manager()
         await background.start()
         logger.info("Qserv Kafka bridge started")
 

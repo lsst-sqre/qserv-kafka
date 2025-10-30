@@ -19,6 +19,8 @@ from safir.slack.webhook import SlackWebhookClient
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from structlog.stdlib import BoundLogger, get_logger
 
+from qservkafka.background import BackgroundTaskManager
+
 from .config import config
 from .constants import (
     REDIS_BACKOFF_MAX,
@@ -237,10 +239,18 @@ class Factory:
         """Global shared caching Gafaelfawr client."""
         return self._context.gafaelfawr_client
 
-    @property
-    def slack_client(self) -> SlackWebhookClient | None:
-        """Global shared Slack error notification client."""
-        return self._context.slack_client
+    async def create_background_task_manager(self) -> BackgroundTaskManager:
+        """Create the background task manager to monitor qserv jobs.
+
+        Returns
+        -------
+        BackgroundTaskManager
+            Manager for periodically checking the status of qserv jobs.
+        """
+        monitor = await self.create_query_monitor()
+        return BackgroundTaskManager(
+            monitor, self._context.slack_client, self._logger
+        )
 
     def create_query_state_store(self) -> QueryStateStore:
         """Create the storage client for query state.
