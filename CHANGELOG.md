@@ -7,6 +7,17 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-3.4.0'></a>
+## 3.4.0 (2025-10-30)
+
+### New features
+
+- Enable optional Slack error reporting
+
+### Other changes
+
+- Don't report retry-able Qserv disconnects as errors
+
 <a id='changelog-3.3.0'></a>
 ## 3.3.0 (2025-10-16)
 
