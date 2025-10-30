@@ -8,6 +8,8 @@ from types import EllipsisType
 from cachetools import TTLCache
 from httpx import AsyncClient, HTTPError
 from pydantic import ValidationError
+from safir.sentry import report_exception
+from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
 
 from ..config import config
@@ -24,12 +26,20 @@ class GafaelfawrClient:
     ----------
     http_client
         Shared HTTP client.
+    slack_client
+        Client to send errors to Slack
     logger
         Logger for messages.
     """
 
-    def __init__(self, http_client: AsyncClient, logger: BoundLogger) -> None:
+    def __init__(
+        self,
+        http_client: AsyncClient,
+        slack_client: SlackWebhookClient | None,
+        logger: BoundLogger,
+    ) -> None:
         self._http_client = http_client
+        self._slack_client = slack_client
         self._logger = logger
 
         base_url = str(config.gafaelfawr_base_url).rstrip("/")
@@ -98,7 +108,8 @@ class GafaelfawrClient:
         url = self._url + f"/{username}"
         try:
             r = await self._http_client.get(url, headers=self._headers)
-        except HTTPError:
+        except HTTPError as e:
+            await report_exception(e, slack_client=self._slack_client)
             msg = "Cannot contact Gafaelfawr for quota information"
             self._logger.exception(msg)
             return None
@@ -113,7 +124,8 @@ class GafaelfawrClient:
                 info=data,
             )
             userinfo = GafaelfawrUserInfo.model_validate(data)
-        except (HTTPError, ValidationError):
+        except (HTTPError, ValidationError) as e:
+            await report_exception(e, slack_client=self._slack_client)
             msg = "Invalid user information response from Gafaelfawr"
             self._logger.exception(msg)
             return None

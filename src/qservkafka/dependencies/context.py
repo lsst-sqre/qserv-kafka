@@ -4,8 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from faststream.kafka.fastapi import KafkaMessage
-from structlog import get_logger
-from structlog.stdlib import BoundLogger
+from structlog.stdlib import BoundLogger, get_logger
 
 from ..factory import Factory, ProcessContext
 
@@ -32,7 +31,7 @@ class ContextDependency:
 
     Each message handler class gets a `ConsumerContext`. To save overhead, the
     portions of the context that are shared by all requests are collected into
-    the single process-global `~unfurlbot.factory.ProcessContext` and reused
+    the single process-global `~qservkafka.factory.ProcessContext` and reused
     with each request.
     """
 

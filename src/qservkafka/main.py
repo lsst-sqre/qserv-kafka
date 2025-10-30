@@ -6,12 +6,14 @@ from importlib.metadata import metadata, version
 
 from fastapi import FastAPI
 from faststream.kafka.fastapi import KafkaRouter
+from safir.kafka import FastStreamErrorHandler
 from safir.logging import configure_logging, configure_uvicorn_logging
 from safir.sentry import initialize_sentry
-from structlog import get_logger
+from safir.slack.webhook import SlackRouteErrorHandler
+from sentry_sdk.integrations.logging import LoggingIntegration
+from structlog.stdlib import get_logger
 
 from . import __version__
-from .background import BackgroundTaskManager
 from .config import config
 from .dependencies.context import context_dependency
 from .handlers.internal import internal_router
@@ -27,7 +29,9 @@ def create_app() -> FastAPI:
     for FastAPI) so that the test suite can configure Kafka before creating
     the Kafka router.
     """
-    initialize_sentry(release=__version__)
+    initialize_sentry(
+        release=__version__, disabled_integrations=[LoggingIntegration]
+    )
     configure_logging(
         profile=config.profile,
         log_level=config.log_level,
@@ -38,16 +42,33 @@ def create_app() -> FastAPI:
     logger = get_logger("qservkafka")
 
     # Create the Kafka router if one was not provided.
+    faststream_error_handler = FastStreamErrorHandler()
     kafka_params = config.kafka.to_faststream_params()
-    kafka_router = KafkaRouter(**kafka_params, logger=logger)
+    kafka_router = KafkaRouter(
+        middlewares=[faststream_error_handler.make_middleware()],
+        **kafka_params,
+        logger=logger,
+    )
+
+    # Configure Slack alerts.
+    if config.slack.enabled:
+        if config.slack.webhook is None:
+            msg = "Slack: if enabled is true, then webhook must be set"
+            raise RuntimeError(msg)
+        SlackRouteErrorHandler.initialize(
+            config.slack.webhook, "qserv-kafka", logger
+        )
+        faststream_error_handler.initialize_slack(
+            config.slack.webhook, "qserv-kafka", logger
+        )
+        logger.debug("Initialized Slack webhook")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await context_dependency.initialize()
         logger = get_logger("qservkafka")
         factory = context_dependency.create_factory()
-        monitor = await factory.create_query_monitor()
-        background = BackgroundTaskManager(monitor, logger)
+        background = await factory.create_background_task_manager()
         await background.start()
         logger.info("Qserv Kafka bridge started")
 

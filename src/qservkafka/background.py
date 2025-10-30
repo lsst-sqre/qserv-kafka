@@ -8,6 +8,8 @@ from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
 from aiojobs import Scheduler
+from safir.sentry import report_exception
+from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
 
 from .config import config
@@ -31,12 +33,20 @@ class BackgroundTaskManager:
     ----------
     monitor
         Query monitor.
+    slack_client
+        Client to send errors to Slack
     logger
         Logger to use.
     """
 
-    def __init__(self, monitor: QueryMonitor, logger: BoundLogger) -> None:
+    def __init__(
+        self,
+        monitor: QueryMonitor,
+        slack_client: SlackWebhookClient | None,
+        logger: BoundLogger,
+    ) -> None:
         self._monitor = monitor
+        self._slack_client = slack_client
         self._logger = logger
         self._closing = asyncio.Event()
         self._scheduler: Scheduler | None = None
@@ -130,11 +140,12 @@ class BackgroundTaskManager:
             start = datetime.now(tz=UTC)
             try:
                 await call()
-            except Exception:
+            except Exception as e:
                 # On failure, log the exception but otherwise continue as
                 # normal, including the delay. This will provide some time for
                 # whatever the problem was to be resolved.
                 elapsed = datetime.now(tz=UTC) - start
+                await report_exception(e, slack_client=self._slack_client)
                 msg = f"Uncaught exception {description}"
                 self._logger.exception(msg, delay=elapsed.total_seconds())
             with suppress(TimeoutError):
