@@ -19,6 +19,7 @@ from safir.database import create_database_engine
 from safir.kafka import KafkaConnectionSettings, SecurityProtocol
 from safir.logging import configure_logging
 from safir.testing.containers import FullKafkaContainer
+from safir.testing.slack import MockSlackWebhook, mock_slack_webhook
 from sqlalchemy.ext.asyncio import AsyncEngine
 from structlog.stdlib import BoundLogger, get_logger
 from testcontainers.core.network import Network
@@ -38,6 +39,7 @@ async def app(
     *,
     kafka_connection_settings: KafkaConnectionSettings,
     mock_qserv: MockQserv,
+    mock_slack: MockSlackWebhook,
     redis: RedisContainer,
     monkeypatch: pytest.MonkeyPatch,
 ) -> FastAPI:
@@ -80,6 +82,7 @@ async def engine(
 async def factory(
     *,
     mock_qserv: MockQserv,
+    mock_slack: MockSlackWebhook,
     engine: AsyncEngine,
     redis: RedisContainer,
     monkeypatch: pytest.MonkeyPatch,
@@ -216,6 +219,17 @@ async def mock_qserv(
         respx_mock, url, engine, flaky=request.param
     ) as mock_qserv:
         yield mock_qserv
+
+
+@pytest.fixture
+def mock_slack(
+    monkeypatch: pytest.MonkeyPatch, respx_mock: respx.Router
+) -> MockSlackWebhook | None:
+    """Mock a Slack webhook."""
+    webhook = SecretStr("https://slack.example.com/webhook")
+    monkeypatch.setattr(config.slack, "enabled", True)
+    monkeypatch.setattr(config.slack, "webhook", webhook)
+    return mock_slack_webhook(webhook.get_secret_value(), respx_mock)
 
 
 @pytest.fixture(scope="session")
