@@ -12,29 +12,25 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 ### New features
 
-- Enable optional Slack error reporting
+- Add support for reporting errors directly to Slack.
 
-### Other changes
+### Bug fixes
 
-- Don't report retry-able Qserv disconnects as errors
+- Don't report retriable Qserv disconnects as errors
 
 <a id='changelog-3.3.0'></a>
 ## 3.3.0 (2025-10-16)
 
 ### New features
 
-- Enable optional Sentry error reporting
+- Add support for reporting errors to Sentry.
 
 <a id='changelog-3.2.0'></a>
 ## 3.2.0 (2025-10-06)
 
 ### New features
 
-- Add VOParquet Encoder implementation using pyarrow.
-
-### Other changes
-
-- Fix mypy issue with ANY.
+- Add support for an output format of VOParquet, which generates a Parquet file with VOTable metadata according to the current draft IVOA standard.
 
 <a id='changelog-3.1.0'></a>
 ## 3.1.0 (2025-08-27)
