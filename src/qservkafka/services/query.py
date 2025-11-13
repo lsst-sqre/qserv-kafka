@@ -206,7 +206,7 @@ class QueryService:
         logger = self._logger.bind(
             job_id=job.job_id,
             username=job.owner,
-            quota=quota,
+            quota=quota.to_logging_context() if quota else None,
             running=count,
             query=query_for_logging,
         )
@@ -274,7 +274,7 @@ class QueryService:
             "Query rejected due to quota",
             job_id=job.job_id,
             username=job.owner,
-            quota=quota,
+            quota={"concurrent": quota},
             running=count,
             query=metadata.model_dump(mode="json", exclude_none=True),
         )
