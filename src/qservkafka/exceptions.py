@@ -8,7 +8,7 @@ from safir.slack.blockkit import (
     SlackCodeBlock,
     SlackException,
     SlackMessage,
-    SlackTextField,
+    SlackTextBlock,
     SlackWebException,
 )
 from safir.slack.sentry import SentryEventInfo
@@ -54,37 +54,48 @@ class QservApiFailedError(QservApiError):
 
     Parameters
     ----------
+    method
+        Method that failed.
     url
         URL of request that failed.
     error
         Response from Qserv.
+
+    Attributes
+    ----------
+    details
+        Supplemental error details from Qserv.
+    error
+        Qesrv error.
+    method
+        Method that failed.
+    url
+        URL of request that failed.
     """
 
-    def __init__(self, url: str, error: BaseResponse) -> None:
-        if error.error:
-            msg = f"Qserv request failed: {error.error}"
-        else:
-            msg = "Qserv request failed without an error"
-        super().__init__(msg)
+    def __init__(self, method: str, url: str, error: BaseResponse) -> None:
+        super().__init__("Qserv request failed")
+        self.method = method
         self.url = url
+        self.qserv_error = error.error
         self.detail = str(error.error_ext) if error.error_ext else None
 
     @override
     def to_job_error(self) -> JobError:
-        msg = f"{self!s}\n\n{self.detail}" if self.detail else str(self)
+        if self.qserv_error:
+            msg = f"{self!s}: {self.qserv_error}"
+        else:
+            msg = str(self)
         return JobError(code=self.error, message=msg)
 
     @override
     def to_slack(self) -> SlackMessage:
-        """Format the exception for Slack reporting.
-
-        Returns
-        -------
-        SlackMessage
-            Message suitable for sending to Slack.
-        """
         result = super().to_slack()
-        result.fields.append(SlackTextField(heading="URL", text=self.url))
+        text = f"{self.method} {self.url}"
+        result.blocks.append(SlackTextBlock(heading="URL", text=text))
+        if self.qserv_error:
+            block = SlackCodeBlock(heading="Error", code=self.qserv_error)
+            result.blocks.append(block)
         if self.detail:
             block = SlackCodeBlock(heading="Error details", code=self.detail)
             result.blocks.append(block)
@@ -93,9 +104,15 @@ class QservApiFailedError(QservApiError):
     @override
     def to_sentry(self) -> SentryEventInfo:
         info = super().to_sentry()
+        info.tags["method"] = self.method
         info.tags["url"] = self.url
-        if self.detail:
-            info.attachments["Error details"] = self.detail
+        if self.error or self.detail:
+            context = {}
+            if self.qserv_error:
+                context["error"] = self.qserv_error
+            if self.detail:
+                context["error_details"] = self.detail
+            info.contexts["qserv_error"] = context
         return info
 
 
@@ -104,34 +121,39 @@ class QservApiProtocolError(QservApiError):
 
     Parameters
     ----------
+    method
+        Method that failed.
     url
         URL of request that failed.
     error
         Error message.
+
+    Attributes
+    ----------
+    method
+        Method that failed.
+    url
+        URL of request that failed.
     """
 
     error = JobErrorCode.backend_internal_error
 
-    def __init__(self, url: str, error: str) -> None:
+    def __init__(self, method: str, url: str, error: str) -> None:
         super().__init__(f"Qserv request failed: {error}")
+        self.method = method
         self.url = url
 
     @override
     def to_slack(self) -> SlackMessage:
-        """Format the exception for Slack reporting.
-
-        Returns
-        -------
-        SlackMessage
-            Message suitable for sending to Slack.
-        """
         result = super().to_slack()
-        result.fields.append(SlackTextField(heading="URL", text=self.url))
+        text = f"{self.method} {self.url}"
+        result.blocks.append(SlackTextBlock(heading="URL", text=text))
         return result
 
     @override
     def to_sentry(self) -> SentryEventInfo:
         info = super().to_sentry()
+        info.tags["method"] = self.method
         info.tags["url"] = self.url
         return info
 

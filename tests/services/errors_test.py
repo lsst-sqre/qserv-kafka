@@ -125,9 +125,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     status = await query_service.start_query(job)
     expected.execution_id = "3"
     expected.error.code = JobErrorCode.backend_error
-    expected.error.message = (
-        "Qserv request failed: Some error\n\n{'foo': 'bar'}"
-    )
+    expected.error.message = "Qserv request failed: Some error"
     assert status == expected
 
     # Return a normal reply from the status endpoint but mark the job as being

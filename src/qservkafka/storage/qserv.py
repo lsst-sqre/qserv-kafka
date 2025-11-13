@@ -488,7 +488,7 @@ class QservClient:
                 start=format_datetime_for_logging(start),
                 elapsed=(datetime.now(tz=UTC) - start).total_seconds(),
             )
-            self._parse_response(url, r, BaseResponse)
+            self._parse_response("DELETE", url, r, BaseResponse)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
 
@@ -531,7 +531,7 @@ class QservClient:
             self.logger.debug(
                 "Qserv API reply", method="GET", url=url, result=r.json()
             )
-            return self._parse_response(url, r, result_type)
+            return self._parse_response("GET", url, r, result_type)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
 
@@ -563,12 +563,14 @@ class QservClient:
             return r.content
 
     def _parse_response[T: BaseResponse](
-        self, url: str, response: Response, result_type: type[T]
+        self, method: str, url: str, response: Response, result_type: type[T]
     ) -> T:
         """Parse a response from a Qserv REST API endpoint.
 
         Parameters
         ----------
+        method
+            Method of the request.
         url
             URL of the request.
         response
@@ -590,10 +592,10 @@ class QservClient:
             json_result = response.json()
             base_result = BaseResponse.model_validate(json_result)
             if not base_result.is_success():
-                raise QservApiFailedError(url, base_result)
+                raise QservApiFailedError(method, url, base_result)
             return result_type.model_validate(json_result)
         except ValidationError as e:
-            raise QservApiProtocolError(url, str(e)) from e
+            raise QservApiProtocolError(method, url, str(e)) from e
 
     @_retry
     async def _post[T: BaseResponse](
@@ -642,7 +644,7 @@ class QservClient:
                 start=format_datetime_for_logging(start),
                 elapsed=(datetime.now(tz=UTC) - start).total_seconds(),
             )
-            return self._parse_response(url, r, result_type)
+            return self._parse_response("POST", url, r, result_type)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
 
@@ -690,6 +692,6 @@ class QservClient:
             self.logger.debug(
                 "Qserv API reply", method="POST", url=url, result=r.json()
             )
-            self._parse_response(url, r, BaseResponse)
+            self._parse_response("POST", url, r, BaseResponse)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
