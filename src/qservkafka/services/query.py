@@ -24,6 +24,7 @@ from ..models.kafka import (
     JobRun,
     JobStatus,
 )
+from ..models.qserv import AsyncQueryPhase
 from ..models.state import Query
 from ..storage.gafaelfawr import GafaelfawrClient
 from ..storage.qserv import QservClient
@@ -107,13 +108,24 @@ class QueryService:
             logger.warning("Cannot cancel unknown or completed job")
             return None
 
-        # Cancel the query. There's not much we can do with exceptions other
-        # than log them, since we don't have a way of returning a cancelation
-        # error to the TAP server, so we send a status update matching the
-        # last known status in that case.
+        # Cancel the query. If this fails, check to see if it only failed
+        # because the job finished and, if so, quietly do nothing and let
+        # normal result processing pick up the completion since it's too late
+        # to cancel.
+        #
+        # There's not much we can do with exceptions other than log them,
+        # since we don't have a way of returning a cancelation error to the
+        # TAP server, so we send a status update matching the last known
+        # status in that case.
         try:
             await self._qserv.cancel_query(query_id)
         except QservApiError as e:
+            try:
+                status = await self._qserv.get_query_status(query_id)
+                if status.status != AsyncQueryPhase.EXECUTING:
+                    return None
+            except QservApiError:
+                pass
             await report_exception(e, self._slack_client)
             logger.exception("Failed to cancel query", error=str(e))
             return None

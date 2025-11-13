@@ -33,14 +33,14 @@ class SlackConfig(BaseSettings):
     enabled: bool = Field(
         False,
         title="Slack enabled",
-        description="Whether to send exception notifications to Slack",
+        description="Whether to send exceptions to Slack",
         validation_alias="QSERV_KAFKA_SLACK_ENABLED",
     )
 
     webhook: SecretStr | None = Field(
         None,
         title="Slack webhook for alerts",
-        description="alerts will be posted to this Slack webhook",
+        description="Alerts will be posted to this Slack webhook",
         validation_alias="QSERV_KAFKA_SLACK_WEBHOOK",
     )
 

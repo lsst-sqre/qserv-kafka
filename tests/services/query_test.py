@@ -7,7 +7,9 @@ from unittest.mock import ANY
 
 import pytest
 from pydantic import SecretStr
+from safir.datetime import current_datetime
 from safir.metrics import MockEventPublisher
+from safir.testing.slack import MockSlackWebhook
 
 from qservkafka.config import config
 from qservkafka.factory import Factory
@@ -19,6 +21,7 @@ from ..support.data import (
     read_test_job_cancel,
     read_test_job_run,
     read_test_job_status,
+    read_test_qserv_status,
 )
 from ..support.datetime import assert_approximately_now
 from ..support.qserv import MockQserv
@@ -196,6 +199,38 @@ async def test_cancel(factory: Factory) -> None:
         "elapsed": ANY,
     }
     assert timedelta(seconds=0) < events[0].elapsed <= (finish - start_time)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
+async def test_cancel_completed(
+    factory: Factory, mock_qserv: MockQserv, mock_slack: MockSlackWebhook
+) -> None:
+    query_service = factory.create_query_service()
+    job = read_test_job_run("simple")
+    expected_status = read_test_job_status("simple-started")
+    cancel = read_test_job_cancel("simple")
+
+    # Start the query.
+    start_time = current_datetime()
+    assert await query_service.start_query(job) == expected_status
+
+    # Mark the query complete in the mock behind the back of the bridge.
+    qserv_status = read_test_qserv_status(
+        "simple-completed",
+        query_begin=start_time,
+        last_update=current_datetime(),
+    )
+    await mock_qserv.update_status(1, qserv_status)
+
+    # Canceling a completed query should quietly do nothing.
+    assert await query_service.cancel_query(cancel) is None
+    assert isinstance(factory.events.query_abort, MockEventPublisher)
+    events = factory.events.query_abort.published
+    assert len(events) == 0
+    assert mock_slack.messages == []
 
 
 @pytest.mark.asyncio
