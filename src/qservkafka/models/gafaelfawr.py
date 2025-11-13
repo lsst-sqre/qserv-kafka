@@ -6,6 +6,8 @@ available.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 __all__ = ["GafaelfawrQuota", "GafaelfawrUserInfo"]
@@ -15,6 +17,10 @@ class GafaelfawrTapQuota(BaseModel):
     """TAP quota information for a user."""
 
     concurrent: int = Field(..., title="Concurrent queries")
+
+    def to_logging_context(self) -> dict[str, Any]:
+        """Convert to variables for a structlog logging context."""
+        return {"concurrent": self.concurrent}
 
 
 class GafaelfawrQuota(BaseModel):
