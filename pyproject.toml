@@ -75,7 +75,7 @@ tox = [
     "tox-uv>=1.25",
 ]
 typing = [
-    "mypy>=1.15",
+    "mypy>=1.19",
     "types-cachetools",
 ]
 
