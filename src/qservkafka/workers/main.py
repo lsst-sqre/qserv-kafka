@@ -31,7 +31,7 @@ async def startup(ctx: dict[Any, Any]) -> None:
         release=__version__, disabled_integrations=[LoggingIntegration]
     )
     configure_logging(
-        profile=config.profile,
+        profile=config.log_profile,
         log_level=config.log_level,
         name="qservkafka",
         add_timestamp=True,

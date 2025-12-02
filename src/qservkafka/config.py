@@ -142,6 +142,10 @@ class Config(BaseSettings):
         LogLevel.INFO, title="Log level of the application's logger"
     )
 
+    log_profile: Profile = Field(
+        Profile.production, title="Application logging profile"
+    )
+
     max_worker_jobs: int = Field(
         2,
         title="Concurrent result worker jobs per pod",
@@ -168,10 +172,6 @@ class Config(BaseSettings):
         description=(
             "Number of rows to batch together when encoding Parquet files."
         ),
-    )
-
-    profile: Profile = Field(
-        Profile.production, title="Application logging profile"
     )
 
     redis_max_connections: int = Field(

@@ -172,7 +172,7 @@ async def kafka_status_consumer(
 @pytest.fixture
 def logger() -> BoundLogger:
     configure_logging(
-        profile=config.profile,
+        profile=config.log_profile,
         log_level=config.log_level,
         name="qservkafka",
         add_timestamp=True,

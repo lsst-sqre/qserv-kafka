@@ -33,7 +33,7 @@ def create_app() -> FastAPI:
         release=__version__, disabled_integrations=[LoggingIntegration]
     )
     configure_logging(
-        profile=config.profile,
+        profile=config.log_profile,
         log_level=config.log_level,
         name="qservkafka",
         add_timestamp=True,
