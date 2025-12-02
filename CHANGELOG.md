@@ -7,6 +7,22 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-4.0.0'></a>
+## 4.0.0 (2025-12-02)
+
+### Backwards-incompatible changes
+
+- Request version 51 of the Qserv REST API instead of version 49. This only applies if the Qserv Kafka bridge is configured to send versions in REST API requests.
+
+### New features
+
+- Publish multi-platform images that support both linux/amd64 and linux/arm64.
+
+### Bug fixes
+
+- Suppress error reporting if canceling a query fails because the query already completed or failed.
+- Improve formatting of error messages by making more room for the URL, adding the method, moving the (sometimes long) Qserv error message into a text block, and suppressing the (not useful to the user in practice) error details in the error message sent back to the user.
+
 <a id='changelog-3.4.0'></a>
 ## 3.4.0 (2025-10-30)
 
