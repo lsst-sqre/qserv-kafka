@@ -47,7 +47,7 @@ from ..models.qserv import (
     TableUploadStats,
 )
 
-API_VERSION = 49
+API_VERSION = 51
 """Version of the REST API that this client requests."""
 
 __all__ = ["API_VERSION", "QservClient"]
