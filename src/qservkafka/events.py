@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from enum import StrEnum
+from typing import override
 
 from pydantic import Field
 from safir.dependencies.metrics import EventMaker
@@ -212,6 +213,7 @@ class Events(EventMaker):
         Aborted query.
     """
 
+    @override
     async def initialize(self, manager: EventManager) -> None:
         self.qserv_failure = await manager.create_publisher(
             "qserv_failure", QservFailureEvent

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import assert_never
 
 from faststream.kafka import KafkaBroker
 from safir.sentry import report_exception
@@ -160,8 +159,6 @@ class ResultProcessor:
                 )
             case AsyncQueryPhase.FAILED | AsyncQueryPhase.FAILED_LR:
                 result = await self._build_failed_status(full_query)
-            case _:  # pragma: no cover
-                raise ValueError(f"Unknown phase {status.status}")
 
         # Query was completed, either successfully or unsuccessfully. Delete
         # any state storage needed for it, update rate limits, and return the
@@ -358,8 +355,6 @@ class ResultProcessor:
                     code=JobErrorCode.result_timeout,
                     message="Retrieving and uploading results timed out",
                 )
-            case _:
-                assert_never(exc)
 
         # Send a metrics event for the failure.
         event = QueryFailureEvent(
