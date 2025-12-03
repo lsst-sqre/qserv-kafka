@@ -32,7 +32,7 @@ dependencies = [
     "pydantic>=2.11",
     "pydantic-settings>=2.8",
     "redis>=5",
-    "safir[arq,db,kafka,redis]>=14.1.1",
+    "safir[arq,db,kafka,redis]>=14.1.2",
     "uvicorn[standard]>=0.34",
     "vo-models>=0.4",
 ]
