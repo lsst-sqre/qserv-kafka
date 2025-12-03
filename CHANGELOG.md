@@ -7,6 +7,13 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-4.0.1'></a>
+## 4.0.1 (2025-12-03)
+
+### Bug fixes
+
+- Use updated Safir so that app metrics won't break the app in rare situations if the underlying Kafka infrastructure is down.
+
 <a id='changelog-4.0.0'></a>
 ## 4.0.0 (2025-12-02)
 
