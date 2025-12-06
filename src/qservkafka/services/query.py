@@ -26,7 +26,7 @@ from ..models.kafka import (
 )
 from ..models.qserv import AsyncQueryPhase
 from ..models.state import Query
-from ..storage.gafaelfawr import GafaelfawrClient
+from ..storage.gafaelfawr import GafaelfawrStorage
 from ..storage.qserv import QservClient
 from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
@@ -48,8 +48,8 @@ class QueryService:
         Service to process completed queries.
     rate_limit_store
         Storage for rate limiting.
-    gafaelfawr_client
-        Client for quota information.
+    gafaelfawr_storage
+        Storage for quota information.
     events
         Metrics events publishers.
     slack_client
@@ -65,7 +65,7 @@ class QueryService:
         state_store: QueryStateStore,
         result_processor: ResultProcessor,
         rate_limit_store: RateLimitStore,
-        gafaelfawr_client: GafaelfawrClient,
+        gafaelfawr_storage: GafaelfawrStorage,
         events: Events,
         slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
@@ -74,7 +74,7 @@ class QueryService:
         self._state = state_store
         self._results = result_processor
         self._rate_store = rate_limit_store
-        self._gafaelfawr = gafaelfawr_client
+        self._gafaelfawr = gafaelfawr_storage
         self._events = events
         self._slack_client = slack_client
         self._logger = logger

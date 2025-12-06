@@ -34,7 +34,7 @@ from .models.state import RunningQuery
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
 from .services.results import ResultProcessor
-from .storage.gafaelfawr import GafaelfawrClient
+from .storage.gafaelfawr import GafaelfawrStorage
 from .storage.qserv import QservClient
 from .storage.rate import RateLimitStore
 from .storage.state import QueryStateStore
@@ -70,8 +70,8 @@ class ProcessContext:
     slack_client: SlackWebhookClient | None
     """Client for sending Slack error notifications."""
 
-    gafaelfawr_client: GafaelfawrClient
-    """Shared caching Gafaelfawr client."""
+    gafaelfawr: GafaelfawrStorage
+    """Shared caching Gafaelfawr storage."""
 
     events: Events
     """Event publishers for metrics events."""
@@ -179,7 +179,7 @@ class ProcessContext:
             slack_client = None
 
         # Create a shared caching Gafaelfawr client.
-        gafaelfawr_client = GafaelfawrClient(http_client, slack_client, logger)
+        gafaelfawr = GafaelfawrStorage(http_client, slack_client, logger)
 
         # Return the newly-constructed context.
         return cls(
@@ -189,7 +189,7 @@ class ProcessContext:
             kafka_broker=kafka_broker,
             event_manager=event_manager,
             slack_client=slack_client,
-            gafaelfawr_client=gafaelfawr_client,
+            gafaelfawr=gafaelfawr,
             events=events,
             redis=redis_client,
         )
@@ -235,9 +235,9 @@ class Factory:
         return self._context.events
 
     @property
-    def gafaelfawr_client(self) -> GafaelfawrClient:
+    def gafaelfawr(self) -> GafaelfawrStorage:
         """Global shared caching Gafaelfawr client."""
-        return self._context.gafaelfawr_client
+        return self._context.gafaelfawr
 
     async def create_background_task_manager(self) -> BackgroundTaskManager:
         """Create the background task manager to monitor qserv jobs.
@@ -328,7 +328,7 @@ class Factory:
             state_store=self.create_query_state_store(),
             result_processor=self.create_result_processor(),
             rate_limit_store=self.create_rate_limit_store(),
-            gafaelfawr_client=self.gafaelfawr_client,
+            gafaelfawr_storage=self.gafaelfawr,
             events=self._context.events,
             slack_client=self._context.slack_client,
             logger=self._logger,
