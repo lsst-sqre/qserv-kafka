@@ -12,13 +12,18 @@ from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 from faststream.kafka import KafkaBroker
 from httpx import Response
+from rubin.gafaelfawr import (
+    GafaelfawrQuota,
+    GafaelfawrTapQuota,
+    GafaelfawrUserInfo,
+    MockGafaelfawr,
+)
 from safir.datetime import current_datetime
 from safir.metrics import MockEventPublisher
 from testcontainers.redis import RedisContainer
 
 from qservkafka.config import config
 from qservkafka.dependencies.context import context_dependency
-from qservkafka.models.gafaelfawr import GafaelfawrQuota, GafaelfawrTapQuota
 from qservkafka.models.state import RunningQuery
 
 from ..support.arq import create_arq_worker
@@ -27,7 +32,6 @@ from ..support.data import (
     read_test_job_run,
     read_test_qserv_status,
 )
-from ..support.gafaelfawr import MockGafaelfawr
 from ..support.kafka import start_query, wait_for_dispatch, wait_for_status
 from ..support.qserv import MockQserv
 
@@ -364,7 +368,8 @@ async def test_quota(
     quota = GafaelfawrQuota(
         tap={config.tap_service: GafaelfawrTapQuota(concurrent=2)}
     )
-    mock_gafaelfawr.set_quota(job.owner, quota)
+    user_info = GafaelfawrUserInfo(username=job.owner, quota=quota)
+    mock_gafaelfawr.set_user_info(job.owner, user_info)
 
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
