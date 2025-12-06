@@ -6,8 +6,6 @@ from datetime import timedelta
 
 __all__ = [
     "ARQ_TIMEOUT_GRACE",
-    "GAFAELFAWR_CACHE_LIFETIME",
-    "GAFAELFAWR_CACHE_SIZE",
     "MAXIMUM_QUERY_LIFETIME",
     "RATE_LIMIT_RECONCILE_INTERVAL",
     "REDIS_BACKOFF_MAX",
@@ -25,16 +23,6 @@ This should be long enough to allow for asking the REST API for the status,
 but still shorter than the additional grace period Kubernetes is configured
 to give the worker pod.
 """
-
-GAFAELFAWR_CACHE_LIFETIME = timedelta(minutes=5)
-"""How long to cache quota information for users, retrieved from Gafaelfawr.
-
-Gafaelfawr policy says that this should not be any longer than five minutes so
-that changes to the user's groups are picked up correctly.
-"""
-
-GAFAELFAWR_CACHE_SIZE = 1000
-"""Maximum number of users whose quota information is cached in memory."""
 
 MAXIMUM_QUERY_LIFETIME = timedelta(days=1)
 """How long before we forget about a query entirely.

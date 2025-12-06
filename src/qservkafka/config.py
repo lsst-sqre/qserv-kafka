@@ -97,12 +97,6 @@ class Config(BaseSettings):
         "qserv", title="Kafka consumer group ID"
     )
 
-    gafaelfawr_base_url: HttpUrl = Field(
-        ...,
-        title="Base URL for Gafaelfawr",
-        description="Used to access the Gafaelfawr API to get user quotas",
-    )
-
     gafaelfawr_token: SecretStr = Field(
         ...,
         title="Gafaelfawr token",

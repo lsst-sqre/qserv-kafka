@@ -86,6 +86,7 @@ async def run_job(
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(120)
 async def test_leak(
     *,
     app: FastAPI,
