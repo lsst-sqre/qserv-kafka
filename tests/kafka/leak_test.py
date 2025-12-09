@@ -137,8 +137,8 @@ async def test_leak(
 
         # In practice memory usage change is never zero because Python and its
         # libraries aggressively cache a lot of objects. Fail only if more
-        # than 500KiB was leaked.
-        limit = 500_000
+        # than 300KiB was leaked.
+        limit = 300_000
         if end_usage - start_usage >= limit:
             snapshot = tracemalloc.take_snapshot()
             top_stats = snapshot.statistics("lineno")
