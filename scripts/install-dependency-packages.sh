@@ -24,9 +24,7 @@ export DEBIAN_FRONTEND=noninteractive
 # install-base-packages.sh, but that step might be skipped due to caching.
 apt-get update
 
-# build-essential: used by Python dependencies that build C modules
-# git: required during package installation for setuptools-scm
-# libffi-dev: sometimes needed to build cffi (a cryptography dependency)
-# zlib1g-dev: sometimes needed to build aiokafka
-apt-get -y install --no-install-recommends \
-    build-essential git libffi-dev zlib1g-dev
+# build-essential is sometimes required by Python dependencies that build C
+# modules. git is required during package installation for setuptools_scm.
+# libffi-dev is sometimes needed to build cffi (a cryptography dependency).
+apt-get -y install --no-install-recommends build-essential git libffi-dev
