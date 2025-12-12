@@ -288,13 +288,6 @@ class ResultProcessor:
             submit_elapsed=submit_elapsed.total_seconds(),
         )
 
-        # Delete the results.
-        try:
-            await self._qserv.delete_result(query.query_id)
-        except QservApiError as e:
-            await report_exception(e, slack_client=self._slack_client)
-            logger.exception("Cannot delete results")
-
         # Return the resulting status.
         return JobStatus(
             job_id=query.job.job_id,
