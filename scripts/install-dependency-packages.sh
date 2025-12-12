@@ -27,4 +27,5 @@ apt-get update
 # build-essential is sometimes required by Python dependencies that build C
 # modules. git is required during package installation for setuptools_scm.
 # libffi-dev is sometimes needed to build cffi (a cryptography dependency).
-apt-get -y install --no-install-recommends build-essential git libffi-dev
+apt-get -y install --no-install-recommends build-essential git libffi-dev \
+    zlib1g-dev
