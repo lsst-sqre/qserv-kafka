@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Generator, Iterator
 from contextlib import aclosing
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -14,6 +15,8 @@ from fastapi import FastAPI
 from faststream.kafka import KafkaBroker, TestKafkaBroker
 from httpx import ASGITransport, AsyncClient
 from pydantic import MySQLDsn, RedisDsn, SecretStr
+from rubin.gafaelfawr import MockGafaelfawr, register_mock_gafaelfawr
+from rubin.repertoire import Discovery, register_mock_discovery
 from safir.arq import ArqMode
 from safir.database import create_database_engine
 from safir.kafka import KafkaConnectionSettings, SecurityProtocol
@@ -30,7 +33,6 @@ from qservkafka.config import config
 from qservkafka.factory import Factory, ProcessContext
 from qservkafka.main import create_app
 
-from .support.gafaelfawr import MockGafaelfawr, register_mock_gafaelfawr
 from .support.qserv import MockQserv, register_mock_qserv
 
 
@@ -181,9 +183,24 @@ def logger() -> BoundLogger:
 
 
 @pytest.fixture(autouse=True)
-def mock_gafaelfawr(respx_mock: respx.Router) -> MockGafaelfawr:
-    base_url = str(config.gafaelfawr_base_url)
-    return register_mock_gafaelfawr(respx_mock, base_url)
+def mock_discovery(
+    respx_mock: respx.Router, monkeypatch: pytest.MonkeyPatch
+) -> Discovery:
+    monkeypatch.setenv("REPERTOIRE_BASE_URL", "https://example.com/repertoire")
+    path = Path(__file__).parent / "data" / "discovery.json"
+    return register_mock_discovery(respx_mock, path)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def mock_gafaelfawr(
+    mock_discovery: Discovery,
+    respx_mock: respx.Router,
+    monkeypatch: pytest.MonkeyPatch,
+) -> MockGafaelfawr:
+    mock = await register_mock_gafaelfawr(respx_mock)
+    token = mock.create_token("qserv-kafka", scopes=["admin:userinfo"])
+    monkeypatch.setattr(config, "gafaelfawr_token", SecretStr(token))
+    return mock
 
 
 @pytest_asyncio.fixture(ids=["good"], params=[False])
