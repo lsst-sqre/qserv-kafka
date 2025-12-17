@@ -289,11 +289,12 @@ class ResultProcessor:
         )
 
         # Delete the results.
-        try:
-            await self._qserv.delete_result(query.query_id)
-        except QservApiError as e:
-            await report_exception(e, slack_client=self._slack_client)
-            logger.exception("Cannot delete results")
+        if config.qserv_delete_queries:
+            try:
+                await self._qserv.delete_result(query.query_id)
+            except QservApiError as e:
+                await report_exception(e, slack_client=self._slack_client)
+                logger.exception("Cannot delete results")
 
         # Return the resulting status.
         return JobStatus(
