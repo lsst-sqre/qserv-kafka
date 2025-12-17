@@ -249,6 +249,17 @@ class ResultProcessor:
         if not query.created:
             query.created = query.start
 
+        # Delete the results.
+        delete_elapsed = None
+        if config.qserv_delete_queries:
+            delete_start = datetime.now(tz=UTC)
+            try:
+                await self._qserv.delete_result(query.query_id)
+            except QservApiError as e:
+                await report_exception(e, slack_client=self._slack_client)
+                logger.exception("Cannot delete results")
+            delete_elapsed = datetime.now(tz=UTC) - delete_start
+
         # Send a metrics event for the job completion and log it.
         now = datetime.now(tz=UTC)
         qserv_end = query.status.last_update or now
@@ -266,6 +277,7 @@ class ResultProcessor:
             qserv_elapsed=qserv_elapsed,
             result_elapsed=stats.elapsed,
             submit_elapsed=submit_elapsed,
+            delete_elapsed=delete_elapsed,
             rows=stats.rows,
             qserv_size=query.status.collected_bytes,
             encoded_size=stats.data_bytes,
@@ -287,14 +299,6 @@ class ResultProcessor:
             result_elapsed=stats.elapsed.total_seconds(),
             submit_elapsed=submit_elapsed.total_seconds(),
         )
-
-        # Delete the results.
-        if config.qserv_delete_queries:
-            try:
-                await self._qserv.delete_result(query.query_id)
-            except QservApiError as e:
-                await report_exception(e, slack_client=self._slack_client)
-                logger.exception("Cannot delete results")
 
         # Return the resulting status.
         return JobStatus(
