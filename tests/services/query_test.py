@@ -96,6 +96,9 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     finish = datetime.now(tz=UTC)
     elapsed = finish - start
 
+    # Check that the results were cleaned up.
+    assert not mock_qserv.results_stored
+
     # Check that the correct metrics event was sent.
     assert isinstance(factory.events.query_success, MockEventPublisher)
     events = factory.events.query_success.published
@@ -156,6 +159,30 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
         factory.events.qserv_failure.published.assert_published(
             [{"protocol": "HTTP"}, {"protocol": "SQL"}]
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
+async def test_no_delete(
+    factory: Factory, mock_qserv: MockQserv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that deleting results from Qserv can be configured."""
+    monkeypatch.setattr(config, "qserv_delete_queries", False)
+    query_service = factory.create_query_service()
+    job = read_test_job_run("data")
+    expected_status = read_test_job_status("data-completed")
+
+    await assert_query_successful(
+        query_service=query_service,
+        mock_qserv=mock_qserv,
+        job=job,
+        expected_status=expected_status,
+    )
+
+    # Check that the query was not deleted.
+    assert mock_qserv.results_stored
 
 
 @pytest.mark.asyncio

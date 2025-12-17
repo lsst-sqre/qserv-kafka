@@ -215,6 +215,16 @@ class Config(BaseSettings):
 
     qserv_database_url: MySQLDsn = Field(..., title="Qserv MySQL DSN")
 
+    qserv_delete_queries: bool = Field(
+        True,
+        title="Delete completed queries",
+        description=(
+            "Whether to clean up completed queries explicitly after each"
+            " query completes. If set to false, the query results are left"
+            " in Qserv for it to clean up itself."
+        ),
+    )
+
     qserv_poll_interval: HumanTimedelta = Field(
         timedelta(seconds=1),
         title="Qserv poll interval",

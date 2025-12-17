@@ -155,6 +155,11 @@ class MockQserv:
             engine, logger, schema=_SchemaBase.metadata, reset=True
         )
 
+    @property
+    def results_stored(self) -> bool:
+        """Whether results are currently stored."""
+        return self._results_stored
+
     def get_status(self, query_id: int) -> AsyncQueryStatus:
         """Return the current stored status.
 
