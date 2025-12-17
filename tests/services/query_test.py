@@ -111,6 +111,7 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
         "qserv_elapsed": ANY,
         "result_elapsed": ANY,
         "submit_elapsed": ANY,
+        "delete_elapsed": ANY,
         "rows": 2,
         "qserv_size": 250,
         "encoded_size": len(read_test_data("results/data.binary2")),
@@ -135,6 +136,7 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
         "qserv_elapsed",
         "result_elapsed",
         "submit_elapsed",
+        "delete_elapsed",
     ):
         assert timedelta(seconds=0) <= getattr(success_event, field) <= elapsed
 
@@ -183,6 +185,29 @@ async def test_no_delete(
 
     # Check that the query was not deleted.
     assert mock_qserv.results_stored
+
+    # Check that the correct metrics events were sent.
+    assert isinstance(factory.events.query_success, MockEventPublisher)
+    events = factory.events.query_success.published
+    assert len(events) == 1
+    assert events[0].model_dump(mode="json") == {
+        "job_id": job.job_id,
+        "username": job.owner,
+        "elapsed": ANY,
+        "qserv_elapsed": ANY,
+        "result_elapsed": ANY,
+        "submit_elapsed": ANY,
+        "delete_elapsed": None,
+        "rows": 2,
+        "qserv_size": 250,
+        "encoded_size": len(read_test_data("results/data.binary2")),
+        "result_size": ANY,
+        "rate": ANY,
+        "qserv_rate": ANY,
+        "result_rate": ANY,
+        "upload_tables": 0,
+        "immediate": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -404,6 +429,7 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
         "qserv_elapsed": ANY,
         "result_elapsed": ANY,
         "submit_elapsed": ANY,
+        "delete_elapsed": ANY,
         "rows": 2,
         "qserv_size": 250,
         "encoded_size": len(read_test_data("results/data.binary2")),

@@ -88,6 +88,15 @@ class QuerySuccessEvent(BaseQueryEvent):
         ),
     )
 
+    delete_elapsed: timedelta | None = Field(
+        None,
+        title="Job deletion time",
+        description=(
+            "How long it took to delete the query from Qserv after successful"
+            " completion"
+        ),
+    )
+
     rows: int = Field(
         ..., title="Row count", description="Number of rows in the output"
     )
