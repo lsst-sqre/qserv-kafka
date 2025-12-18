@@ -161,6 +161,28 @@ class QuerySuccessEvent(BaseQueryEvent):
         ),
     )
 
+    def to_logging_context(self) -> dict[str, float]:
+        """Convert relevant information to a dictionary for logging."""
+        result = {
+            "rows": self.rows,
+            "qserv_size": self.qserv_size,
+            "encoded_size": self.encoded_size,
+            "total_size": self.result_size,
+            "elapsed": self.elapsed.total_seconds(),
+        }
+        if self.kafka_elapsed:
+            result["kafka_elapsed"] = self.kafka_elapsed.total_seconds()
+        result.update(
+            {
+                "qserv_elapsed": self.qserv_elapsed.total_seconds(),
+                "result_elapsed": self.result_elapsed.total_seconds(),
+                "submit_elapsed": self.submit_elapsed.total_seconds(),
+            }
+        )
+        if self.delete_elapsed:
+            result["delete_elapsed"] = self.delete_elapsed.total_seconds()
+        return result
+
 
 class QueryAbortEvent(BaseQueryEvent):
     """Query aborted (by user or by administrator)."""

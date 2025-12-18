@@ -265,21 +265,14 @@ class ResultProcessor:
         else:
             qserv_rate = None
         elapsed = now - (query.queued or query.start)
-        submit_elapsed = query.created - query.start
-        if query.queued:
-            kafka_elapsed = query.start - query.queued
-            kafka_elapsed_sec = kafka_elapsed.total_seconds()
-        else:
-            kafka_elapsed = None
-            kafka_elapsed_sec = None
         event = QuerySuccessEvent(
             job_id=query.job.job_id,
             username=query.job.owner,
             elapsed=elapsed,
-            kafka_elapsed=kafka_elapsed,
+            kafka_elapsed=query.start - query.queued if query.queued else None,
             qserv_elapsed=qserv_elapsed,
             result_elapsed=stats.elapsed,
-            submit_elapsed=submit_elapsed,
+            submit_elapsed=query.created - query.start,
             delete_elapsed=delete_elapsed,
             rows=stats.rows,
             qserv_size=query.status.collected_bytes,
@@ -293,15 +286,7 @@ class ResultProcessor:
         )
         await self._events.query_success.publish(event)
         logger.info(
-            "Job complete and results uploaded",
-            rows=stats.rows,
-            encoded_size=stats.data_bytes,
-            total_size=stats.total_bytes,
-            elapsed=elapsed.total_seconds(),
-            kafka_elapsed=kafka_elapsed_sec,
-            qserv_elapsed=qserv_elapsed_sec,
-            result_elapsed=stats.elapsed.total_seconds(),
-            submit_elapsed=submit_elapsed.total_seconds(),
+            "Job complete and results uploaded", **event.to_logging_context()
         )
 
         # Return the resulting status.
