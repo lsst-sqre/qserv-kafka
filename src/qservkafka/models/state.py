@@ -22,6 +22,10 @@ class Query(BaseModel):
 
     query_id: Annotated[int, Field(title="Qserv ID of query")]
 
+    queued: Annotated[
+        datetime | None, Field(title="Kafka queue time of query")
+    ]
+
     start: Annotated[datetime, Field(title="Receipt time of query")]
 
     created: Annotated[
@@ -30,14 +34,17 @@ class Query(BaseModel):
 
     job: Annotated[JobRun, Field(title="Full job request")]
 
-    def to_logging_context(self) -> dict[str, Any]:
+    def to_logging_context(self) -> dict[str, str | float]:
         """Convert to variables for a structlog logging context."""
-        return {
+        result: dict[str, str | float] = {
             "job_id": self.job.job_id,
             "qserv_id": str(self.query_id),
             "username": self.job.owner,
             "start_time": format_datetime_for_logging(self.start),
         }
+        if self.queued:
+            result["queued"] = format_datetime_for_logging(self.queued)
+        return result
 
 
 class RunningQuery(Query):
@@ -67,6 +74,7 @@ class RunningQuery(Query):
         """
         return cls(
             query_id=query.query_id,
+            queued=query.queued,
             start=query.start,
             created=query.created,
             job=query.job,

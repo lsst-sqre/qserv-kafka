@@ -53,6 +53,7 @@ async def test_success(
         factory = context_dependency.create_factory()
         arq_worker = create_arq_worker(factory._context)
 
+        start = datetime.now(tz=UTC)
         job = await start_query(kafka_broker, "data")
         status = await wait_for_status(kafka_status_consumer, "data-started")
         assert status.query_info
@@ -88,6 +89,7 @@ async def test_success(
         "job_id": job.job_id,
         "username": job.owner,
         "elapsed": ANY,
+        "kafka_elapsed": ANY,
         "qserv_elapsed": ANY,
         "result_elapsed": ANY,
         "submit_elapsed": ANY,
@@ -102,6 +104,7 @@ async def test_success(
         "upload_tables": 0,
         "immediate": False,
     }
+    assert events[0].kafka_elapsed <= start_time - start
 
 
 @pytest.mark.asyncio

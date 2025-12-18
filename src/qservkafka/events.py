@@ -65,6 +65,12 @@ class QuerySuccessEvent(BaseQueryEvent):
         ),
     )
 
+    kafka_elapsed: timedelta | None = Field(
+        None,
+        title="Kafka processing delay",
+        description="Time from Kafka message queuing to start of processing",
+    )
+
     qserv_elapsed: timedelta = Field(
         ...,
         title="Qserv processing time",
