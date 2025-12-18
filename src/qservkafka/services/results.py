@@ -244,12 +244,7 @@ class ResultProcessor:
         except (QservApiError, UploadWebError, TimeoutError) as e:
             return await self._build_exception_status(query, e)
 
-        # Can be removed and created made non-optional after the upgrade is
-        # fully deployed.
-        if not query.created:
-            query.created = query.start
-
-        # Delete the results.
+        # Delete the results if configured to do so.
         delete_elapsed = None
         if config.qserv_delete_queries:
             delete_start = datetime.now(tz=UTC)
@@ -271,11 +266,17 @@ class ResultProcessor:
             qserv_rate = None
         elapsed = now - (query.queued or query.start)
         submit_elapsed = query.created - query.start
+        if query.queued:
+            kafka_elapsed = query.start - query.queued
+            kafka_elapsed_sec = kafka_elapsed.total_seconds()
+        else:
+            kafka_elapsed = None
+            kafka_elapsed_sec = None
         event = QuerySuccessEvent(
             job_id=query.job.job_id,
             username=query.job.owner,
             elapsed=elapsed,
-            kafka_elapsed=query.start - query.queued if query.queued else None,
+            kafka_elapsed=kafka_elapsed,
             qserv_elapsed=qserv_elapsed,
             result_elapsed=stats.elapsed,
             submit_elapsed=submit_elapsed,
@@ -296,7 +297,8 @@ class ResultProcessor:
             rows=stats.rows,
             encoded_size=stats.data_bytes,
             total_size=stats.total_bytes,
-            elapsed=(now - query.start).total_seconds(),
+            elapsed=elapsed.total_seconds(),
+            kafka_elapsed=kafka_elapsed_sec,
             qserv_elapsed=qserv_elapsed_sec,
             result_elapsed=stats.elapsed.total_seconds(),
             submit_elapsed=submit_elapsed.total_seconds(),
