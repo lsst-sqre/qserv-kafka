@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from faststream.kafka.fastapi import KafkaMessage
 from structlog.stdlib import BoundLogger, get_logger
@@ -24,6 +25,9 @@ class ConsumerContext:
 
     factory: Factory
     """The component factory."""
+
+    message_timestamp: datetime
+    """Timestamp of the message, extracted from the Kafka header."""
 
 
 class ContextDependency:
@@ -61,9 +65,11 @@ class ContextDependency:
         logger = logger.bind(kafka=kafka_context)
 
         # Return the per-message context.
+        timestamp = datetime.fromtimestamp(record.timestamp / 1000, tz=UTC)
         return ConsumerContext(
             logger=logger,
             factory=Factory(self._process_context, logger),
+            message_timestamp=timestamp,
         )
 
     async def aclose(self) -> None:

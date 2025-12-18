@@ -48,7 +48,8 @@ async def assert_query_successful(
         Model of status to expect.
     """
     mock_qserv.set_immediate_success(job)
-    status = await query_service.start_query(job)
+    kafka_timestamp = datetime.now(tz=UTC) - timedelta(seconds=10)
+    status = await query_service.start_query(job, kafka_timestamp)
     assert status == expected_status
     assert_approximately_now(status.timestamp)
     assert status.query_info
@@ -108,6 +109,7 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
         "job_id": job.job_id,
         "username": job.owner,
         "elapsed": ANY,
+        "kafka_elapsed": ANY,
         "qserv_elapsed": ANY,
         "result_elapsed": ANY,
         "submit_elapsed": ANY,
@@ -131,8 +133,15 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
         "upload_tables": 0,
         "immediate": True,
     }
+
+    # These time fields should include the fake Kafka delay of 10s.
+    for field in ("elapsed", "kafka_elapsed"):
+        timestamp = getattr(success_event, field)
+        assert timedelta(seconds=10) <= timestamp
+        assert timestamp <= elapsed + timedelta(seconds=10)
+
+    # These time fields shouldn't include the Kafka delay.
     for field in (
-        "elapsed",
         "qserv_elapsed",
         "result_elapsed",
         "submit_elapsed",
@@ -194,6 +203,7 @@ async def test_no_delete(
         "job_id": job.job_id,
         "username": job.owner,
         "elapsed": ANY,
+        "kafka_elapsed": ANY,
         "qserv_elapsed": ANY,
         "result_elapsed": ANY,
         "submit_elapsed": ANY,
@@ -426,6 +436,7 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
         "job_id": job.job_id,
         "username": job.owner,
         "elapsed": ANY,
+        "kafka_elapsed": ANY,
         "qserv_elapsed": ANY,
         "result_elapsed": ANY,
         "submit_elapsed": ANY,

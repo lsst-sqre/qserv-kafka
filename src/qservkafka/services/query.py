@@ -147,7 +147,9 @@ class QueryService:
         if status:
             await self._results.publish_status(status)
 
-    async def handle_query(self, job: JobRun) -> None:
+    async def handle_query(
+        self, job: JobRun, kafka_start: datetime | None
+    ) -> None:
         """Handle an incoming request to run a query.
 
         Start the query if possible and publish the status of the query as a
@@ -157,17 +159,23 @@ class QueryService:
         ----------
         job
             Query job to start.
+        kafka_start
+            Time at which the Kafka message for the job was queued.
         """
-        status = await self.start_query(job)
+        status = await self.start_query(job, kafka_start)
         await self._results.publish_status(status)
 
-    async def start_query(self, job: JobRun) -> JobStatus:
+    async def start_query(
+        self, job: JobRun, kafka_start: datetime | None = None
+    ) -> JobStatus:
         """Start a new query and return its initial status.
 
         Parameters
         ----------
         job
             Query job to start.
+        kafka_start
+            Time at which the Kafka message for the job was queued.
 
         Returns
         -------
@@ -180,7 +188,6 @@ class QueryService:
         # Check that the job request is supported.
         result_type = job.result_format.format.type
         serialization = job.result_format.format.serialization
-
         if result_type == JobResultType.VOTable:
             if not serialization:
                 msg = "VOTable format requires serialization"
@@ -188,7 +195,6 @@ class QueryService:
             if serialization != JobResultSerialization.BINARY2:
                 msg = f"{serialization} serialization not supported"
                 return self._build_invalid_request_status(job, msg)
-
         for column in job.result_format.column_types:
             if not column.is_string() and column.arraysize is not None:
                 m = "arraysize only supported for char and unicodeChar fields"
@@ -213,7 +219,7 @@ class QueryService:
 
         # Start the query.
         try:
-            return await self._start_query_internal(job, logger)
+            return await self._start_query_internal(job, kafka_start, logger)
         except Exception:
             await self._rate_store.end_query(job.owner)
             raise
@@ -292,7 +298,7 @@ class QueryService:
         )
 
     async def _start_query_internal(
-        self, job: JobRun, logger: BoundLogger
+        self, job: JobRun, kafka_start: datetime | None, logger: BoundLogger
     ) -> JobStatus:
         """Start a query after verification and rate limiting.
 
@@ -300,6 +306,8 @@ class QueryService:
         ----------
         job
             Query job to start.
+        kafka_start
+            Time at which the Kafka message for the job was queued.
         logger
             Logger to use for any messages.
 
@@ -364,5 +372,11 @@ class QueryService:
         logger.info("Started query", qserv_id=str(query_id))
 
         # Analyze the initial status and return it.
-        query = Query(query_id=query_id, job=job, start=start, created=created)
+        query = Query(
+            query_id=query_id,
+            queued=kafka_start,
+            job=job,
+            start=start,
+            created=created,
+        )
         return await self._results.build_query_status(query, initial=True)

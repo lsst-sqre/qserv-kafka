@@ -269,11 +269,13 @@ class ResultProcessor:
             qserv_rate = query.status.collected_bytes / qserv_elapsed_sec
         else:
             qserv_rate = None
+        elapsed = now - (query.queued or query.start)
         submit_elapsed = query.created - query.start
         event = QuerySuccessEvent(
             job_id=query.job.job_id,
             username=query.job.owner,
-            elapsed=now - query.start,
+            elapsed=elapsed,
+            kafka_elapsed=query.start - query.queued if query.queued else None,
             qserv_elapsed=qserv_elapsed,
             result_elapsed=stats.elapsed,
             submit_elapsed=submit_elapsed,
@@ -282,7 +284,7 @@ class ResultProcessor:
             qserv_size=query.status.collected_bytes,
             encoded_size=stats.data_bytes,
             result_size=stats.total_bytes,
-            rate=stats.data_bytes / (now - query.start).total_seconds(),
+            rate=stats.data_bytes / elapsed.total_seconds(),
             qserv_rate=qserv_rate,
             result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
             upload_tables=len(query.job.upload_tables),
