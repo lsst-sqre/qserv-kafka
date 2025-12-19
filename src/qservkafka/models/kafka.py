@@ -168,8 +168,8 @@ class JobResultColumnType(BaseModel):
         Field(
             title="Whether to rewrite value",
             description=(
-                "If true, this column contains a URL that needs to be"
-                " rewritten using base URL information"
+                "If true, this column contains a URL to the DataLink service"
+                " that needs to be rewritten based on service discovery"
             ),
             validation_alias="requiresUrlRewrite",
         ),

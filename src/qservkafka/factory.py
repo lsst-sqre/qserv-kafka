@@ -11,6 +11,7 @@ from httpx import AsyncClient, Limits
 from redis.asyncio import BlockingConnectionPool, Redis
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
+from rubin.repertoire import DiscoveryClient
 from safir.arq import ArqMode, ArqQueue, MockArqQueue, RedisArqQueue
 from safir.database import create_database_engine
 from safir.metrics import EventManager
@@ -54,6 +55,9 @@ class ProcessContext:
 
     http_client: AsyncClient
     """Shared HTTP client."""
+
+    discovery_client: DiscoveryClient
+    """Shared service discovery client."""
 
     engine: AsyncEngine
     """Database engine."""
@@ -102,6 +106,7 @@ class ProcessContext:
         ProcessContext
             Shared context for a Qserv Kafka bridge process.
         """
+        logger = get_logger("qservkafka")
         if not qserv_database_pool_size:
             qserv_database_pool_size = config.qserv_database_pool_size
 
@@ -163,8 +168,6 @@ class ProcessContext:
         events = Events()
         await events.initialize(event_manager)
 
-        logger = get_logger("qservkafka")
-
         # Create a Slack client for notifying on errors
         if config.slack.enabled:
             if config.slack.webhook is None:
@@ -178,12 +181,21 @@ class ProcessContext:
         else:
             slack_client = None
 
+        # Create a shared caching service discovery client.
+        discovery_client = DiscoveryClient(http_client)
+
         # Create a shared caching Gafaelfawr client.
-        gafaelfawr = GafaelfawrStorage(http_client, slack_client, logger)
+        gafaelfawr = GafaelfawrStorage(
+            http_client=http_client,
+            discovery_client=discovery_client,
+            slack_client=slack_client,
+            logger=logger,
+        )
 
         # Return the newly-constructed context.
         return cls(
             http_client=http_client,
+            discovery_client=discovery_client,
             engine=engine,
             sessionmaker=async_sessionmaker(engine, expire_on_commit=False),
             kafka_broker=kafka_broker,
@@ -346,7 +358,9 @@ class Factory:
             qserv_client=self.create_qserv_client(),
             state_store=self.create_query_state_store(),
             votable_writer=VOTableWriter(
-                self._context.http_client, self._logger
+                self._context.http_client,
+                self._context.discovery_client,
+                self._logger,
             ),
             kafka_broker=self._context.kafka_broker,
             rate_limit_store=self.create_rate_limit_store(),

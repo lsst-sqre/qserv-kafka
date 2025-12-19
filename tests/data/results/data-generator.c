@@ -45,10 +45,10 @@ main(int argc, char *argv[])
     fwrite("c", sizeof(char), 1, stdout);   /* b */
     memset(&s, 0, sizeof(s));
     fwrite(&s, sizeof(s), 1, stdout);       /* c */
-    len = strlen("https://example.com/datalink/1");
+    len = strlen("https://example.com/datalink/links?ID=1");
     i = htonl(len);
     fwrite(&i, sizeof(i), 1, stdout);       /* d length */
-    fwrite("https://example.com/datalink/1", 1, len, stdout); /* d */
+    fwrite("https://example.com/datalink/links?ID=1", 1, len, stdout); /* d */
     g = NAN;
     memcpy(&k, &g, sizeof(k));
     k = htobe64(k);

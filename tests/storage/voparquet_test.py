@@ -10,6 +10,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from rubin.repertoire import DiscoveryClient
 from sqlalchemy import Row
 from structlog.stdlib import get_logger
 
@@ -77,7 +78,9 @@ async def assert_parquet_data(
     )
 
     local_logger = get_logger(__name__)
-    encoder = VOParquetEncoder(config, local_logger, overflow=overflow)
+    encoder = VOParquetEncoder(
+        config, DiscoveryClient(), local_logger, overflow=overflow
+    )
 
     parquet_data = b""
     async for chunk in encoder.encode(data_generator(data)):
@@ -302,7 +305,9 @@ async def test_maxrec_limit() -> None:
     )
 
     local_logger = get_logger(__name__)
-    encoder = VOParquetEncoder(config, local_logger, overflow=True)
+    encoder = VOParquetEncoder(
+        config, DiscoveryClient(), local_logger, overflow=True
+    )
 
     parquet_data = b""
     async for chunk in encoder.encode(data_generator(data), maxrec=3):
@@ -344,7 +349,7 @@ async def test_encoder_properties() -> None:
     )
 
     local_logger = get_logger(__name__)
-    encoder = VOParquetEncoder(config, local_logger)
+    encoder = VOParquetEncoder(config, DiscoveryClient(), local_logger)
 
     chunks = [chunk async for chunk in encoder.encode(data_generator(data))]
 

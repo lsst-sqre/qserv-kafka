@@ -1,6 +1,14 @@
 {
   "services": {
     "internal": {
+      "datalink": {
+        "url": "https://example.com/datalink",
+        "versions": {
+          "datalink-links-1.1": {
+            "url": "https://example.com/datalink/links"
+          }
+        }
+      },
       "gafaelfawr": {
         "url": "https://data.example.com/auth/api",
         "versions": {

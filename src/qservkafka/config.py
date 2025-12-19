@@ -304,16 +304,6 @@ class Config(BaseSettings):
         ),
     )
 
-    rewrite_base_url: HttpUrl = Field(
-        ...,
-        title="Base URL for rewrites",
-        description=(
-            "URLs in columns flagged for rewriting will have their netloc"
-            " portion replaced with the netloc from this base URL. The rest"
-            " of the URL will be left untouched."
-        ),
-    )
-
     result_timeout: HumanTimedelta = Field(
         timedelta(minutes=10),
         title="Timeout for result processing",

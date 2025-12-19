@@ -32,6 +32,7 @@ dependencies = [
     "pydantic-settings>=2.8",
     "redis>=5",
     "rubin-gafaelfawr",
+    "rubin-repertoire>=0.6",
     "safir[arq,db,kafka,redis]>=14.1.2",
     "structlog>24",
     "uvicorn[standard]>=0.34",
