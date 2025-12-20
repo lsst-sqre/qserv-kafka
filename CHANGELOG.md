@@ -7,6 +7,19 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-4.2.0'></a>
+## 4.2.0 (2025-12-19)
+
+### New features
+
+- Use [Repertoire](https://repertoire.lsst.io/) service discovery to find the DataLink service and rewrite URLs flagged for rewriting to point to the local DataLink URL, preserving the query parameters. Only support using the URL rewrite flag to rewrite DataLink URLs, which was the only thing it had been used for.
+- Add new `config.qservDeleteQueries` setting that can be set to false to skip deleting completed queries from Qserv.
+
+### Other changes
+
+- Add field containing the time required to delete the query from Qserv to the query success metrics event. This will be `None` if query deletion is disabled.
+- Add a `kafka_elapsed` field to metrics events, recording the time the message spent in Kafka before processing in the bridge started. Record total elapsed time based on the Kafka message timestamp, if available, rather than the start of bridge processing.
+
 <a id='changelog-4.1.0'></a>
 ## 4.1.0 (2025-12-15)
 
