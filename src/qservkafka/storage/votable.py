@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import struct
+from abc import ABCMeta, abstractmethod
 from binascii import b2a_base64
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from io import BytesIO
-from typing import Any
+from typing import Any, override
 from urllib.parse import urlparse
 
 import pyarrow as pa
@@ -16,6 +17,7 @@ import pyarrow.parquet as pq
 from bitstring import BitArray
 from httpx import AsyncClient, HTTPError
 from pydantic import HttpUrl
+from rubin.repertoire import DiscoveryClient
 from sqlalchemy import Row
 from structlog.stdlib import BoundLogger
 
@@ -28,23 +30,24 @@ from ..models.votable import EncodedSize, VOTablePrimitive
 _BASE64_LINE_LENGTH = 64
 """Maximum length of a base64-encoded line in BINARY2 output."""
 
-
 __all__ = [
+    "Binary2Encoder",
     "VOParquetEncoder",
     "VOTableEncoder",
     "VOTableWriter",
 ]
 
+# Set up the pyarrow memory pool.
 pa.set_memory_pool(pa.system_memory_pool())
 
 
 class StreamingAdapter:
-    """Streaming adapter that serves as a buffer between for streaming Parquet
-    pyarrow's ParquetWriter and an async generator that yields bytes.
+    """Streaming adapter for Parquet encoding.
 
-    Adapted from the StackOverflow example to work with PyArrow ParquetWriter.
-    https://stackoverflow.com/questions/64791558/
-    create-parquet-files-from-stream-in-python-in-memory-efficient-manner
+    This class serves as a buffer between pyarrow's ParquetWriter and an async
+    generator that yields bytes. Adapted from the `StackOverflow example
+    <https://stackoverflow.com/questions/64791558/>`__ to work with PyArrow
+    ParquetWriter.
     """
 
     def __init__(self) -> None:
@@ -91,24 +94,11 @@ class StreamingAdapter:
         """Flush method required by some writers."""
 
 
-def _rewrite_url(value_str: str, column_name: str, logger: BoundLogger) -> str:
-    """Shared URL rewriting logic."""
-    try:
-        base_url = urlparse(str(global_config.rewrite_base_url))
-        url = urlparse(value_str)
-        return url._replace(netloc=base_url.netloc).geturl()
-    except Exception as e:
-        logger.warning(
-            "Unable to rewrite URL", column=column_name, error=str(e)
-        )
-        return value_str
+class VOTableEncoder(metaclass=ABCMeta):
+    """Generic interface to VOTable encoding.
 
-
-class VOTableEncoder:
-    """Streaming encoder for the BINARY2 serialization format of VOTable.
-
-    A new encoder should be used for every result set, since it keeps internal
-    state in order to count the number of output rows.
+    An appropriate subclass of this class is created for each result to
+    encode.
 
     Parameters
     ----------
@@ -116,17 +106,24 @@ class VOTableEncoder:
         Configuration for the output format. Includes the header, footer, and
         type information. The type information must exactly match the columns
         of the results. This is not checked.
+    discovery_client
+        Service discovery client.
     logger
         Logger to use.
     """
 
-    def __init__(self, config: JobResultConfig, logger: BoundLogger) -> None:
+    def __init__(
+        self,
+        config: JobResultConfig,
+        discovery_client: DiscoveryClient,
+        logger: BoundLogger,
+    ) -> None:
         self._config = config
+        self._discovery = discovery_client
         self._logger = logger
 
-        self._encoded_size: int = 0
-        self._total_rows: int = 0
-        self._wrapper_size: int = 0
+        self._encoded_size = 0
+        self._total_rows = 0
 
     @property
     def encoded_size(self) -> int:
@@ -139,10 +136,102 @@ class VOTableEncoder:
         return self._total_rows
 
     @property
+    @abstractmethod
     def total_size(self) -> int:
         """Total size of the output VOTable, including header and footer."""
+
+    @abstractmethod
+    async def encode(
+        self,
+        results: AsyncGenerator[Row[Any] | tuple[Any]],
+        *,
+        maxrec: int | None = None,
+    ) -> AsyncGenerator[bytes]:
+        """Encode results into a VOTable with BINARY2 encoding.
+
+        Parameters
+        ----------
+        results
+            Async generator that yields one result row at a time.
+        maxrec
+            Maximum record limit, if not `None`.
+
+        Yields
+        ------
+        bytes
+            Encoded data suitable for writing to a file or sending via an HTTP
+            ``PUT`` request.
+        """
+        yield b""
+
+    async def rewrite_datalink_url(
+        self, value_str: str, column_name: str
+    ) -> str:
+        """Rewrite a DataLink URL to point to the local DataLink server.
+
+        Parameters
+        ----------
+        value_str
+            Raw value from the TAP results.
+        column_name
+            Name of the column for error reporting.
+
+        Returns
+        -------
+        str
+            Rewritten version of the URL using the base URL for the local
+            DataLink links service and the query string from the original
+            URL.
+        """
+        try:
+            datalink_url = await self._discovery.url_for_internal(
+                "datalink", version="datalink-links-1.1"
+            )
+            if not datalink_url:
+                self._logger.warning("No DataLink service found in Repertoire")
+                return value_str
+            base_url = urlparse(datalink_url)
+            url = urlparse(value_str)
+            return base_url._replace(query=url.query).geturl()
+        except Exception as e:
+            logger = self._logger.bind(column=column_name)
+            logger.warning("Unable to rewrite URL", error=str(e))
+            return value_str
+
+
+class Binary2Encoder(VOTableEncoder):
+    """Streaming encoder for the BINARY2 serialization format of VOTable.
+
+    A new encoder should be used for every result set, since it keeps internal
+    state in order to count the number of output rows.
+
+    Parameters
+    ----------
+    config
+        Configuration for the output format. Includes the header, footer, and
+        type information. The type information must exactly match the columns
+        of the results. This is not checked.
+    discovery_client
+        Service discovery client.
+    logger
+        Logger to use.
+    """
+
+    def __init__(
+        self,
+        config: JobResultConfig,
+        discovery_client: DiscoveryClient,
+        logger: BoundLogger,
+    ) -> None:
+        super().__init__(config, discovery_client, logger)
+        self._wrapper_size = 0
+
+    @property
+    @override
+    def total_size(self) -> int:
         return self._encoded_size + self._wrapper_size
 
+    @override
     async def encode(
         self,
         results: AsyncGenerator[Row[Any] | tuple[Any]],
@@ -179,7 +268,9 @@ class VOTableEncoder:
                 if maxrec is not None and self._total_rows == maxrec:
                     overflow = True
                     break
-                encoded_row = self._encode_row(self._config.column_types, row)
+                encoded_row = await self._encode_row(
+                    self._config.column_types, row
+                )
                 self._total_rows += 1
                 encoded.write(encoded_row)
                 if self._total_rows % 100000 == 0:
@@ -246,7 +337,7 @@ class VOTableEncoder:
         self._encoded_size += len(output)
         return output
 
-    def _encode_char_column(
+    async def _encode_char_column(
         self, column: JobResultColumnType, value_raw: Any
     ) -> bytes:
         """Encode a column of type ``char``.
@@ -292,7 +383,7 @@ class VOTableEncoder:
         else:
             value_str = "" if value_raw is None else str(value_raw)
         if value_str and column.requires_url_rewrite:
-            value_str = _rewrite_url(value_str, column.name, self._logger)
+            value_str = await self.rewrite_datalink_url(value_str, column.name)
         value = value_str.encode()
         if column.arraysize and column.arraysize.variable:
             if column.arraysize.limit:
@@ -305,7 +396,7 @@ class VOTableEncoder:
         else:
             return column.datatype.pack(value)
 
-    def _encode_row(
+    async def _encode_row(
         self, types: list[JobResultColumnType], row: Row[Any] | tuple[Any]
     ) -> bytes:
         """Encode a single row of output in BINARY2.
@@ -330,9 +421,9 @@ class VOTableEncoder:
             if value is None:
                 nulls.set(True, i)
             if datatype == VOTablePrimitive.char:
-                output += self._encode_char_column(column, value)
+                output += await self._encode_char_column(column, value)
             elif datatype == VOTablePrimitive.unicode_char:
-                output += self._encode_unicode_char_column(
+                output += await self._encode_unicode_char_column(
                     column=column, value_raw=value
                 )
             else:
@@ -340,7 +431,7 @@ class VOTableEncoder:
 
         return nulls.tobytes() + output
 
-    def _encode_unicode_char_column(
+    async def _encode_unicode_char_column(
         self,
         column: JobResultColumnType,
         value_raw: Any,
@@ -378,13 +469,7 @@ class VOTableEncoder:
 
         # Rewrite URLs in the string if necessary.
         if value_str and column.requires_url_rewrite:
-            try:
-                base_url = urlparse(str(global_config.rewrite_base_url))
-                url = urlparse(value_str)
-                value_str = url._replace(netloc=base_url.netloc).geturl()
-            except Exception as e:
-                logger = self._logger.bind(column=column.name)
-                logger.warning("Unable to rewrite URL", error=str(e))
+            value_str = await self.rewrite_datalink_url(value_str, column.name)
 
         # Encode the string. Technically this is supposed to be UCS-2, but
         # Python doesn't support that natively and it's not clear what to do
@@ -474,13 +559,15 @@ class VOTableEncoder:
         return truncated
 
 
-class VOParquetEncoder:
-    """VOParquet encoder for generating VOParquet data with embedded VOTable
-    metadata as described in the specification:
-    https://www.ivoa.net/documents/Notes/VOParquet/.
+class VOParquetEncoder(VOTableEncoder):
+    """VOParquet encoder.
 
-    This encoder uses PyArrow to write Parquet data directly to an
-    in-memory buffer, which is then streamed to the caller.
+    Generates VOParquet data with embedded VOTable metadata as described in
+    the `IVOA specification
+    <https://www.ivoa.net/documents/Notes/VOParquet/>`__.
+
+    This encoder uses PyArrow to write Parquet data directly to an in-memory
+    buffer, which is then streamed to the caller.
 
     Parameters
     ----------
@@ -488,6 +575,8 @@ class VOParquetEncoder:
         Configuration for the output format. Includes the header, footer, and
         type information. The type information must exactly match the columns
         of the results. This is not checked.
+    discovery_client
+        Service discovery client.
     logger
         Logger to use.
     overflow
@@ -497,16 +586,15 @@ class VOParquetEncoder:
     def __init__(
         self,
         config: JobResultConfig,
+        discovery_client: DiscoveryClient,
         logger: BoundLogger,
         *,
         overflow: bool = False,
     ) -> None:
-        self._batch_size = global_config.parquet_batch_size
-        self._config = config
-        self._logger = logger
+        super().__init__(config, discovery_client, logger)
         self._predetermined_overflow = overflow
-        self._total_rows = 0
-        self._encoded_size = 0
+
+        self._batch_size = global_config.parquet_batch_size
         self._column_names = [col.name for col in config.column_types]
         self._arrow_schema = self._build_arrow_schema()
         self._schema_with_metadata = self._build_schema_with_metadata(
@@ -514,20 +602,12 @@ class VOParquetEncoder:
         )
 
     @property
-    def total_rows(self) -> int:
-        """Total number of rows encoded."""
-        return self._total_rows
-
-    @property
-    def encoded_size(self) -> int:
-        """Size of the encoded Parquet data."""
-        return self._encoded_size
-
-    @property
+    @override
     def total_size(self) -> int:
         """Total size of the output, same as encoded_size."""
         return self._encoded_size
 
+    @override
     async def encode(
         self,
         results: AsyncGenerator[Row[Any] | tuple[Any]],
@@ -564,7 +644,7 @@ class VOParquetEncoder:
                 if maxrec is not None and self._total_rows >= maxrec:
                     break
 
-                processed_row = self._process_row_for_parquet(row)
+                processed_row = await self._process_row_for_parquet(row)
                 current_batch.append(processed_row)
                 self._total_rows += 1
 
@@ -692,7 +772,7 @@ class VOParquetEncoder:
             return pa.list_(base_type)
         return base_type
 
-    def _process_row_for_parquet(
+    async def _process_row_for_parquet(
         self, row: Row[Any] | tuple[Any]
     ) -> dict[str, Any]:
         """Process row for the VOParquet format.
@@ -740,8 +820,8 @@ class VOParquetEncoder:
 
                 # Apply URL rewriting
                 if value_str and column.requires_url_rewrite:
-                    value_str = _rewrite_url(
-                        value_str, column.name, self._logger
+                    value_str = await self.rewrite_datalink_url(
+                        value_str, column.name
                     )
 
                 # Apply length limit if specified
@@ -758,12 +838,27 @@ class VOParquetEncoder:
 class VOTableWriter:
     """Writer supporting both VOTable BINARY2 and VOParquet formats.
 
-    Both formats embed complete VOTable metadata - BINARY2 as wrapper XML,
+    Both formats embed complete VOTable metadata: BINARY2 as wrapper XML,
     Parquet as embedded metadata following VOParquet 1.0 specification.
+
+    Parameters
+    ----------
+    http_client
+        Client used to upload the results.
+    discovery_client
+        Service discovery client.
+    logger
+        Logger to use.
     """
 
-    def __init__(self, http_client: AsyncClient, logger: BoundLogger) -> None:
+    def __init__(
+        self,
+        http_client: AsyncClient,
+        discovery_client: DiscoveryClient,
+        logger: BoundLogger,
+    ) -> None:
         self._client = http_client
+        self._discovery = discovery_client
         self._logger = logger
 
     async def store(
@@ -789,6 +884,9 @@ class VOTableWriter:
             Async generator that yields one result row (or batch) at a time.
         maxrec
             Maximum record limit, if not `None`.
+        overflow
+            If `True`, use the overflow footer in the embedded VOTable
+            metadata.
 
         Returns
         -------
@@ -800,17 +898,18 @@ class VOTableWriter:
         UploadWebError
             Raised if there was a failure to upload the results.
         """
-        encoder: VOParquetEncoder | VOTableEncoder
-        if config.format.type == JobResultType.Parquet:
-            encoder = VOParquetEncoder(
-                config,
-                self._logger,
-                overflow=overflow,
-            )
-            mime_type = "application/vnd.apache.parquet"
-        else:  # VOTable
-            encoder = VOTableEncoder(config, self._logger)
-            mime_type = "application/x-votable+xml; serialization=binary2"
+        match config.format.type:
+            case JobResultType.Parquet:
+                encoder: VOTableEncoder = VOParquetEncoder(
+                    config,
+                    self._discovery,
+                    self._logger,
+                    overflow=overflow,
+                )
+                mime_type = "application/vnd.apache.parquet"
+            case JobResultType.VOTable:
+                encoder = Binary2Encoder(config, self._discovery, self._logger)
+                mime_type = "application/x-votable+xml; serialization=binary2"
 
         generator = encoder.encode(results, maxrec=maxrec)
         try:

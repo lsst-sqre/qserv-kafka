@@ -9,6 +9,7 @@ from rubin.gafaelfawr import (
     GafaelfawrNotFoundError,
     GafaelfawrTapQuota,
 )
+from rubin.repertoire import DiscoveryClient
 from safir.sentry import report_exception
 from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
@@ -33,13 +34,18 @@ class GafaelfawrStorage:
 
     def __init__(
         self,
+        *,
         http_client: AsyncClient,
+        discovery_client: DiscoveryClient,
         slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
     ) -> None:
-        self._gafaelfawr = GafaelfawrClient(http_client)
         self._slack_client = slack_client
         self._logger = logger
+
+        self._gafaelfawr = GafaelfawrClient(
+            http_client, discovery_client=discovery_client
+        )
         self._token = config.gafaelfawr_token.get_secret_value()
 
     async def clear_cache(self) -> None:

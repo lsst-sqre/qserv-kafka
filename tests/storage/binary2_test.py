@@ -1,4 +1,4 @@
-"""Test the VOTable writer."""
+"""Test the VOTable BINARY2 writer."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 import pytest
+from rubin.repertoire import DiscoveryClient
 from sqlalchemy import Row
 from structlog.stdlib import get_logger
 
@@ -18,7 +19,7 @@ from qservkafka.models.kafka import (
     JobResultSerialization,
     JobResultType,
 )
-from qservkafka.storage.votable import VOTableEncoder
+from qservkafka.storage.votable import Binary2Encoder
 
 
 async def data_generator(
@@ -53,7 +54,7 @@ async def assert_encoded_value(
     )
     rows = [(data,)]
     logger = get_logger(__name__)
-    encoder = VOTableEncoder(config, logger)
+    encoder = Binary2Encoder(config, DiscoveryClient(), logger)
     encoded = b""
     async for blob in encoder.encode(data_generator(rows)):
         encoded += blob
