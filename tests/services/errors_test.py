@@ -17,7 +17,8 @@ from qservkafka.models.kafka import (
     JobQueryInfo,
     JobStatus,
 )
-from qservkafka.models.qserv import AsyncQueryPhase, AsyncQueryStatus
+from qservkafka.models.qserv import QservAsyncStatusData
+from qservkafka.models.query import AsyncQueryPhase
 from qservkafka.storage import qserv
 
 from ..support.constants import ANY_DATETIME, ANY_STRING
@@ -129,7 +130,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     # Return a normal reply from the status endpoint but mark the job as being
     # in an error state.
     start = current_datetime()
-    query_status = AsyncQueryStatus(
+    query_status = QservAsyncStatusData(
         query_id=4,
         status=AsyncQueryPhase.FAILED,
         total_chunks=10,

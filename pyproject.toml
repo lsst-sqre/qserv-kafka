@@ -25,6 +25,7 @@ dependencies = [
     "bitstring>=4.3",
     "fastapi>=0.112.2",
     "faststream[kafka]>=0.6",
+    "google-cloud-bigquery>=3.25.0",
     "httpx>=0.27",
     "memray>=1.17",
     "pyarrow>=21",

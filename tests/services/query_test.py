@@ -71,7 +71,7 @@ async def test_start(factory: Factory) -> None:
     assert status.query_info
     assert_approximately_now(status.query_info.start_time)
 
-    assert await state_store.get_active_queries() == {1}
+    assert await state_store.get_active_queries() == {"1"}
 
 
 @pytest.mark.asyncio
@@ -99,8 +99,8 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     assert not mock_qserv.results_stored
 
     # Check that the correct metrics event was sent.
-    assert isinstance(factory.events.query_success, MockEventPublisher)
-    events = factory.events.query_success.published
+    assert isinstance(factory.events.qserv_success, MockEventPublisher)
+    events = factory.events.qserv_success.published
     assert len(events) == 1
     success_event = events[0]
     assert success_event.model_dump(mode="json") == {
@@ -114,6 +114,7 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
         "delete_elapsed": ANY,
         "rows": 2,
         "qserv_size": 250,
+        "qserv_rate": None,
         "encoded_size": len(read_test_data("results/data.binary2")),
         "result_size": (
             len(read_test_data("results/data.binary2"))
@@ -123,7 +124,6 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
         "rate": (
             success_event.encoded_size / success_event.elapsed.total_seconds()
         ),
-        "qserv_rate": None,
         "result_rate": (
             success_event.encoded_size
             / success_event.result_elapsed.total_seconds()
@@ -194,8 +194,8 @@ async def test_no_delete(
     assert mock_qserv.results_stored
 
     # Check that the correct metrics events were sent.
-    assert isinstance(factory.events.query_success, MockEventPublisher)
-    events = factory.events.query_success.published
+    assert isinstance(factory.events.qserv_success, MockEventPublisher)
+    events = factory.events.qserv_success.published
     assert len(events) == 1
     assert events[0].model_dump(mode="json") == {
         "job_id": job.job_id,
@@ -208,10 +208,10 @@ async def test_no_delete(
         "delete_elapsed": None,
         "rows": 2,
         "qserv_size": 250,
+        "qserv_rate": ANY,
         "encoded_size": len(read_test_data("results/data.binary2")),
         "result_size": ANY,
         "rate": ANY,
-        "qserv_rate": ANY,
         "result_rate": ANY,
         "upload_tables": 0,
         "immediate": True,
@@ -237,7 +237,7 @@ async def test_cancel(factory: Factory) -> None:
     start_time = status.query_info.start_time
     assert_approximately_now(start_time)
 
-    assert await state_store.get_active_queries() == {1}
+    assert await state_store.get_active_queries() == {"1"}
 
     now = datetime.now(tz=UTC)
     status = await query_service.cancel_query(cancel)
@@ -362,7 +362,7 @@ async def test_no_api_version(
     assert status.query_info
     assert_approximately_now(status.query_info.start_time)
 
-    assert await state_store.get_active_queries() == {2}
+    assert await state_store.get_active_queries() == {"2"}
 
 
 @pytest.mark.asyncio
@@ -400,7 +400,7 @@ async def test_auth(
     assert status.query_info
     assert_approximately_now(status.query_info.start_time)
 
-    assert await state_store.get_active_queries() == {2}
+    assert await state_store.get_active_queries() == {"2"}
 
 
 @pytest.mark.asyncio
@@ -427,8 +427,8 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
     assert mock_qserv.get_uploaded_database() is None
 
     # Check that the correct metrics events were sent.
-    assert isinstance(factory.events.query_success, MockEventPublisher)
-    events = factory.events.query_success.published
+    assert isinstance(factory.events.qserv_success, MockEventPublisher)
+    events = factory.events.qserv_success.published
     assert len(events) == 1
     assert events[0].model_dump(mode="json") == {
         "job_id": job.job_id,
@@ -441,10 +441,10 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
         "delete_elapsed": ANY,
         "rows": 2,
         "qserv_size": 250,
+        "qserv_rate": ANY,
         "encoded_size": len(read_test_data("results/data.binary2")),
         "result_size": ANY,
         "rate": ANY,
-        "qserv_rate": ANY,
         "result_rate": ANY,
         "upload_tables": 1,
         "immediate": True,
@@ -472,4 +472,4 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
     assert mock_qserv.get_uploaded_database() == job.upload_tables[0].database
 
     # Only the second query should be active.
-    assert await state_store.get_active_queries() == {2}
+    assert await state_store.get_active_queries() == {"2"}
