@@ -80,8 +80,8 @@ async def test_success(
     assert set(redis_client.scan_iter("query:*")) == set()
 
     # Check that the correct metrics event was sent.
-    assert isinstance(factory.events.query_success, MockEventPublisher)
-    events = factory.events.query_success.published
+    assert isinstance(factory.events.qserv_success, MockEventPublisher)
+    events = factory.events.qserv_success.published
     assert len(events) == 1
     assert events[0].model_dump(mode="json") == {
         "job_id": job.job_id,
@@ -94,10 +94,10 @@ async def test_success(
         "delete_elapsed": ANY,
         "rows": 2,
         "qserv_size": qserv_status.collected_bytes,
+        "qserv_rate": ANY,
         "encoded_size": ANY,
         "result_size": ANY,
         "rate": ANY,
-        "qserv_rate": ANY,
         "result_rate": ANY,
         "upload_tables": 0,
         "immediate": False,

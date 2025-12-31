@@ -11,7 +11,7 @@ from collections.abc import (
 from copy import copy
 from datetime import UTC, datetime, timedelta
 from functools import wraps
-from typing import Any, Concatenate, Protocol, overload
+from typing import Any, Concatenate, Protocol, overload, override
 
 from httpx import AsyncClient, HTTPError, Response
 from pydantic import BaseModel, ValidationError
@@ -19,13 +19,13 @@ from safir.database import datetime_from_db
 from safir.datetime import format_datetime_for_logging
 from safir.slack.blockkit import SlackWebException
 from safir.slack.webhook import SlackWebhookClient
-from sqlalchemy import Row, text
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from structlog.stdlib import BoundLogger
 
 from ..config import config
-from ..events import Events, QservFailureEvent, QservProtocol
+from ..events import BackendProtocol, Events, QservFailureEvent
 from ..exceptions import (
     QservApiFailedError,
     QservApiProtocolError,
@@ -34,16 +34,17 @@ from ..exceptions import (
     TableUploadWebError,
 )
 from ..models.kafka import JobRun, JobTableUpload
+from ..models.progress import ChunkProgress
 from ..models.qserv import (
-    AsyncProcessStatus,
-    AsyncQueryPhase,
-    AsyncQueryStatus,
-    AsyncStatusResponse,
     AsyncSubmitRequest,
     AsyncSubmitResponse,
     BaseResponse,
+    QservAsyncStatusData,
+    QservStatusResponse,
     TableUploadStats,
 )
+from ..models.query import AsyncQueryPhase
+from .backend import BackendProcessStatus, BackendQueryStatus, DatabaseBackend
 
 API_VERSION = 51
 """Version of the REST API that this client requests."""
@@ -110,7 +111,7 @@ def _retry[**P, T, C: _QservClientProtocol](
 def _retry[**P, T, C: _QservClientProtocol](
     *,
     qserv: bool = True,
-    qserv_protocol: QservProtocol = QservProtocol.HTTP,
+    qserv_protocol: BackendProtocol = BackendProtocol.HTTP,
 ) -> Callable[[_QservClientMethod[P, T, C]], _QservClientMethod[P, T, C]]: ...
 
 
@@ -119,7 +120,7 @@ def _retry[**P, T, C: _QservClientProtocol](
     /,
     *,
     qserv: bool = True,
-    qserv_protocol: QservProtocol = QservProtocol.HTTP,
+    qserv_protocol: BackendProtocol = BackendProtocol.HTTP,
 ) -> (
     _QservClientMethod
     | Callable[[_QservClientMethod[P, T, C]], _QservClientMethod[P, T, C]]
@@ -146,11 +147,11 @@ def _retry[**P, T, C: _QservClientProtocol](
         async def retry_wrapper(
             client: C, *args: P.args, **kwargs: P.kwargs
         ) -> T:
-            for _ in range(1, config.qserv_retry_count):
+            for _ in range(1, config.backend_retry_count):
                 try:
                     return await f(client, *args, **kwargs)
                 except (QservApiSqlError, SlackWebException):
-                    delay = config.qserv_retry_delay.total_seconds()
+                    delay = config.backend_retry_delay.total_seconds()
                     msg = f"Qserv API call failed, retrying after {delay}s"
 
                     # We don't want to notify Sentry or Slack about exceptions
@@ -177,7 +178,7 @@ def _retry[**P, T, C: _QservClientProtocol](
         return retry_decorator
 
 
-class QservClient:
+class QservClient(DatabaseBackend):
     """Client for the Qserv API.
 
     Only the routes and queries needed by the Qserv Kafka bridge are
@@ -225,7 +226,8 @@ class QservClient:
         self._sessionmaker = sessionmaker
         self._client = http_client
 
-    async def cancel_query(self, query_id: int) -> None:
+    @override
+    async def cancel_query(self, query_id: str) -> None:
         """Cancel a running query.
 
         Parameters
@@ -240,7 +242,8 @@ class QservClient:
         """
         await self._delete(f"/query-async/{query_id}")
 
-    async def delete_result(self, query_id: int) -> None:
+    @override
+    async def delete_result(self, query_id: str) -> None:
         """Delete the results of a query.
 
         This should be called after the results have been successfully
@@ -276,6 +279,7 @@ class QservClient:
         """
         await self._delete(f"/ingest/table/{database}/{table}")
 
+    @override
     async def delete_database(self, database: str) -> None:
         """Delete a user database.
 
@@ -304,9 +308,10 @@ class QservClient:
         """
         await self._delete(f"/ingest/database/{database}")
 
+    @override
     async def get_query_results_gen(
-        self, query_id: int
-    ) -> AsyncGenerator[Row[Any]]:
+        self, query_id: str
+    ) -> AsyncGenerator[tuple[Any, ...]]:
         """Get an async iterator for the results of a query.
 
         Qserv discards the results after they're retrieved, so be aware that
@@ -321,7 +326,7 @@ class QservClient:
         Returns
         -------
         collections.abc.AsyncIterator
-            Iterator over the rows of the query results.
+            Iterator over the rows of the query results as tuples.
 
         Raises
         ------
@@ -333,17 +338,18 @@ class QservClient:
         try:
             async with self._sessionmaker() as session:
                 async with session.begin():
-                    results = await session.stream(stmt, {"id": query_id})
+                    results = await session.stream(stmt, {"id": int(query_id)})
                     results = results.yield_per(100)
                     try:
                         async for result in results:
-                            yield result
+                            yield tuple(result)
                     finally:
                         await results.close()
         except SQLAlchemyError as e:
             raise QservApiSqlError.from_exception(e) from e
 
-    async def get_query_status(self, query_id: int) -> AsyncQueryStatus:
+    @override
+    async def get_query_status(self, query_id: str) -> BackendQueryStatus:
         """Query for the status of an async job.
 
         Parameters
@@ -353,20 +359,21 @@ class QservClient:
 
         Returns
         -------
-        AsyncStatusResponse
+        BackendQueryStatus
             Status of the query.
         """
         url = f"/query-async/status/{query_id}"
-        result = await self._get(url, {}, AsyncStatusResponse)
-        return result.status
+        result = await self._get(url, {}, QservStatusResponse)
+        return self._to_backend_status(result.status)
 
-    @_retry(qserv_protocol=QservProtocol.SQL)
-    async def list_running_queries(self) -> dict[int, AsyncProcessStatus]:
+    @override
+    @_retry(qserv_protocol=BackendProtocol.SQL)
+    async def list_running_queries(self) -> dict[str, BackendProcessStatus]:
         """Return information about all running queries.
 
         Returns
         -------
-        dict of AsyncQueryStatus
+        dict of BackendProcessStatus
             Mapping from query ID to information about a running query.
 
         Raises
@@ -383,11 +390,13 @@ class QservClient:
                         async for row in result:
                             msg = "Saw running query"
                             self.logger.debug(msg, query=row._asdict())
-                            processes[row.id] = AsyncProcessStatus(
-                                query_id=row.id,
+                            processes[str(row.id)] = BackendProcessStatus(
+                                query_id=str(row.id),
                                 status=AsyncQueryPhase.EXECUTING,
-                                total_chunks=row.chunks,
-                                completed_chunks=row.chunks_comp,
+                                progress=ChunkProgress(
+                                    total_chunks=row.chunks,
+                                    completed_chunks=row.chunks_comp,
+                                ),
                                 query_begin=datetime_from_db(row.submitted),
                                 last_update=datetime_from_db(row.updated),
                             )
@@ -398,7 +407,8 @@ class QservClient:
         self.logger.debug("Listed running queries", count=len(processes))
         return processes
 
-    async def submit_query(self, job: JobRun) -> int:
+    @override
+    async def submit_query(self, job: JobRun) -> str:
         """Submit an async query to Qserv.
 
         Parameters
@@ -408,7 +418,7 @@ class QservClient:
 
         Returns
         -------
-        int
+        str
             Qserv identifier of the query.
 
         Raises
@@ -418,8 +428,9 @@ class QservClient:
         """
         request = AsyncSubmitRequest(query=job.query, database=job.database)
         result = await self._post("/query-async", request, AsyncSubmitResponse)
-        return result.query_id
+        return str(result.query_id)
 
+    @override
     async def upload_table(self, upload: JobTableUpload) -> TableUploadStats:
         """Upload a table to Qserv.
 
@@ -461,6 +472,35 @@ class QservClient:
         )
         return TableUploadStats(
             size=len(source), elapsed=datetime.now(tz=UTC) - start
+        )
+
+    def _to_backend_status(
+        self, data: QservAsyncStatusData
+    ) -> BackendQueryStatus:
+        """Convert QServ API response data to backend status.
+
+        Parameters
+        ----------
+        data
+            Parsed QServ API response data.
+
+        Returns
+        -------
+        BackendQueryStatus
+            Backend query status.
+        """
+        return BackendQueryStatus(
+            query_id=str(data.query_id),
+            phase=data.status,
+            error=data.error,
+            progress=ChunkProgress(
+                total_chunks=data.total_chunks,
+                completed_chunks=data.completed_chunks,
+            ),
+            query_begin=data.query_begin,
+            last_update=data.last_update,
+            collected_bytes=data.collected_bytes,
+            final_rows=data.final_rows,
         )
 
     @_retry

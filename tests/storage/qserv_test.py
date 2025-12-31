@@ -3,6 +3,8 @@
 import pytest
 
 from qservkafka.factory import Factory
+from qservkafka.models.progress import ChunkProgress
+from qservkafka.storage.backend import BackendProcessStatus
 
 from ..support.data import read_test_job_run, read_test_job_status
 from ..support.qserv import MockQserv
@@ -15,7 +17,7 @@ from ..support.qserv import MockQserv
 async def test_list_running_queries(
     factory: Factory, mock_qserv: MockQserv
 ) -> None:
-    qserv = factory.create_qserv_client()
+    qserv = factory.create_backend_client()
     query_service = factory.create_query_service()
     job = read_test_job_run("simple")
     expected_status = read_test_job_status("simple-started")
@@ -26,4 +28,20 @@ async def test_list_running_queries(
     status = await query_service.start_query(job)
     assert status == expected_status
     processes = await qserv.list_running_queries()
-    assert processes == {1: mock_qserv.get_status(1).to_process_status()}
+    qserv_status = mock_qserv.get_status(1)
+    expected_backend_status = BackendProcessStatus(
+        query_id="1",
+        status=qserv_status.status,
+        progress=ChunkProgress(
+            total_chunks=qserv_status.total_chunks,
+            completed_chunks=qserv_status.completed_chunks,
+        ),
+        query_begin=qserv_status.query_begin,
+        last_update=qserv_status.last_update,
+    )
+    assert len(processes) == 1
+    assert "1" in processes
+    actual = processes["1"]
+    assert actual.query_id == expected_backend_status.query_id
+    assert actual.status == expected_backend_status.status
+    assert actual.progress == expected_backend_status.progress
