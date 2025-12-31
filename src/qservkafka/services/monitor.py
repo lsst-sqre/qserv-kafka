@@ -7,9 +7,9 @@ from structlog.stdlib import BoundLogger
 
 from ..events import Events
 from ..models.kafka import JobStatus
-from ..models.qserv import AsyncProcessStatus, AsyncQueryPhase
+from ..models.query import AsyncQueryPhase, ProcessStatus
 from ..models.state import RunningQuery
-from ..storage.qserv import QservClient
+from ..storage.backend import DatabaseBackend
 from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from .results import ResultProcessor
@@ -24,8 +24,8 @@ class QueryMonitor:
     ----------
     result_processor
         Service used to process results.
-    qserv_client
-        Client to talk to the Qserv REST API.
+    backend
+        Database backend client (Qserv, BigQuery, etc.).
     arq_queue
         Queue to which to dispatch result processing requests.
     state_store
@@ -42,7 +42,7 @@ class QueryMonitor:
         self,
         *,
         result_processor: ResultProcessor,
-        qserv_client: QservClient,
+        backend: DatabaseBackend,
         arq_queue: ArqQueue,
         state_store: QueryStateStore,
         rate_limit_store: RateLimitStore,
@@ -50,7 +50,7 @@ class QueryMonitor:
         logger: BoundLogger,
     ) -> None:
         self._results = result_processor
-        self._qserv = qserv_client
+        self._backend = backend
         self._arq = arq_queue
         self._state = state_store
         self._rate_store = rate_limit_store
@@ -62,7 +62,7 @@ class QueryMonitor:
         active_queries = await self._state.get_active_queries()
         if not active_queries:
             return
-        running = await self._qserv.list_running_queries()
+        running = await self._backend.list_running_queries()
         for query_id in active_queries:
             query = await self._state.get_query(query_id)
             if not query:
@@ -72,9 +72,9 @@ class QueryMonitor:
                 await self._results.publish_status(update)
 
     async def check_query(
-        self, query: RunningQuery, status: AsyncProcessStatus | None
+        self, query: RunningQuery, status: ProcessStatus | None
     ) -> JobStatus | None:
-        """Check the status of one Qserv query.
+        """Check the status of one backend query.
 
         If the query is complete, dispatch it to the result worker. Otherwise,
         construct a status update for posting to Kafka, if warranted.
@@ -84,7 +84,7 @@ class QueryMonitor:
         query
             Running query information.
         status
-            Qserv status from the running process list, if the query appeared
+            Backend status from the running process list, if the query appeared
             there, or `None` otherwise.
 
         Returns
@@ -105,8 +105,8 @@ class QueryMonitor:
         # are dispatched to arq.
         #
         # Do not use build_query_status inside the first block, since it will
-        # re-retrieve the status from Qserv and may at that point find that it
-        # is completed.
+        # re-retrieve the status from the backend and may at that point find
+        # that it is completed.
         if status and status.status == AsyncQueryPhase.EXECUTING:
             if not query.status.is_different_than(status):
                 logger.debug("Running query has not changed state")
@@ -127,8 +127,8 @@ class QueryMonitor:
         """Reconcile rate limits against currently running queries."""
         active_queries = await self._state.get_active_queries()
         counts: Counter[str] = Counter()
-        for qserv_id in active_queries:
-            query = await self._state.get_query(qserv_id)
+        for backend_id in active_queries:
+            query = await self._state.get_query(backend_id)
             if query:
                 counts[query.job.owner] += 1
         await self._rate_store.reconcile_query_counts(counts)

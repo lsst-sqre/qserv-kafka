@@ -50,7 +50,7 @@ async def app(
     monkeypatch.setattr(config, "arq_mode", ArqMode.production)
     monkeypatch.setattr(config, "redis_url", redis_url)
     monkeypatch.setattr(config, "kafka", kafka_connection_settings)
-    monkeypatch.setattr(config, "qserv_poll_interval", poll_interval)
+    monkeypatch.setattr(config, "backend_poll_interval", poll_interval)
     return create_app()
 
 
@@ -228,7 +228,7 @@ async def mock_qserv(
     """
     if request.param:
         delay = timedelta(milliseconds=10)
-        monkeypatch.setattr(config, "qserv_retry_delay", delay)
+        monkeypatch.setattr(config, "backend_retry_delay", delay)
     url = str(config.qserv_rest_url)
     async with register_mock_qserv(
         respx_mock, url, engine, flaky=request.param

@@ -65,7 +65,7 @@ class BackgroundTaskManager:
         coros = [
             self._loop(
                 self._monitor.check_status,
-                config.qserv_poll_interval,
+                config.backend_poll_interval,
                 "polling query status",
             ),
             self._loop(

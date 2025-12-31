@@ -8,16 +8,46 @@ from typing import Annotated, Any
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from safir.pydantic import UtcDatetime
 
+from .progress import ChunkProgress
+from .query import AsyncQueryPhase, QservQueryStatus
+
 __all__ = [
-    "AsyncProcessStatus",
-    "AsyncQueryPhase",
-    "AsyncQueryStatus",
-    "AsyncStatusResponse",
     "AsyncSubmitRequest",
     "AsyncSubmitResponse",
     "BaseResponse",
+    "QservAsyncStatusData",
+    "QservQueryPhase",
+    "QservStatusResponse",
     "TableUploadStats",
 ]
+
+
+class QservQueryPhase(StrEnum):
+    """Qserv-specific query status values.
+
+    These are the status values returned by the Qserv API. They are
+    translated to generic `AsyncQueryPhase` values for use in the service
+    layer.
+    """
+
+    EXECUTING = "EXECUTING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    FAILED_LR = "FAILED_LR"
+    ABORTED = "ABORTED"
+
+    def to_generic_phase(self) -> AsyncQueryPhase:
+        """Translate to generic query phase.
+
+        Returns
+        -------
+        AsyncQueryPhase
+            The generic phase corresponding to this Qserv-specific phase.
+            FAILED_LR is translated to FAILED.
+        """
+        if self == QservQueryPhase.FAILED_LR:
+            return AsyncQueryPhase.FAILED
+        return AsyncQueryPhase(self.value)
 
 
 class BaseResponse(BaseModel):
@@ -38,30 +68,20 @@ class BaseResponse(BaseModel):
         return bool(self.success)
 
 
-class AsyncQueryPhase(StrEnum):
-    """Possible status values for the query from Qserv's perspective."""
+class QservAsyncStatusData(BaseModel):
+    """Qserv async query status data from REST API.
 
-    EXECUTING = "EXECUTING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-    FAILED_LR = "FAILED_LR"
-    ABORTED = "ABORTED"
-
-
-class AsyncProcessStatus(BaseModel):
-    """Process status for a query.
-
-    This is the subset of information that we retrieve about running queries,
-    as opposed to the full query status in `AsyncQueryStatus`. It is used to
-    determine if we need to send a status update message to Kafka and to
-    determine if the query is finished.
+    This model is used to parse Qserv's API responses and is designed for use
+    only within `QservClient`.
     """
 
     model_config = ConfigDict(validate_by_name=True)
 
     query_id: Annotated[int, Field(title="ID", validation_alias="queryId")]
 
-    status: Annotated[AsyncQueryPhase, Field(title="Status")]
+    status: Annotated[
+        QservQueryPhase, Field(title="Status", validation_alias="status")
+    ]
 
     total_chunks: Annotated[
         int, Field(title="Total query chunks", validation_alias="totalChunks")
@@ -87,34 +107,6 @@ class AsyncProcessStatus(BaseModel):
             lambda u: None if isinstance(u, int) and u == 0 else u
         ),
     ] = None
-
-    def is_different_than(self, new: "AsyncProcessStatus") -> bool:
-        """Whether a new process status represents a change worth an update."""
-        return (
-            self.status != new.status
-            or self.total_chunks != new.total_chunks
-            or self.completed_chunks != new.completed_chunks
-            or self.last_update != new.last_update
-        )
-
-    def update_from(self, new: "AsyncProcessStatus") -> None:
-        """Copy updated information from a new process status.
-
-        This avoids the need to make another Qserv REST API call to return the
-        full query status when the only change is forward progress on a
-        running query.
-        """
-        self.total_chunks = new.total_chunks
-        self.completed_chunks = new.completed_chunks
-        self.last_update = new.last_update
-
-
-class AsyncQueryStatus(AsyncProcessStatus):
-    """Status information for a query.
-
-    This includes the additional fields that are only available via the REST
-    API.
-    """
 
     query: Annotated[str | None, Field(title="Query text")] = None
 
@@ -148,29 +140,48 @@ class AsyncQueryStatus(AsyncProcessStatus):
     ] = 0
 
     final_rows: Annotated[
-        int | None, Field(title="Rows in result", validation_alias="finalRows")
+        int | None,
+        Field(title="Rows in result", validation_alias="finalRows"),
     ] = None
 
-    def to_process_status(self) -> AsyncProcessStatus:
-        """Convert to an `AsyncProcessStatus`.
+    def to_query_status(self) -> QservQueryStatus:
+        """Convert to query status model.
 
-        Used primarily by the test suite to compare a full `AsyncQueryStatus`
-        to an `AsyncProcessStatus`.
+        Returns
+        -------
+        QservQueryStatus
+            Query status for Qserv backend.
         """
-        return AsyncProcessStatus(
-            query_id=self.query_id,
-            status=self.status,
-            total_chunks=self.total_chunks,
-            completed_chunks=self.completed_chunks,
+        qserv_phase = QservQueryPhase(self.status)
+        generic_phase = qserv_phase.to_generic_phase()
+        results_too_large = qserv_phase == QservQueryPhase.FAILED_LR
+
+        return QservQueryStatus(
+            backend_type="Qserv",
+            query_id=str(self.query_id),
+            status=generic_phase,
             query_begin=self.query_begin,
             last_update=self.last_update,
+            error=self.error,
+            collected_bytes=self.collected_bytes,
+            final_rows=self.final_rows,
+            chunk_progress=ChunkProgress(
+                total_chunks=self.total_chunks,
+                completed_chunks=self.completed_chunks,
+            ),
+            czar_id=self.czar_id,
+            czar_type=self.czar_type,
+            results_too_large=results_too_large,
         )
 
 
-class AsyncStatusResponse(BaseResponse):
-    """Response to an async query status request."""
+class QservStatusResponse(BaseResponse):
+    """Response to a Qserv async query status request.
 
-    status: Annotated[AsyncQueryStatus, Field(title="Async query status")]
+    Uses `QservAsyncStatusData` to parse Qserv's API responses.
+    """
+
+    status: Annotated[QservAsyncStatusData, Field(title="Async query status")]
 
 
 class AsyncSubmitRequest(BaseModel):

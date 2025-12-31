@@ -22,6 +22,8 @@ from safir.logging import LogLevel, Profile
 from safir.metrics import MetricsConfiguration, metrics_configuration_factory
 from safir.pydantic import EnvRedisDsn, HumanTimedelta
 
+from .storage.backend import BackendType
+
 __all__ = ["Config", "config"]
 
 
@@ -91,6 +93,62 @@ class Config(BaseSettings):
         description="The arq queue name that worker will listen on",
     )
 
+    backend: BackendType = Field(
+        BackendType.QSERV,
+        title="Database backend",
+        description="Which database backend to use (Qserv or BigQuery)",
+    )
+
+    backend_api_timeout: HumanTimedelta = Field(
+        timedelta(seconds=30),
+        title="Backend API call timeout",
+        description=(
+            "Timeout for individual backend API calls (get_job, "
+            "list_jobs, etc.). Used by both Qserv REST API and BigQuery API."
+        ),
+    )
+
+    backend_poll_interval: HumanTimedelta = Field(
+        timedelta(seconds=1),
+        title="Backend poll interval",
+        description="How frequently to poll the backend for query status",
+    )
+
+    backend_retry_count: int = Field(
+        3,
+        title="Number of Backend retries",
+        description=(
+            "How many times to retry a Backend API call before giving up"
+        ),
+    )
+
+    backend_retry_delay: HumanTimedelta = Field(
+        timedelta(seconds=1),
+        title="Backend retry delay",
+        description="How long to pause between retries of backend API calls",
+    )
+
+    bigquery_location: str = Field(
+        "US",
+        title="BigQuery location",
+        description="BigQuery processing location",
+    )
+
+    bigquery_max_bytes_billed: int | None = Field(
+        None,
+        title="BigQuery maximum bytes billed",
+        description=(
+            "Maximum bytes that can be billed for a single query. "
+            "Queries exceeding this will fail. None means no limit."
+        ),
+    )
+
+    bigquery_project: str = Field(
+        "",
+        title="BigQuery project ID",
+        description="GCP project ID containing the BigQuery datasets to query",
+    )
+
     consumer_group_id: str | None = Field(
         "qserv", title="Kafka consumer group ID"
     )
@@ -99,11 +157,6 @@ class Config(BaseSettings):
         ...,
         title="Gafaelfawr token",
         description="Token to use for Gafaelfawr API calls",
-    )
-
-    kafka: KafkaConnectionSettings = Field(
-        default_factory=KafkaConnectionSettings,
-        title="Kafka connection settings",
     )
 
     job_cancel_topic: str = Field(
@@ -130,6 +183,11 @@ class Config(BaseSettings):
         "lsst.tap.job-status", title="Topic for job status"
     )
 
+    kafka: KafkaConnectionSettings = Field(
+        default_factory=KafkaConnectionSettings,
+        title="Kafka connection settings",
+    )
+
     log_level: LogLevel = Field(
         LogLevel.INFO, title="Log level of the application's logger"
     )
@@ -152,10 +210,6 @@ class Config(BaseSettings):
         title="Metrics configuration",
     )
 
-    sentry: SentryConfig | None = Field(None, title="Sentry configuration")
-
-    slack: SlackConfig = Field(SlackConfig(), title="Slack configuration")
-
     name: str = Field("qserv-kafka", title="Name of application")
 
     parquet_batch_size: int = Field(
@@ -164,30 +218,6 @@ class Config(BaseSettings):
         description=(
             "Number of rows to batch together when encoding Parquet files."
         ),
-    )
-
-    redis_max_connections: int = Field(
-        15,
-        title="Redis connection pool size",
-        description=(
-            "Should be larger than the batch size to handle simultaneous"
-            " quota requests for the batch, plus an extra connection for"
-            " the background monitor and another for cancel messages"
-        ),
-    )
-
-    redis_password: SecretStr = Field(
-        ..., title="Redis password", description="Password for Redis server"
-    )
-
-    redis_url: EnvRedisDsn = Field(
-        ...,
-        title="Redis DSN",
-        description="DSN for the Redis server storing query state",
-    )
-
-    qserv_database_password: SecretStr | None = Field(
-        None, title="Qserv MySQL password"
     )
 
     qserv_database_overflow: int = Field(
@@ -199,6 +229,10 @@ class Config(BaseSettings):
             " be closed when idle until the connection count returns to the"
             " pool size."
         ),
+    )
+
+    qserv_database_password: SecretStr | None = Field(
+        None, title="Qserv MySQL password"
     )
 
     qserv_database_pool_size: int = Field(
@@ -225,7 +259,11 @@ class Config(BaseSettings):
         description="Timeout (seconds) for reading from the Qserv database",
     )
 
-    qserv_database_url: MySQLDsn = Field(..., title="Qserv MySQL DSN")
+    qserv_database_url: MySQLDsn | None = Field(
+        None,
+        title="Qserv MySQL DSN",
+        description="Required when backend is Qserv",
+    )
 
     qserv_delete_queries: bool = Field(
         True,
@@ -235,12 +273,6 @@ class Config(BaseSettings):
             " query completes. If set to false, the query results are left"
             " in Qserv for it to clean up itself."
         ),
-    )
-
-    qserv_poll_interval: HumanTimedelta = Field(
-        timedelta(seconds=1),
-        title="Qserv poll interval",
-        description="How frequently to poll Qserv for query status",
     )
 
     qserv_rest_max_connections: int = Field(
@@ -273,16 +305,11 @@ class Config(BaseSettings):
         ),
     )
 
-    qserv_rest_timeout: HumanTimedelta = Field(
-        timedelta(seconds=30),
-        title="Qserv REST timeout",
-        description=(
-            "Maximum timeout for a REST API call to Qserv. This includes the"
-            " time spent waiting for a free connection."
-        ),
+    qserv_rest_url: HttpUrl | None = Field(
+        None,
+        title="Qserv REST API URL",
+        description="Required when backend is Qserv",
     )
-
-    qserv_rest_url: HttpUrl = Field(..., title="Qserv REST API URL")
 
     qserv_rest_username: str | None = Field(
         None,
@@ -293,20 +320,6 @@ class Config(BaseSettings):
         ),
     )
 
-    qserv_retry_count: int = Field(
-        3,
-        title="Number of Qserv retries",
-        description=(
-            "How many times to retry a Qserv API call before giving up"
-        ),
-    )
-
-    qserv_retry_delay: HumanTimedelta = Field(
-        timedelta(seconds=1),
-        title="Delay between Qserv retries",
-        description="How long to pause between retries of Qserv API calls",
-    )
-
     qserv_upload_timeout: HumanTimedelta = Field(
         timedelta(minutes=5),
         title="Qserv table upload timeout",
@@ -314,6 +327,26 @@ class Config(BaseSettings):
             "Maximum timeout for a REST API call to Qserv to upload a table."
             " This includes the time spent waiting for a free connection."
         ),
+    )
+
+    redis_max_connections: int = Field(
+        15,
+        title="Redis connection pool size",
+        description=(
+            "Should be larger than the batch size to handle simultaneous"
+            " quota requests for the batch, plus an extra connection for"
+            " the background monitor and another for cancel messages"
+        ),
+    )
+
+    redis_password: SecretStr = Field(
+        ..., title="Redis password", description="Password for Redis server"
+    )
+
+    redis_url: EnvRedisDsn = Field(
+        ...,
+        title="Redis DSN",
+        description="DSN for the Redis server storing query state",
     )
 
     result_timeout: HumanTimedelta = Field(
@@ -327,6 +360,10 @@ class Config(BaseSettings):
             " with the Kubernetes shutdown grace period."
         ),
     )
+
+    sentry: SentryConfig | None = Field(None, title="Sentry configuration")
+
+    slack: SlackConfig = Field(SlackConfig(), title="Slack configuration")
 
     tap_service: str = Field(
         ...,
@@ -352,9 +389,11 @@ class Config(BaseSettings):
 
     @field_validator("qserv_database_url")
     @classmethod
-    def _validate_qserv_database_url(cls, v: MySQLDsn) -> MySQLDsn:
+    def _validate_qserv_database_url(
+        cls, v: MySQLDsn | None
+    ) -> MySQLDsn | None:
         """Ensure that the Qserv DSN uses a compatible dialect."""
-        if v.scheme not in ("mysql", "mysql+asyncmy"):
+        if v is not None and v.scheme not in ("mysql", "mysql+asyncmy"):
             msg = "Only mysql or mysql+asyncmy DSN schemes are supported"
             raise ValueError(msg)
         return v
@@ -366,6 +405,25 @@ class Config(BaseSettings):
         if have_username != have_password:
             msg = "Set both or neither of REST API username and password"
             raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_bigquery_config(self) -> Self:
+        if self.backend == BackendType.BIGQUERY:
+            if not self.bigquery_project:
+                msg = "bigquery_project must be set when backend is BigQuery"
+                raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_qserv_config(self) -> Self:
+        if self.backend == BackendType.QSERV:
+            if self.qserv_database_url is None:
+                msg = "qserv_database_url must be set when backend is Qserv"
+                raise ValueError(msg)
+            if self.qserv_rest_url is None:
+                msg = "qserv_rest_url must be set when backend is Qserv"
+                raise ValueError(msg)
         return self
 
 

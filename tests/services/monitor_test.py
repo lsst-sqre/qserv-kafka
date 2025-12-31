@@ -40,20 +40,22 @@ async def test_dispatch(factory: Factory, mock_qserv: MockQserv) -> None:
     )
     await mock_qserv.update_status(1, qserv_status)
 
-    query = await state_store.get_query(1)
+    query = await state_store.get_query(str(1))
     assert query
     qserv_status = mock_qserv.get_status(1)
     with patch.object(RedisArqQueue, "enqueue") as mock:
-        assert await monitor.check_query(query, qserv_status) is None
-        assert mock.call_args_list == [call("handle_finished_query", 1)]
+        # Pass None to let monitor fetch status from backend
+        assert await monitor.check_query(query, None) is None
+        assert mock.call_args_list == [call("handle_finished_query", "1")]
         mock.reset_mock()
 
         # Running a second check on the query should notice that the query was
         # already dispatched from information stored in the state store and
         # should not dispatch it again.
-        query = await state_store.get_query(1)
+        query = await state_store.get_query(str(1))
         assert query
-        assert await monitor.check_query(query, qserv_status) is None
+        # Pass None to let monitor fetch status from backend
+        assert await monitor.check_query(query, None) is None
         assert mock.call_args_list == []
 
 
