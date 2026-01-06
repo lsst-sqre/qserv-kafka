@@ -7,6 +7,13 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-4.2.1'></a>
+## 4.2.1 (2026-01-06)
+
+### Bug fixes
+
+- Correctly parse saved query state in Redis from versions of qserv-kafka prior to 4.2.0, which do not record the time at which the query was queued in Kafka.
+
 <a id='changelog-4.2.0'></a>
 ## 4.2.0 (2025-12-19)
 
