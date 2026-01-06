@@ -1,7 +1,5 @@
 """Service to create new queries."""
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from safir.sentry import report_exception

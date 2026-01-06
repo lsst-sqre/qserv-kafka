@@ -1,7 +1,5 @@
 """Tests for the Qserv storage layer."""
 
-from __future__ import annotations
-
 import pytest
 
 from qservkafka.factory import Factory

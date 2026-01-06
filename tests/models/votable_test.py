@@ -1,7 +1,5 @@
 """Tests for VOTable models."""
 
-from __future__ import annotations
-
 import struct
 
 import pytest

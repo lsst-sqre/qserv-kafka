@@ -4,8 +4,6 @@ Each test repeats the leak tracing setup, rather than using a fixture, to
 ensure that the setup code is not included in the traced memory.
 """
 
-from __future__ import annotations
-
 import gc
 import sys
 import tracemalloc

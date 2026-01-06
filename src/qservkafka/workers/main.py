@@ -1,7 +1,5 @@
 """Configuration for arq queue workers."""
 
-from __future__ import annotations
-
 import uuid
 from collections.abc import Callable
 from typing import Any, ClassVar

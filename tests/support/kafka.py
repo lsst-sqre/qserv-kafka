@@ -1,7 +1,5 @@
 """Helper functions for running queries end-to-end with Kafka."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 from datetime import timedelta

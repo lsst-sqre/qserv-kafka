@@ -1,7 +1,5 @@
 """Processing of completed queries."""
 
-from __future__ import annotations
-
 import asyncio
 from dataclasses import asdict
 from datetime import UTC, datetime

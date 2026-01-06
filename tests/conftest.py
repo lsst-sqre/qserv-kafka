@@ -1,7 +1,5 @@
 """Test fixtures for qserv-kafka tests."""
 
-from __future__ import annotations
-
 from collections.abc import AsyncGenerator, Generator, Iterator
 from contextlib import aclosing
 from datetime import timedelta

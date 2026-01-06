@@ -1,7 +1,5 @@
 """Tests for the query status monitor."""
 
-from __future__ import annotations
-
 from unittest.mock import call, patch
 
 import pytest

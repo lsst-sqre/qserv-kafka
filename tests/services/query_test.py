@@ -1,7 +1,5 @@
 """Tests for creating new queries."""
 
-from __future__ import annotations
-
 from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY
 

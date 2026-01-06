@@ -1,7 +1,5 @@
 """Test support functions for arq queuing."""
 
-from __future__ import annotations
-
 import inspect
 
 from arq import Worker

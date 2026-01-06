@@ -1,7 +1,5 @@
 """Constants that (currently) do not need to be configurable."""
 
-from __future__ import annotations
-
 from datetime import timedelta
 
 __all__ = [
