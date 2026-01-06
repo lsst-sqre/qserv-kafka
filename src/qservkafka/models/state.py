@@ -24,7 +24,7 @@ class Query(BaseModel):
 
     queued: Annotated[
         datetime | None, Field(title="Kafka queue time of query")
-    ]
+    ] = None
 
     start: Annotated[datetime, Field(title="Receipt time of query")]
 
