@@ -1,7 +1,5 @@
 """State tracking for queries in progress."""
 
-from __future__ import annotations
-
 from safir.redis import PydanticRedisStorage
 from structlog.stdlib import BoundLogger
 

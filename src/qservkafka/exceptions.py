@@ -1,7 +1,5 @@
 """Custom exceptions for the Qserv Kafka bridge."""
 
-from __future__ import annotations
-
 from typing import ClassVar, Self, override
 
 from safir.slack.blockkit import (

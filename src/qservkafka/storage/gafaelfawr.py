@@ -1,7 +1,5 @@
 """Client for Gafaelfawr user information."""
 
-from __future__ import annotations
-
 from httpx import AsyncClient
 from rubin.gafaelfawr import (
     GafaelfawrClient,

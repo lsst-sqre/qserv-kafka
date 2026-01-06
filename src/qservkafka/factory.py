@@ -1,7 +1,5 @@
 """Create Qserv Kafka bridge components."""
 
-from __future__ import annotations
-
 import ssl
 from dataclasses import dataclass
 from typing import Self

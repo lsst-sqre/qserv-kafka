@@ -1,7 +1,5 @@
 """Tests for the rate limiter storage."""
 
-from __future__ import annotations
-
 import pytest
 from testcontainers.redis import RedisContainer
 

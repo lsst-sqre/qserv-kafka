@@ -1,7 +1,5 @@
 """Models for tracking the state of running queries."""
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import Annotated, Any, Self, override
 

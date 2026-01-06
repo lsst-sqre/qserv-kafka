@@ -1,7 +1,5 @@
 """Models for VOTables."""
 
-from __future__ import annotations
-
 import math
 import struct
 from dataclasses import dataclass

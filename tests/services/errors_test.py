@@ -1,7 +1,5 @@
 """Tests for errors during query creation or completion."""
 
-from __future__ import annotations
-
 from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, patch
 

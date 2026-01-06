@@ -1,7 +1,5 @@
 """Models for Kafka messages."""
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated

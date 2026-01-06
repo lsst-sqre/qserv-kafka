@@ -1,7 +1,5 @@
 """Mocks for testing code that talks to Qserv."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 import re

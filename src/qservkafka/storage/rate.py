@@ -1,7 +1,5 @@
 """Storage for rate limiting of simultaneous queries."""
 
-from __future__ import annotations
-
 import redis.asyncio as redis
 
 __all__ = ["RateLimitStore"]

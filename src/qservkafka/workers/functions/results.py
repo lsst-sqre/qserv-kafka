@@ -1,7 +1,5 @@
 """arq queue worker to process completed queries."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from structlog.stdlib import BoundLogger

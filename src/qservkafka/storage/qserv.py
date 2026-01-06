@@ -1,7 +1,5 @@
 """Client for the Qserv REST API."""
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import (
     AsyncGenerator,
@@ -13,7 +11,7 @@ from collections.abc import (
 from copy import copy
 from datetime import UTC, datetime, timedelta
 from functools import wraps
-from typing import Any, Concatenate, overload
+from typing import Any, Concatenate, Protocol, overload
 
 from httpx import AsyncClient, HTTPError, Response
 from pydantic import BaseModel, ValidationError
@@ -84,37 +82,47 @@ def _query_results_sql() -> str:
     return "SELECT * FROM qserv_result(:id)"
 
 
-@overload
-def _retry[**P, T](
-    __func: Callable[Concatenate[QservClient, P], Coroutine[None, None, T]], /
-) -> Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]: ...
+class _QservClientProtocol(Protocol):
+    """Protocol used by the retry decorator.
+
+    This avoids a circular dependency between the definition of ``_retry`` and
+    the definition of `QservClient`.
+    """
+
+    events: Events
+    slack_client: SlackWebhookClient | None
+    logger: BoundLogger
+
+
+type _QservClientMethod[**P, T, C: _QservClientProtocol] = Callable[
+    Concatenate[C, P], Coroutine[None, None, T]
+]
+"""The type of a method in the `QservClient` class."""
 
 
 @overload
-def _retry[**P, T](
+def _retry[**P, T, C: _QservClientProtocol](
+    __func: _QservClientMethod[P, T, C], /
+) -> _QservClientMethod[P, T, C]: ...
+
+
+@overload
+def _retry[**P, T, C: _QservClientProtocol](
     *,
     qserv: bool = True,
     qserv_protocol: QservProtocol = QservProtocol.HTTP,
-) -> Callable[
-    [Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]],
-    Callable[Concatenate[QservClient, P], Coroutine[None, None, T]],
-]: ...
+) -> Callable[[_QservClientMethod[P, T, C]], _QservClientMethod[P, T, C]]: ...
 
 
-def _retry[**P, T](
-    __func: (
-        Callable[Concatenate[QservClient, P], Coroutine[None, None, T]] | None
-    ) = None,
+def _retry[**P, T, C: _QservClientProtocol](
+    __func: _QservClientMethod[P, T, C] | None = None,
     /,
     *,
     qserv: bool = True,
     qserv_protocol: QservProtocol = QservProtocol.HTTP,
 ) -> (
-    Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]
-    | Callable[
-        [Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]],
-        Callable[Concatenate[QservClient, P], Coroutine[None, None, T]],
-    ]
+    _QservClientMethod
+    | Callable[[_QservClientMethod[P, T, C]], _QservClientMethod[P, T, C]]
 ):
     """Retry a failed HTTP action.
 
@@ -132,11 +140,11 @@ def _retry[**P, T](
     """
 
     def retry_decorator(
-        f: Callable[Concatenate[QservClient, P], Coroutine[None, None, T]],
-    ) -> Callable[Concatenate[QservClient, P], Coroutine[None, None, T]]:
+        f: _QservClientMethod[P, T, C],
+    ) -> _QservClientMethod[P, T, C]:
         @wraps(f)
         async def retry_wrapper(
-            client: QservClient, *args: P.args, **kwargs: P.kwargs
+            client: C, *args: P.args, **kwargs: P.kwargs
         ) -> T:
             for _ in range(1, config.qserv_retry_count):
                 try:

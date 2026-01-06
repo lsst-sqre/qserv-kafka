@@ -1,7 +1,5 @@
 """Test the Parquet encoder."""
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import AsyncGenerator
 from pathlib import Path

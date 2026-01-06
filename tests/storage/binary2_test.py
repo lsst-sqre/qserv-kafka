@@ -1,7 +1,5 @@
 """Test the VOTable BINARY2 writer."""
 
-from __future__ import annotations
-
 from base64 import b64encode
 from collections.abc import AsyncGenerator
 from typing import Any

@@ -1,7 +1,5 @@
 """Writer for BINARY2-encoded VOTables and Parquet files."""
 
-from __future__ import annotations
-
 import asyncio
 import struct
 from abc import ABCMeta, abstractmethod

@@ -1,7 +1,5 @@
 """Service to monitor the status of running queries."""
 
-from __future__ import annotations
-
 from collections import Counter
 
 from safir.arq import ArqQueue

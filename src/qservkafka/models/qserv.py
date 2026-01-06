@@ -1,7 +1,5 @@
 """Models used for talking to Qserv."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
@@ -90,7 +88,7 @@ class AsyncProcessStatus(BaseModel):
         ),
     ] = None
 
-    def is_different_than(self, new: AsyncProcessStatus) -> bool:
+    def is_different_than(self, new: "AsyncProcessStatus") -> bool:
         """Whether a new process status represents a change worth an update."""
         return (
             self.status != new.status
@@ -99,7 +97,7 @@ class AsyncProcessStatus(BaseModel):
             or self.last_update != new.last_update
         )
 
-    def update_from(self, new: AsyncProcessStatus) -> None:
+    def update_from(self, new: "AsyncProcessStatus") -> None:
         """Copy updated information from a new process status.
 
         This avoids the need to make another Qserv REST API call to return the

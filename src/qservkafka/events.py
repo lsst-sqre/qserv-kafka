@@ -1,7 +1,5 @@
 """Metrics events implementation for the Qserv Kafka bridge."""
 
-from __future__ import annotations
-
 from datetime import timedelta
 from enum import StrEnum
 from typing import override
