@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from qservkafka.models.kafka import JobCancel, JobRun, JobStatus
-from qservkafka.models.qserv import AsyncQueryStatus
+from qservkafka.models.qserv import QservAsyncStatusData
 
 from ..support.constants import ANY_DATETIME, ANY_OPTIONAL_DATETIME
 
@@ -166,7 +166,7 @@ def read_test_qserv_status(
     query_id: int | None = None,
     query_begin: datetime | None = None,
     last_update: datetime | None = None,
-) -> AsyncQueryStatus:
+) -> QservAsyncStatusData:
     """Read the result of q Qserv query status API call.
 
     Parameters
@@ -183,11 +183,11 @@ def read_test_qserv_status(
 
     Returns
     -------
-    AsyncQueryStatus
+    QservAsyncStatusData
         Parsed contents of the file.
     """
     model_data = read_test_json(f"qserv/{filename}")
-    model = AsyncQueryStatus.model_validate(model_data)
+    model = QservAsyncStatusData.model_validate(model_data)
     if query_id:
         model.query_id = query_id
     if query_begin:

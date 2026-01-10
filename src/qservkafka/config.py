@@ -22,6 +22,8 @@ from safir.logging import LogLevel, Profile
 from safir.metrics import MetricsConfiguration, metrics_configuration_factory
 from safir.pydantic import EnvRedisDsn, HumanTimedelta
 
+from .storage.backend import BackendType
+
 __all__ = ["Config", "config"]
 
 
@@ -130,6 +132,54 @@ class Config(BaseSettings):
         "lsst.tap.job-status", title="Topic for job status"
     )
 
+    enabled_backend: BackendType = Field(
+        BackendType.QSERV,
+        title="Enabled database backend",
+        description="Which database backend to use (QSERV or BIGQUERY)",
+    )
+
+    backend_poll_interval: HumanTimedelta = Field(
+        timedelta(seconds=1),
+        title="Backend poll interval",
+        description="How frequently to poll the backend for query status",
+    )
+
+    backend_retry_delay: HumanTimedelta = Field(
+        timedelta(seconds=1),
+        title="Backend retry delay",
+        description="How long to pause between retries of backend API calls",
+    )
+
+    backend_api_timeout: HumanTimedelta = Field(
+        timedelta(seconds=30),
+        title="Backend API call timeout",
+        description=(
+            "Timeout for individual backend API calls (get_job, "
+            "list_jobs, etc.). Used by both QServ REST API and BigQuery API."
+        ),
+    )
+
+    bigquery_project: str = Field(
+        "",
+        title="BigQuery project ID",
+        description="GCP project ID containing the BigQuery datasets to query",
+    )
+
+    bigquery_location: str = Field(
+        "US",
+        title="BigQuery location",
+        description="BigQuery processing location",
+    )
+
+    bigquery_max_bytes_billed: int | None = Field(
+        None,
+        title="BigQuery maximum bytes billed",
+        description=(
+            "Maximum bytes that can be billed for a single query. "
+            "Queries exceeding this will fail. None means no limit."
+        ),
+    )
+
     log_level: LogLevel = Field(
         LogLevel.INFO, title="Log level of the application's logger"
     )
@@ -211,7 +261,11 @@ class Config(BaseSettings):
         ),
     )
 
-    qserv_database_url: MySQLDsn = Field(..., title="Qserv MySQL DSN")
+    qserv_database_url: MySQLDsn | None = Field(
+        None,
+        title="Qserv MySQL DSN",
+        description="Required when enabled_backend is QSERV",
+    )
 
     qserv_delete_queries: bool = Field(
         True,
@@ -221,12 +275,6 @@ class Config(BaseSettings):
             " query completes. If set to false, the query results are left"
             " in Qserv for it to clean up itself."
         ),
-    )
-
-    qserv_poll_interval: HumanTimedelta = Field(
-        timedelta(seconds=1),
-        title="Qserv poll interval",
-        description="How frequently to poll Qserv for query status",
     )
 
     qserv_rest_max_connections: int = Field(
@@ -259,16 +307,11 @@ class Config(BaseSettings):
         ),
     )
 
-    qserv_rest_timeout: HumanTimedelta = Field(
-        timedelta(seconds=30),
-        title="Qserv REST timeout",
-        description=(
-            "Maximum timeout for a REST API call to Qserv. This includes the"
-            " time spent waiting for a free connection."
-        ),
+    qserv_rest_url: HttpUrl | None = Field(
+        None,
+        title="Qserv REST API URL",
+        description="Required when enabled_backend is QSERV",
     )
-
-    qserv_rest_url: HttpUrl = Field(..., title="Qserv REST API URL")
 
     qserv_rest_username: str | None = Field(
         None,
@@ -279,18 +322,12 @@ class Config(BaseSettings):
         ),
     )
 
-    qserv_retry_count: int = Field(
+    backend_retry_count: int = Field(
         3,
-        title="Number of Qserv retries",
+        title="Number of Backend retries",
         description=(
-            "How many times to retry a Qserv API call before giving up"
+            "How many times to retry a Backend API call before giving up"
         ),
-    )
-
-    qserv_retry_delay: HumanTimedelta = Field(
-        timedelta(seconds=1),
-        title="Delay between Qserv retries",
-        description="How long to pause between retries of Qserv API calls",
     )
 
     qserv_upload_timeout: HumanTimedelta = Field(
@@ -338,9 +375,11 @@ class Config(BaseSettings):
 
     @field_validator("qserv_database_url")
     @classmethod
-    def _validate_qserv_database_url(cls, v: MySQLDsn) -> MySQLDsn:
+    def _validate_qserv_database_url(
+        cls, v: MySQLDsn | None
+    ) -> MySQLDsn | None:
         """Ensure that the Qserv DSN uses a compatible dialect."""
-        if v.scheme not in ("mysql", "mysql+asyncmy"):
+        if v is not None and v.scheme not in ("mysql", "mysql+asyncmy"):
             msg = "Only mysql or mysql+asyncmy DSN schemes are supported"
             raise ValueError(msg)
         return v
@@ -352,6 +391,33 @@ class Config(BaseSettings):
         if have_username != have_password:
             msg = "Set both or neither of REST API username and password"
             raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_bigquery_config(self) -> Self:
+        if self.enabled_backend == BackendType.BIGQUERY:
+            if not self.bigquery_project:
+                msg = (
+                    "bigquery_project must be set when enabled_backend is "
+                    "BIGQUERY"
+                )
+                raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_qserv_config(self) -> Self:
+        if self.enabled_backend == BackendType.QSERV:
+            if self.qserv_database_url is None:
+                msg = (
+                    "qserv_database_url must be set when enabled_backend is "
+                    "QSERV"
+                )
+                raise ValueError(msg)
+            if self.qserv_rest_url is None:
+                msg = (
+                    "qserv_rest_url must be set when enabled_backend is QSERV"
+                )
+                raise ValueError(msg)
         return self
 
 

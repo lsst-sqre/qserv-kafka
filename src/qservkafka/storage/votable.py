@@ -863,7 +863,7 @@ class VOTableWriter:
         self,
         url: str | HttpUrl,
         config: JobResultConfig,
-        results: AsyncGenerator[Row[Any]],
+        results: AsyncGenerator[tuple[Any, ...]],
         *,
         maxrec: int | None = None,
         overflow: bool = False,
@@ -879,7 +879,7 @@ class VOTableWriter:
             and type information. The type information must exactly match the
             columns of the results. This is not checked.
         results
-            Async generator that yields one result row (or batch) at a time.
+            Async generator that yields one result row as a tuple at a time.
         maxrec
             Maximum record limit, if not `None`.
         overflow
