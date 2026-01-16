@@ -3,146 +3,30 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from enum import StrEnum
 from typing import Any
 
 from ..models.kafka import JobRun, JobTableUpload
-from ..models.progress import ProgressMetrics
 from ..models.qserv import TableUploadStats
-from ..models.query import AsyncQueryPhase, ProcessStatus, QueryStatus
+from ..models.query import ProcessStatus, QueryStatus
 
 __all__ = [
-    "BackendProcessStatus",
-    "BackendQueryStatus",
     "BackendType",
     "DatabaseBackend",
 ]
 
 
 class BackendType(StrEnum):
-    """Supported database backend types."""
+    """Supported database backend types.
 
-    QSERV = "QSERV"
-    BIGQUERY = "BIGQUERY"
-
-
-class BackendQueryStatus:
-    """Query status information.
-
-    This is an abstraction over the status models for the various backends
-    (Qserv, BigQuery..) and provides a common interface for the service
-    layer.
-
-    Attributes
-    ----------
-    query_id
-        Backend-specific query identifier
-    phase
-        Current execution phase (EXECUTING, COMPLETED, FAILED, ABORTED)
-    error
-        Error message if the query failed
-    progress
-        Progress information
-    query_begin
-        When the query started executing
-    last_update
-        When the status was last updated
-    collected_bytes
-        Total size of results collected (bytes)
-    final_rows
-        Number of rows in the final result
+    These values use canonical capitalization (Qserv, BigQuery). Metrics
+    events use separate hardcoded names (qserv_success, bigquery_success)
+    so changes here don't affect metrics dashboards.
     """
 
-    def __init__(
-        self,
-        *,
-        query_id: str,
-        phase: str,
-        error: str | None = None,
-        progress: ProgressMetrics | None = None,
-        query_begin: Any = None,
-        last_update: Any = None,
-        collected_bytes: int = 0,
-        final_rows: int | None = None,
-    ) -> None:
-        self.query_id = query_id
-        self.phase = phase
-        self.error = error
-        self.progress = progress
-        self.query_begin = query_begin
-        self.last_update = last_update
-        self.collected_bytes = collected_bytes
-        self.final_rows = final_rows
-
-    def to_query_status(self) -> QueryStatus:
-        """Convert to QueryStatus for internal use.
-
-        Returns
-        -------
-        QueryStatus
-            Internal query status representation.
-        """
-        return QueryStatus(
-            query_id=self.query_id,
-            status=AsyncQueryPhase(self.phase),
-            query_begin=self.query_begin,
-            last_update=self.last_update,
-            error=self.error,
-            collected_bytes=self.collected_bytes,
-            final_rows=self.final_rows,
-            progress=self.progress,
-        )
-
-
-class BackendProcessStatus:
-    """Backend process status for a running query.
-
-    This is a subset of BackendQueryStatus used for monitoring
-    running queries without retrieving full query details.
-
-    Attributes
-    ----------
-    query_id
-        Backend-specific query identifier
-    status
-        Current execution phase
-    progress
-        Backend-specific progress information
-    query_begin
-        When the query started executing
-    last_update
-        When the status was last updated
-    """
-
-    def __init__(
-        self,
-        *,
-        query_id: str,
-        status: str,
-        progress: ProgressMetrics | None = None,
-        query_begin: Any = None,
-        last_update: Any = None,
-    ) -> None:
-        self.query_id = query_id
-        self.status = status
-        self.progress = progress
-        self.query_begin = query_begin
-        self.last_update = last_update
-
-    def to_process_status(self) -> ProcessStatus:
-        """Convert to ProcessStatus for monitoring.
-
-        Returns
-        -------
-        ProcessStatus
-            Process status for monitoring.
-        """
-        return ProcessStatus(
-            status=AsyncQueryPhase(self.status),
-            last_update=self.last_update,
-            progress=self.progress,
-        )
+    QSERV = "Qserv"
+    BIGQUERY = "BigQuery"
 
 
 class DatabaseBackend(ABC):
@@ -196,7 +80,7 @@ class DatabaseBackend(ABC):
         """
 
     @abstractmethod
-    async def get_query_status(self, query_id: str) -> BackendQueryStatus:
+    async def get_query_status(self, query_id: str) -> QueryStatus:
         """Get the current status of a query.
 
         Parameters
@@ -206,8 +90,9 @@ class DatabaseBackend(ABC):
 
         Returns
         -------
-        BackendQueryStatus
-            Current status of the query
+        QueryStatus
+            Current status of the query (QservQueryStatus or
+            BigQueryQueryStatus depending on the backend).
 
         Raises
         ------
@@ -216,14 +101,14 @@ class DatabaseBackend(ABC):
         """
 
     @abstractmethod
-    async def list_running_queries(self) -> dict[str, BackendProcessStatus]:
+    async def list_running_queries(self) -> dict[str, ProcessStatus]:
         """List all currently running queries.
 
         This is used by the monitoring service to detect status changes.
 
         Returns
         -------
-        dict of BackendProcessStatus
+        dict of ProcessStatus
             Mapping from query ID to process status for all running queries.
 
         Raises
@@ -241,7 +126,7 @@ class DatabaseBackend(ABC):
     @abstractmethod
     async def get_query_results_gen(
         self, query_id: str
-    ) -> AsyncGenerator[tuple[Any, ...]]:
+    ) -> AsyncGenerator[Sequence[Any]]:
         """Stream the results of a completed query.
 
         Parameters
@@ -251,8 +136,8 @@ class DatabaseBackend(ABC):
 
         Yields
         ------
-        tuple
-            Individual rows as tuples of column values.
+        Sequence
+            Individual rows as sequences of column values (Row or tuple).
 
         Raises
         ------

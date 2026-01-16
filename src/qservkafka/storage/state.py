@@ -98,9 +98,7 @@ class QueryStateStore:
             processing.
         """
         lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
-        await self._storage.store(
-            query.query_id, query, lifetime, exclude_defaults=True
-        )
+        await self._storage.store(query.query_id, query, lifetime)
 
     async def update_status(self, query_id: str, status: QueryStatus) -> None:
         """Update the status of a query.
@@ -115,8 +113,6 @@ class QueryStateStore:
         query = await self.get_query(query_id)
         if query:
             query.result_queued = False
-            query.status = status
+            query.status.update_from(status.to_process_status())
             lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
-            await self._storage.store(
-                query_id, query, lifetime, exclude_defaults=True
-            )
+            await self._storage.store(query_id, query, lifetime)

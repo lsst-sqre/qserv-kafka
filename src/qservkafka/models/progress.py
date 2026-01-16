@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+import humanize
+from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "ByteProgress",
@@ -14,9 +15,9 @@ __all__ = [
 
 
 class ChunkProgress(BaseModel):
-    """QServ-style chunk-based progress reporting.
+    """Qserv-style chunk-based progress reporting.
 
-    QServ divides queries across data chunks and reports progress as the
+    Qserv divides queries across data chunks and reports progress as the
     number of chunks completed out of the total number of chunks.
 
     Attributes
@@ -27,13 +28,24 @@ class ChunkProgress(BaseModel):
         Number of chunks that have been processed so far
     """
 
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
     total_chunks: Annotated[
-        int, Field(title="Total chunks", description="Total query chunks")
+        int,
+        Field(
+            title="Total chunks",
+            description="Total query chunks",
+            alias="totalChunks",
+        ),
     ]
 
     completed_chunks: Annotated[
         int,
-        Field(title="Completed chunks", description="Completed query chunks"),
+        Field(
+            title="Completed chunks",
+            description="Completed query chunks",
+            alias="completedChunks",
+        ),
     ]
 
     def completion_percentage(self) -> float:
@@ -47,6 +59,26 @@ class ChunkProgress(BaseModel):
         if self.total_chunks == 0:
             return 0.0
         return (self.completed_chunks / self.total_chunks) * 100.0
+
+    def is_different_than(self, other: ProgressMetrics) -> bool:
+        """Check if progress has changed.
+
+        Parameters
+        ----------
+        other
+            Another progress to compare against.
+
+        Returns
+        -------
+        bool
+            True if types differ or progress values differ.
+        """
+        if not isinstance(other, ChunkProgress):
+            return True
+        return (
+            self.total_chunks != other.total_chunks
+            or self.completed_chunks != other.completed_chunks
+        )
 
 
 class ByteProgress(BaseModel):
@@ -66,11 +98,14 @@ class ByteProgress(BaseModel):
         Whether the query results were served from cache
     """
 
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
+
     bytes_processed: Annotated[
         int,
         Field(
             title="Bytes processed",
             description="Bytes scanned during query execution",
+            alias="bytesProcessed",
         ),
     ]
 
@@ -79,6 +114,7 @@ class ByteProgress(BaseModel):
         Field(
             title="Bytes billed",
             description="Bytes that will be billed for this query",
+            alias="bytesBilled",
         ),
     ] = None
 
@@ -90,25 +126,25 @@ class ByteProgress(BaseModel):
         ),
     ] = False
 
-    def to_gb(self) -> float:
-        """Convert bytes processed to gigabytes.
+    def to_human_readable(self) -> str:
+        return humanize.naturalsize(self.bytes_processed, binary=True)
+
+    def is_different_than(self, other: ProgressMetrics) -> bool:
+        """Check if progress has changed.
+
+        Parameters
+        ----------
+        other
+            Another progress to compare against.
 
         Returns
         -------
-        float
-            Bytes processed in gigabytes
+        bool
+            True if types differ or bytes processed differs.
         """
-        return self.bytes_processed / (1024**3)
-
-    def to_tb(self) -> float:
-        """Convert bytes processed to terabytes.
-
-        Returns
-        -------
-        float
-            Bytes processed in terabytes
-        """
-        return self.bytes_processed / (1024**4)
+        if not isinstance(other, ByteProgress):
+            return True
+        return self.bytes_processed != other.bytes_processed
 
 
 # Progress metrics type (either chunk-based or byte-based)

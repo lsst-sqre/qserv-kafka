@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any, Literal, override
 
 from pydantic import BaseModel, Field
 from safir.pydantic import UtcDatetime
@@ -12,51 +12,29 @@ from .progress import ByteProgress, ChunkProgress, ProgressMetrics
 
 __all__ = [
     "AsyncQueryPhase",
+    "BigQueryQueryStatus",
     "ProcessStatus",
+    "QservQueryStatus",
     "QueryStatus",
 ]
 
 
 class AsyncQueryPhase(StrEnum):
-    """Possible status values for a query from the backend's perspective."""
+    """Possible status values for a query from the backend's perspective.
+
+    These are generic phases shared by all backends.
+    Backend-specific failure reasons can be captured for each backend
+    separately.
+    """
 
     EXECUTING = "EXECUTING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
-    FAILED_LR = "FAILED_LR"
     ABORTED = "ABORTED"
 
 
-class QueryStatus(BaseModel):
-    """Query status for internal storage.
-
-    Attributes
-    ----------
-    query_id
-        Backend query identifier as a string (numeric for QServ, UUID for
-        BigQuery)
-    status
-        Current execution phase
-    query_begin
-        When the query started executing in the backend
-    last_update
-        When the status was last updated
-    error
-        Error message if the query failed
-    collected_bytes
-        Total bytes collected/processed by the backend
-    final_rows
-        Number of rows in the final result (once completed)
-    progress
-        Backend-specific progress (ChunkProgress for QServ, ByteProgress for
-        BigQuery, None if not available)
-    query
-        Optional query text for debugging
-    czar_id
-        QServ-specific czar ID (None for other backends)
-    czar_type
-        QServ-specific czar type (None for other backends)
-    """
+class QueryStatusBase(BaseModel):
+    """Base class for query status models."""
 
     query_id: Annotated[str, Field(title="Backend query ID")]
 
@@ -76,48 +54,7 @@ class QueryStatus(BaseModel):
 
     final_rows: Annotated[int | None, Field(title="Final row count")] = None
 
-    progress: Annotated[
-        ProgressMetrics | None,
-        Field(
-            title="Backend-specific progress",
-            description=(
-                "Progress information specific to the backend. "
-                "ChunkProgress for QServ, ByteProgress for BigQuery, "
-                "or None if not available."
-            ),
-        ),
-    ] = None
-
     query: Annotated[str | None, Field(title="Query text")] = None
-
-    czar_id: Annotated[
-        int | None, Field(title="QServ czar ID (QServ only)")
-    ] = None
-
-    czar_type: Annotated[
-        str | None, Field(title="QServ czar type (QServ only)")
-    ] = None
-
-    def has_chunk_progress(self) -> bool:
-        """Check if this query uses chunk-based progress (QServ)."""
-        return isinstance(self.progress, ChunkProgress)
-
-    def has_byte_progress(self) -> bool:
-        """Check if this query uses byte-based progress (BigQuery)."""
-        return isinstance(self.progress, ByteProgress)
-
-    def get_completion_percentage(self) -> float | None:
-        """Get completion percentage if progress type supports it.
-
-        Returns
-        -------
-        float or None
-            Completion percentage (0-100) for chunk-based progress, or None
-            if progress type doesn't support percentage calculation.
-        """
-        if isinstance(self.progress, ChunkProgress):
-            return self.progress.completion_percentage()
-        return None
 
     def to_process_status(self) -> ProcessStatus:
         """Extract minimal process status for monitoring.
@@ -162,7 +99,149 @@ class QueryStatus(BaseModel):
         """
         self.status = other.status
         self.last_update = other.last_update
-        self.progress = other.progress
+        self._update_progress_from(other.progress)
+
+    def _update_progress_from(self, progress: ProgressMetrics | None) -> None:
+        """Update progress from a `ProcessStatus`."""
+
+    @property
+    def progress(self) -> ProgressMetrics | None:
+        """Backend-specific progress."""
+        return None
+
+    def to_logging_context(self) -> dict[str, Any]:
+        """Get backend-specific fields for logging context.
+
+        Returns
+        -------
+        dict
+            Dictionary of field names to values for logging.
+        """
+        return {}
+
+    @property
+    def is_results_too_large(self) -> bool:
+        """Whether query failed due to results exceeding size limit.
+
+        Override in subclasses that support this failure mode.
+        """
+        return False
+
+
+class QservQueryStatus(QueryStatusBase):
+    """Query status for Qserv backend.
+
+    Includes Qserv specific info (e.g. chunk-based progress and czar
+    information).
+    """
+
+    backend_type: Annotated[
+        Literal["Qserv"], Field(title="Backend type discriminator")
+    ] = "Qserv"
+
+    chunk_progress: Annotated[
+        ChunkProgress | None,
+        Field(title="Chunk-based progress"),
+    ] = None
+
+    czar_id: Annotated[int | None, Field(title="Qserv czar ID")] = None
+
+    czar_type: Annotated[str | None, Field(title="Qserv czar type")] = None
+
+    results_too_large: Annotated[
+        bool,
+        Field(
+            title="Results too large",
+            description="Query failed because results exceeded size limit",
+        ),
+    ] = False
+
+    @override
+    @property
+    def progress(self) -> ChunkProgress | None:
+        """Chunk-based progress for Qserv queries."""
+        return self.chunk_progress
+
+    @override
+    def _update_progress_from(self, progress: ProgressMetrics | None) -> None:
+        """Update chunk progress from `ProcessStatus`."""
+        if isinstance(progress, ChunkProgress):
+            self.chunk_progress = progress
+
+    def get_completion_percentage(self) -> float | None:
+        """Get completion percentage from chunk progress.
+
+        Returns
+        -------
+        float or None
+            Completion percentage (0-100), or None if no progress available.
+        """
+        if self.chunk_progress:
+            return self.chunk_progress.completion_percentage()
+        return None
+
+    @override
+    def to_logging_context(self) -> dict[str, Any]:
+        """Get Qserv-specific fields for logging context."""
+        result: dict[str, Any] = {}
+        if self.chunk_progress:
+            result["total_chunks"] = self.chunk_progress.total_chunks
+            result["completed_chunks"] = self.chunk_progress.completed_chunks
+        return result
+
+    @override
+    @property
+    def is_results_too_large(self) -> bool:
+        """Whether Qserv query failed due to results exceeding size limit."""
+        return self.results_too_large
+
+
+class BigQueryQueryStatus(QueryStatusBase):
+    """Query status for BigQuery backend.
+
+    Includes BigQuery specific to info (e.g. byte progress).
+    """
+
+    backend_type: Annotated[
+        Literal["BigQuery"], Field(title="Backend type discriminator")
+    ] = "BigQuery"
+
+    byte_progress: Annotated[
+        ByteProgress | None,
+        Field(title="Byte-based progress"),
+    ] = None
+
+    @override
+    @property
+    def progress(self) -> ByteProgress | None:
+        """Byte-based progress for BigQuery queries."""
+        return self.byte_progress
+
+    @override
+    def _update_progress_from(self, progress: ProgressMetrics | None) -> None:
+        """Update byte progress from ProcessStatus."""
+        if isinstance(progress, ByteProgress):
+            self.byte_progress = progress
+
+    @override
+    def to_logging_context(self) -> dict[str, Any]:
+        """Get BigQuery-specific fields for logging context."""
+        result: dict[str, Any] = {}
+        if self.byte_progress:
+            result["bytes_processed"] = self.byte_progress.bytes_processed
+            result["bytes_processed_human"] = (
+                self.byte_progress.to_human_readable()
+            )
+            if self.byte_progress.bytes_billed is not None:
+                result["bytes_billed"] = self.byte_progress.bytes_billed
+            result["cached"] = self.byte_progress.cached
+        return result
+
+
+QueryStatus = Annotated[
+    QservQueryStatus | BigQueryQueryStatus,
+    Field(discriminator="backend_type"),
+]
 
 
 class ProcessStatus(BaseModel):
@@ -209,25 +288,10 @@ class ProcessStatus(BaseModel):
         if self.last_update != other.last_update:
             return True
 
-        # Progress must be the same type
-        if type(self.progress) is not type(other.progress):
+        if self.progress is None and other.progress is None:
+            return False
+
+        if self.progress is None or other.progress is None:
             return True
 
-        # Compare progress based on type
-        if isinstance(self.progress, ChunkProgress) and isinstance(
-            other.progress, ChunkProgress
-        ):
-            return (
-                self.progress.total_chunks != other.progress.total_chunks
-                or self.progress.completed_chunks
-                != other.progress.completed_chunks
-            )
-
-        if isinstance(self.progress, ByteProgress) and isinstance(
-            other.progress, ByteProgress
-        ):
-            return (
-                self.progress.bytes_processed != other.progress.bytes_processed
-            )
-
-        return False
+        return self.progress.is_different_than(other.progress)

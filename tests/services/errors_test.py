@@ -17,6 +17,7 @@ from qservkafka.models.kafka import (
     JobQueryInfo,
     JobStatus,
 )
+from qservkafka.models.progress import ChunkProgress
 from qservkafka.models.qserv import QservAsyncStatusData
 from qservkafka.models.query import AsyncQueryPhase
 from qservkafka.storage import qserv
@@ -146,8 +147,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     expected.execution_id = "4"
     assert status.query_info
     expected.query_info = JobQueryInfo(
-        total_chunks=10,
-        completed_chunks=4,
+        progress=ChunkProgress(total_chunks=10, completed_chunks=4),
         start_time=status.query_info.start_time,
         end_time=status.query_info.end_time,
     )

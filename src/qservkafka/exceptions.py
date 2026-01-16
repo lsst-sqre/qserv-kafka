@@ -57,7 +57,7 @@ class BackendApiError(QueryError):
     """Base class for failures talking to any database backend API.
 
     This is the generic exception that service layer code should catch.
-    Specific backends (QServ, BigQuery) raise subclasses of this.
+    Specific backends (Qserv, BigQuery) raise subclasses of this.
     """
 
 
@@ -82,7 +82,7 @@ class BackendApiProtocolError(BackendApiError):
 class BackendApiSqlError(BackendApiError):
     """A SQL request to a backend failed unexpectedly.
 
-    This is used by SQL-based backends (like QServ) to wrap SQLAlchemy
+    This is used by SQL-based backends (like Qserv) to wrap SQLAlchemy
     errors.
     """
 
