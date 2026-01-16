@@ -15,6 +15,7 @@ from pydantic import (
 from safir.pydantic import SecondsTimedelta
 from vo_models.uws.types import ExecutionPhase
 
+from .progress import ProgressMetrics
 from .votable import VOTableArraySize, VOTablePrimitive
 
 type DatetimeMillis = Annotated[
@@ -421,48 +422,11 @@ class JobQueryInfo(BaseModel):
         ),
     ] = None
 
-    total_chunks: Annotated[
-        int,
+    progress: Annotated[
+        ProgressMetrics | None,
         Field(
-            title="Total work units",
-            description="Total work units required for the query (QServ only)",
-            serialization_alias="totalChunks",
-        ),
-    ]
-
-    completed_chunks: Annotated[
-        int,
-        Field(
-            title="Completed work units",
-            description="Work units completed so far (QServ only)",
-            serialization_alias="completedChunks",
-        ),
-    ]
-
-    bytes_processed: Annotated[
-        int | None,
-        Field(
-            title="Bytes processed",
-            description="Bytes processed by the query (BigQuery only)",
-            serialization_alias="bytesProcessed",
-        ),
-    ] = None
-
-    bytes_billed: Annotated[
-        int | None,
-        Field(
-            title="Bytes billed",
-            description="Bytes that will be billed (BigQuery only)",
-            serialization_alias="bytesBilled",
-        ),
-    ] = None
-
-    cached: Annotated[
-        bool | None,
-        Field(
-            title="Cached result",
-            description="Whether results were served "
-            "from cache (BigQuery only)",
+            title="Query progress",
+            description="Backend-specific progress information",
         ),
     ] = None
 

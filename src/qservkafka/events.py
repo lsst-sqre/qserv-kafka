@@ -1,8 +1,9 @@
 """Metrics events implementation for the Qserv Kafka bridge."""
 
+from abc import abstractmethod
 from datetime import timedelta
 from enum import StrEnum
-from typing import override
+from typing import Any, override
 
 from pydantic import Field
 from safir.dependencies.metrics import EventMaker
@@ -12,11 +13,11 @@ from .models.kafka import JobErrorCode
 
 __all__ = [
     "BackendFailureEvent",
-    "BackendProtocol",
     "BigQueryFailureEvent",
     "BigQuerySuccessEvent",
     "Events",
     "QservFailureEvent",
+    "QservProtocol",
     "QservSuccessEvent",
     "QueryAbortEvent",
     "QueryFailureEvent",
@@ -25,8 +26,11 @@ __all__ = [
 ]
 
 
-class BackendProtocol(StrEnum):
-    """Protocol of backend API used."""
+class QservProtocol(StrEnum):
+    """Protocol of Qserv API used.
+
+    Qserv uses both HTTP (REST API) and SQL (direct database connection).
+    """
 
     HTTP = "HTTP"
     SQL = "SQL"
@@ -39,8 +43,6 @@ class BackendFailureEvent(EventPayload):
     backend specific failure events with appropriate fields.
     """
 
-    protocol: BackendProtocol = Field(..., title="Protocol of backend API")
-
 
 class QservFailureEvent(BackendFailureEvent):
     """Unexpected failure sending a Qserv API request.
@@ -49,12 +51,14 @@ class QservFailureEvent(BackendFailureEvent):
     SQL) to the Qserv backend.
     """
 
+    protocol: QservProtocol = Field(..., title="Protocol of Qserv API")
+
 
 class BigQueryFailureEvent(BackendFailureEvent):
     """Unexpected failure sending a BigQuery API request.
 
     This event will be logged for each low-level API failure to the BigQuery
-    backend.
+    backend. BigQuery uses HTTP-based APIs exclusively.
     """
 
 
@@ -162,9 +166,16 @@ class QuerySuccessEvent(BaseQueryEvent):
         ),
     )
 
+    @abstractmethod
+    def to_logging_context(self) -> dict[str, Any]:
+        """Convert relevant information to a dictionary for logging.
+
+        Subclasses must implement this to provide backend-specific logging.
+        """
+
 
 class QservSuccessEvent(QuerySuccessEvent):
-    """Successful end-to-end completion of a QServ query."""
+    """Successful end-to-end completion of a Qserv query."""
 
     qserv_elapsed: timedelta = Field(
         ...,
@@ -187,9 +198,10 @@ class QservSuccessEvent(QuerySuccessEvent):
         ),
     )
 
-    def to_logging_context(self) -> dict[str, float]:
+    @override
+    def to_logging_context(self) -> dict[str, Any]:
         """Convert relevant information to a dictionary for logging."""
-        result = {
+        result: dict[str, Any] = {
             "rows": self.rows,
             "qserv_size": self.qserv_size,
             "encoded_size": self.encoded_size,
@@ -234,9 +246,10 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
         ),
     )
 
-    def to_logging_context(self) -> dict[str, float]:
+    @override
+    def to_logging_context(self) -> dict[str, Any]:
         """Convert relevant information to a dictionary for logging."""
-        result = {
+        result: dict[str, Any] = {
             "rows": self.rows,
             "bigquery_size": self.bigquery_size,
             "encoded_size": self.encoded_size,
@@ -254,7 +267,6 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
         )
         if self.delete_elapsed:
             result["delete_elapsed"] = self.delete_elapsed.total_seconds()
-
         return result
 
 

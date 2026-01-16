@@ -19,13 +19,13 @@ from safir.database import datetime_from_db
 from safir.datetime import format_datetime_for_logging
 from safir.slack.blockkit import SlackWebException
 from safir.slack.webhook import SlackWebhookClient
-from sqlalchemy import text
+from sqlalchemy import Row, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from structlog.stdlib import BoundLogger
 
 from ..config import config
-from ..events import BackendProtocol, Events, QservFailureEvent
+from ..events import Events, QservFailureEvent, QservProtocol
 from ..exceptions import (
     QservApiFailedError,
     QservApiProtocolError,
@@ -40,11 +40,12 @@ from ..models.qserv import (
     AsyncSubmitResponse,
     BaseResponse,
     QservAsyncStatusData,
+    QservQueryPhase,
     QservStatusResponse,
     TableUploadStats,
 )
-from ..models.query import AsyncQueryPhase
-from .backend import BackendProcessStatus, BackendQueryStatus, DatabaseBackend
+from ..models.query import AsyncQueryPhase, ProcessStatus, QservQueryStatus
+from .backend import DatabaseBackend
 
 API_VERSION = 51
 """Version of the REST API that this client requests."""
@@ -111,7 +112,7 @@ def _retry[**P, T, C: _QservClientProtocol](
 def _retry[**P, T, C: _QservClientProtocol](
     *,
     qserv: bool = True,
-    qserv_protocol: BackendProtocol = BackendProtocol.HTTP,
+    qserv_protocol: QservProtocol = QservProtocol.HTTP,
 ) -> Callable[[_QservClientMethod[P, T, C]], _QservClientMethod[P, T, C]]: ...
 
 
@@ -120,7 +121,7 @@ def _retry[**P, T, C: _QservClientProtocol](
     /,
     *,
     qserv: bool = True,
-    qserv_protocol: BackendProtocol = BackendProtocol.HTTP,
+    qserv_protocol: QservProtocol = QservProtocol.HTTP,
 ) -> (
     _QservClientMethod
     | Callable[[_QservClientMethod[P, T, C]], _QservClientMethod[P, T, C]]
@@ -311,7 +312,7 @@ class QservClient(DatabaseBackend):
     @override
     async def get_query_results_gen(
         self, query_id: str
-    ) -> AsyncGenerator[tuple[Any, ...]]:
+    ) -> AsyncGenerator[Row[Any]]:
         """Get an async iterator for the results of a query.
 
         Qserv discards the results after they're retrieved, so be aware that
@@ -326,7 +327,7 @@ class QservClient(DatabaseBackend):
         Returns
         -------
         collections.abc.AsyncIterator
-            Iterator over the rows of the query results as tuples.
+            Iterator over the rows of the query results.
 
         Raises
         ------
@@ -342,14 +343,14 @@ class QservClient(DatabaseBackend):
                     results = results.yield_per(100)
                     try:
                         async for result in results:
-                            yield tuple(result)
+                            yield result
                     finally:
                         await results.close()
         except SQLAlchemyError as e:
             raise QservApiSqlError.from_exception(e) from e
 
     @override
-    async def get_query_status(self, query_id: str) -> BackendQueryStatus:
+    async def get_query_status(self, query_id: str) -> QservQueryStatus:
         """Query for the status of an async job.
 
         Parameters
@@ -359,21 +360,21 @@ class QservClient(DatabaseBackend):
 
         Returns
         -------
-        BackendQueryStatus
+        QservQueryStatus
             Status of the query.
         """
         url = f"/query-async/status/{query_id}"
         result = await self._get(url, {}, QservStatusResponse)
-        return self._to_backend_status(result.status)
+        return self._to_query_status(result.status)
 
     @override
-    @_retry(qserv_protocol=BackendProtocol.SQL)
-    async def list_running_queries(self) -> dict[str, BackendProcessStatus]:
+    @_retry(qserv_protocol=QservProtocol.SQL)
+    async def list_running_queries(self) -> dict[str, ProcessStatus]:
         """Return information about all running queries.
 
         Returns
         -------
-        dict of BackendProcessStatus
+        dict of ProcessStatus
             Mapping from query ID to information about a running query.
 
         Raises
@@ -385,19 +386,17 @@ class QservClient(DatabaseBackend):
             async with self._sessionmaker() as session:
                 async with session.begin():
                     result = await session.stream(text(_query_list_sql()))
-                    processes = {}
+                    processes: dict[str, ProcessStatus] = {}
                     try:
                         async for row in result:
                             msg = "Saw running query"
                             self.logger.debug(msg, query=row._asdict())
-                            processes[str(row.id)] = BackendProcessStatus(
-                                query_id=str(row.id),
+                            processes[str(row.id)] = ProcessStatus(
                                 status=AsyncQueryPhase.EXECUTING,
                                 progress=ChunkProgress(
                                     total_chunks=row.chunks,
                                     completed_chunks=row.chunks_comp,
                                 ),
-                                query_begin=datetime_from_db(row.submitted),
                                 last_update=datetime_from_db(row.updated),
                             )
                     finally:
@@ -474,33 +473,38 @@ class QservClient(DatabaseBackend):
             size=len(source), elapsed=datetime.now(tz=UTC) - start
         )
 
-    def _to_backend_status(
-        self, data: QservAsyncStatusData
-    ) -> BackendQueryStatus:
-        """Convert QServ API response data to backend status.
+    def _to_query_status(self, data: QservAsyncStatusData) -> QservQueryStatus:
+        """Convert Qserv API response data to query status.
 
         Parameters
         ----------
         data
-            Parsed QServ API response data.
+            Parsed Qserv API response data.
 
         Returns
         -------
-        BackendQueryStatus
-            Backend query status.
+        QservQueryStatus
+            Query status for Qserv backend.
         """
-        return BackendQueryStatus(
+        qserv_phase = QservQueryPhase(data.status)
+        generic_phase = qserv_phase.to_generic_phase()
+        results_too_large = qserv_phase == QservQueryPhase.FAILED_LR
+
+        return QservQueryStatus(
             query_id=str(data.query_id),
-            phase=data.status,
+            status=generic_phase,
+            query_begin=data.query_begin,
+            last_update=data.last_update,
             error=data.error,
-            progress=ChunkProgress(
+            collected_bytes=data.collected_bytes,
+            final_rows=data.final_rows,
+            chunk_progress=ChunkProgress(
                 total_chunks=data.total_chunks,
                 completed_chunks=data.completed_chunks,
             ),
-            query_begin=data.query_begin,
-            last_update=data.last_update,
-            collected_bytes=data.collected_bytes,
-            final_rows=data.final_rows,
+            czar_id=data.czar_id,
+            czar_type=data.czar_type,
+            results_too_large=results_too_large,
         )
 
     @_retry

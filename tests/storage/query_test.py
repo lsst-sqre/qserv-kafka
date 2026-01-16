@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, override
 
 import pytest
-from pydantic import HttpUrl
+from pydantic import HttpUrl, TypeAdapter
 
 from qservkafka.models.kafka import (
     JobResultConfig,
@@ -20,12 +20,14 @@ from qservkafka.models.kafka import (
 )
 from qservkafka.models.progress import ByteProgress, ChunkProgress
 from qservkafka.models.qserv import TableUploadStats
-from qservkafka.models.query import AsyncQueryPhase, ProcessStatus, QueryStatus
-from qservkafka.storage.backend import (
-    BackendProcessStatus,
-    BackendQueryStatus,
-    DatabaseBackend,
+from qservkafka.models.query import (
+    AsyncQueryPhase,
+    BigQueryQueryStatus,
+    ProcessStatus,
+    QservQueryStatus,
+    QueryStatus,
 )
+from qservkafka.storage.backend import DatabaseBackend
 
 
 @pytest.fixture
@@ -76,30 +78,28 @@ class MockDatabaseBackend(DatabaseBackend):
         self.cancelled_queries.append(query_id)
 
     @override
-    async def get_query_status(self, query_id: str) -> BackendQueryStatus:
-        """Mock status retrieval."""
+    async def get_query_status(self, query_id: str) -> QservQueryStatus:
+        """Mock status retrieval returning QservQueryStatus."""
         now = datetime.now(tz=UTC)
-        return BackendQueryStatus(
+        return QservQueryStatus(
             query_id=query_id,
-            phase="EXECUTING",
-            error=None,
-            progress=ChunkProgress(total_chunks=100, completed_chunks=50),
+            status=AsyncQueryPhase.EXECUTING,
             query_begin=now,
             last_update=now,
             collected_bytes=1000,
-            final_rows=None,
+            chunk_progress=ChunkProgress(
+                total_chunks=100, completed_chunks=50
+            ),
         )
 
     @override
-    async def list_running_queries(self) -> dict[str, BackendProcessStatus]:
+    async def list_running_queries(self) -> dict[str, ProcessStatus]:
         """Mock query listing."""
         now = datetime.now(tz=UTC)
         return {
-            "mock-0": BackendProcessStatus(
-                query_id="mock-0",
-                status="EXECUTING",
+            "mock-0": ProcessStatus(
+                status=AsyncQueryPhase.EXECUTING,
                 progress=ChunkProgress(total_chunks=100, completed_chunks=50),
-                query_begin=now,
                 last_update=now,
             )
         }
@@ -158,12 +158,12 @@ async def test_backend_get_query_status() -> None:
     backend = MockDatabaseBackend()
     status = await backend.get_query_status("test-query-123")
 
-    assert isinstance(status, BackendQueryStatus)
+    assert isinstance(status, QservQueryStatus)
     assert status.query_id == "test-query-123"
-    assert status.phase == "EXECUTING"
+    assert status.status == AsyncQueryPhase.EXECUTING
     assert status.error is None
-    assert isinstance(status.progress, ChunkProgress)
-    assert status.progress.total_chunks == 100
+    assert status.chunk_progress is not None
+    assert status.chunk_progress.total_chunks == 100
 
 
 @pytest.mark.asyncio
@@ -173,7 +173,7 @@ async def test_backend_list_running_queries() -> None:
 
     assert isinstance(queries, dict)
     assert "mock-0" in queries
-    assert isinstance(queries["mock-0"], BackendProcessStatus)
+    assert isinstance(queries["mock-0"], ProcessStatus)
 
 
 @pytest.mark.asyncio
@@ -233,150 +233,97 @@ async def test_backend_interface_requires_all_methods() -> None:
     assert "abstract" in error_msg.lower()
 
 
-def test_backend_query_status_to_async_with_chunks() -> None:
+def test_qserv_query_status_serialization() -> None:
     now = datetime.now(tz=UTC)
-    chunk_progress = ChunkProgress(total_chunks=100, completed_chunks=75)
-    backend_status = BackendQueryStatus(
-        query_id="12345",
-        phase="EXECUTING",
-        error=None,
-        progress=chunk_progress,
-        query_begin=now,
-        last_update=now,
-        collected_bytes=5000000,
-        final_rows=None,
-    )
-
-    query_status = backend_status.to_query_status()
-
-    assert isinstance(query_status, QueryStatus)
-    assert query_status.query_id == "12345"
-    assert query_status.status == AsyncQueryPhase.EXECUTING
-    assert query_status.query_begin == now
-    assert query_status.last_update == now
-    assert query_status.collected_bytes == 5000000
-    assert query_status.final_rows is None
-    assert query_status.progress == chunk_progress
-    assert isinstance(query_status.progress, ChunkProgress)
-    assert query_status.has_chunk_progress()
-    assert not query_status.has_byte_progress()
-
-
-def test_backend_query_status_to_async_with_bytes() -> None:
-    now = datetime.now(tz=UTC)
-    byte_progress = ByteProgress(
-        bytes_processed=2000000, bytes_billed=1500000, cached=True
-    )
-    backend_status = BackendQueryStatus(
-        query_id="bq-job-uuid-123",
-        phase="COMPLETED",
-        error=None,
-        progress=byte_progress,
-        query_begin=now,
-        last_update=now,
-        collected_bytes=2000000,
-        final_rows=42,
-    )
-
-    query_status = backend_status.to_query_status()
-
-    assert isinstance(query_status, QueryStatus)
-    assert query_status.query_id == "bq-job-uuid-123"
-    assert query_status.status == AsyncQueryPhase.COMPLETED
-    assert query_status.query_begin == now
-    assert query_status.last_update == now
-    assert query_status.collected_bytes == 2000000
-    assert query_status.final_rows == 42
-    # Verify progress field is preserved
-    assert query_status.progress == byte_progress
-    assert isinstance(query_status.progress, ByteProgress)
-    assert query_status.progress.bytes_billed == 1500000
-    assert query_status.progress.cached is True
-    assert not query_status.has_chunk_progress()
-    assert query_status.has_byte_progress()
-
-
-def test_backend_query_status_to_async_with_error() -> None:
-    now = datetime.now(tz=UTC)
-    backend_status = BackendQueryStatus(
-        query_id="999",
-        phase="FAILED",
-        error="Syntax error at line 1",
-        progress=None,
-        query_begin=now,
-        last_update=now,
-        collected_bytes=0,
-        final_rows=None,
-    )
-
-    query_status = backend_status.to_query_status()
-
-    assert isinstance(query_status, QueryStatus)
-    assert query_status.query_id == "999"
-    assert query_status.status == AsyncQueryPhase.FAILED
-    assert query_status.error == "Syntax error at line 1"
-    assert query_status.collected_bytes == 0
-    assert query_status.progress is None
-    assert not query_status.has_chunk_progress()
-    assert not query_status.has_byte_progress()
-
-
-def test_query_status_serialization_with_chunk_progress() -> None:
-    now = datetime.now(tz=UTC)
-    original = QueryStatus(
+    original = QservQueryStatus(
         query_id="123",
         status=AsyncQueryPhase.EXECUTING,
         query_begin=now,
         last_update=now,
         collected_bytes=5000000,
-        final_rows=None,
-        progress=ChunkProgress(total_chunks=100, completed_chunks=75),
+        chunk_progress=ChunkProgress(total_chunks=100, completed_chunks=75),
+        czar_id=42,
+        czar_type="shared",
     )
 
     serialized = original.model_dump()
-    deserialized = QueryStatus.model_validate(serialized)
+    deserialized = QservQueryStatus.model_validate(serialized)
 
     assert deserialized.query_id == "123"
-    assert deserialized.progress is not None
-    assert isinstance(deserialized.progress, ChunkProgress)
-    assert deserialized.progress.total_chunks == 100
-    assert deserialized.progress.completed_chunks == 75
-    assert deserialized.has_chunk_progress()
+    assert deserialized.backend_type == "Qserv"
+    assert deserialized.chunk_progress is not None
+    assert deserialized.chunk_progress.total_chunks == 100
+    assert deserialized.chunk_progress.completed_chunks == 75
+    assert deserialized.czar_id == 42
 
 
-def test_query_status_serialization_with_byte_progress() -> None:
+def test_bigquery_query_status_serialization() -> None:
     now = datetime.now(tz=UTC)
-    original = QueryStatus(
+    original = BigQueryQueryStatus(
         query_id="bq-job-uuid-123",
         status=AsyncQueryPhase.COMPLETED,
         query_begin=now,
         last_update=now,
         collected_bytes=2000000,
         final_rows=42,
-        progress=ByteProgress(
+        byte_progress=ByteProgress(
             bytes_processed=2000000, bytes_billed=1500000, cached=True
         ),
     )
 
     serialized = original.model_dump()
-    deserialized = QueryStatus.model_validate(serialized)
+    deserialized = BigQueryQueryStatus.model_validate(serialized)
 
     assert deserialized.query_id == "bq-job-uuid-123"
-    assert deserialized.progress is not None
-    assert isinstance(deserialized.progress, ByteProgress)
-    assert deserialized.progress.bytes_processed == 2000000
-    assert deserialized.progress.bytes_billed == 1500000
-    assert deserialized.has_byte_progress()
+    assert deserialized.backend_type == "BigQuery"
+    assert deserialized.byte_progress is not None
+    assert deserialized.byte_progress.bytes_processed == 2000000
+    assert deserialized.byte_progress.bytes_billed == 1500000
+    assert deserialized.byte_progress.cached is True
+
+
+def test_query_status_to_qserv() -> None:
+    now = datetime.now(tz=UTC)
+    adapter: TypeAdapter = TypeAdapter(QueryStatus)
+
+    data = {
+        "backend_type": "Qserv",
+        "query_id": "123",
+        "status": "EXECUTING",
+        "query_begin": now.isoformat(),
+        "chunk_progress": {"total_chunks": 100, "completed_chunks": 50},
+    }
+
+    status = adapter.validate_python(data)
+    assert isinstance(status, QservQueryStatus)
+    assert status.query_id == "123"
+
+
+def test_query_status_to_bigquery() -> None:
+    now = datetime.now(tz=UTC)
+    adapter: TypeAdapter = TypeAdapter(QueryStatus)
+
+    data = {
+        "backend_type": "BigQuery",
+        "query_id": "bq-uuid-123",
+        "status": "COMPLETED",
+        "query_begin": now.isoformat(),
+        "byte_progress": {"bytes_processed": 2000000},
+    }
+
+    status = adapter.validate_python(data)
+    assert isinstance(status, BigQueryQueryStatus)
+    assert status.query_id == "bq-uuid-123"
 
 
 def test_query_status_is_different_with_process_status() -> None:
     now = datetime.now(tz=UTC)
-    old_status = QueryStatus(
+    old_status = QservQueryStatus(
         query_id="123",
         status=AsyncQueryPhase.EXECUTING,
         query_begin=now,
         last_update=now,
-        progress=ChunkProgress(total_chunks=100, completed_chunks=50),
+        chunk_progress=ChunkProgress(total_chunks=100, completed_chunks=50),
     )
 
     same_process = ProcessStatus(
@@ -405,12 +352,12 @@ def test_query_status_update_from_process_status() -> None:
     now = datetime.now(tz=UTC)
     later = datetime.now(tz=UTC)
 
-    status = QueryStatus(
+    status = QservQueryStatus(
         query_id="123",
         status=AsyncQueryPhase.EXECUTING,
         query_begin=now,
         last_update=now,
-        progress=ChunkProgress(total_chunks=100, completed_chunks=50),
+        chunk_progress=ChunkProgress(total_chunks=100, completed_chunks=50),
     )
 
     updated_process = ProcessStatus(
@@ -420,19 +367,7 @@ def test_query_status_update_from_process_status() -> None:
     )
     status.update_from(updated_process)
 
-    assert status.progress is not None
-    assert isinstance(status.progress, ChunkProgress)
-    assert status.progress.total_chunks == 100
-    assert status.progress.completed_chunks == 75
+    assert status.chunk_progress is not None
+    assert status.chunk_progress.total_chunks == 100
+    assert status.chunk_progress.completed_chunks == 75
     assert status.last_update == later
-
-    byte_process = ProcessStatus(
-        status=AsyncQueryPhase.EXECUTING,
-        last_update=later,
-        progress=ByteProgress(bytes_processed=2000000),
-    )
-    status.update_from(byte_process)
-
-    assert status.progress is not None
-    assert isinstance(status.progress, ByteProgress)  # type: ignore[unreachable]
-    assert status.progress.bytes_processed == 2000000  # type: ignore[unreachable]

@@ -39,7 +39,7 @@ class QueryService:
     Parameters
     ----------
     backend
-        Database backend client (QServ, BigQuery, etc.).
+        Database backend client (Qserv, BigQuery, etc.).
     state_store
         Storage for query state.
     result_processor
@@ -115,7 +115,7 @@ class QueryService:
         except BackendApiError as e:
             try:
                 status = await self._backend.get_query_status(query_id)
-                if status.phase != AsyncQueryPhase.EXECUTING:
+                if status.status != AsyncQueryPhase.EXECUTING:
                     return None
             except BackendApiError:
                 pass

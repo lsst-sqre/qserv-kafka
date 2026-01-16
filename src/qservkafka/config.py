@@ -132,10 +132,10 @@ class Config(BaseSettings):
         "lsst.tap.job-status", title="Topic for job status"
     )
 
-    enabled_backend: BackendType = Field(
+    backend: BackendType = Field(
         BackendType.QSERV,
-        title="Enabled database backend",
-        description="Which database backend to use (QSERV or BIGQUERY)",
+        title="Database backend",
+        description="Which database backend to use (Qserv or BigQuery)",
     )
 
     backend_poll_interval: HumanTimedelta = Field(
@@ -155,7 +155,7 @@ class Config(BaseSettings):
         title="Backend API call timeout",
         description=(
             "Timeout for individual backend API calls (get_job, "
-            "list_jobs, etc.). Used by both QServ REST API and BigQuery API."
+            "list_jobs, etc.). Used by both Qserv REST API and BigQuery API."
         ),
     )
 
@@ -264,7 +264,7 @@ class Config(BaseSettings):
     qserv_database_url: MySQLDsn | None = Field(
         None,
         title="Qserv MySQL DSN",
-        description="Required when enabled_backend is QSERV",
+        description="Required when backend is Qserv",
     )
 
     qserv_delete_queries: bool = Field(
@@ -310,7 +310,7 @@ class Config(BaseSettings):
     qserv_rest_url: HttpUrl | None = Field(
         None,
         title="Qserv REST API URL",
-        description="Required when enabled_backend is QSERV",
+        description="Required when backend is Qserv",
     )
 
     qserv_rest_username: str | None = Field(
@@ -395,28 +395,20 @@ class Config(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_bigquery_config(self) -> Self:
-        if self.enabled_backend == BackendType.BIGQUERY:
+        if self.backend == BackendType.BIGQUERY:
             if not self.bigquery_project:
-                msg = (
-                    "bigquery_project must be set when enabled_backend is "
-                    "BIGQUERY"
-                )
+                msg = "bigquery_project must be set when backend is BigQuery"
                 raise ValueError(msg)
         return self
 
     @model_validator(mode="after")
     def _validate_qserv_config(self) -> Self:
-        if self.enabled_backend == BackendType.QSERV:
+        if self.backend == BackendType.QSERV:
             if self.qserv_database_url is None:
-                msg = (
-                    "qserv_database_url must be set when enabled_backend is "
-                    "QSERV"
-                )
+                msg = "qserv_database_url must be set when backend is Qserv"
                 raise ValueError(msg)
             if self.qserv_rest_url is None:
-                msg = (
-                    "qserv_rest_url must be set when enabled_backend is QSERV"
-                )
+                msg = "qserv_rest_url must be set when backend is Qserv"
                 raise ValueError(msg)
         return self
 

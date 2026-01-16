@@ -32,7 +32,11 @@ from .events import Events
 from .models.state import RunningQuery
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
-from .services.results import ResultProcessor
+from .services.results import (
+    BigQueryResultProcessor,
+    QservResultProcessor,
+    ResultProcessor,
+)
 from .storage.backend import BackendType, DatabaseBackend
 from .storage.bigquery import BigQueryClient
 from .storage.gafaelfawr import GafaelfawrStorage
@@ -109,7 +113,7 @@ class ProcessContext:
         logger = get_logger("qservkafka")
 
         # Create HTTP client with backend-specific configuration
-        if config.enabled_backend == BackendType.QSERV:
+        if config.backend == BackendType.QSERV:
             # Qserv currently uses a self-signed certificate.
             if not qserv_database_pool_size:
                 qserv_database_pool_size = config.qserv_database_pool_size
@@ -125,7 +129,7 @@ class ProcessContext:
 
         # Create SSL context for Qserv (self-signed certificate)
         ssl_context: ssl.SSLContext | None = None
-        if config.enabled_backend == BackendType.QSERV:
+        if config.backend == BackendType.QSERV:
             # Qserv uses a self-signed certificate with no known certificate
             # chain. We do not use TLS to validate the identity of the server.
             ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -153,7 +157,7 @@ class ProcessContext:
         # Create the database engine (only for QSERV backend).
         engine: AsyncEngine | None = None
         sessionmaker: async_sessionmaker | None = None
-        if config.enabled_backend == BackendType.QSERV:
+        if config.backend == BackendType.QSERV:
             if config.qserv_database_url is None:
                 msg = "qserv_database_url is required for QSERV backend"
                 raise ValueError(msg)
@@ -301,7 +305,7 @@ class Factory:
         Returns
         -------
         DatabaseBackend
-            Client for the database backend (QServ or BigQuery).
+            Client for the database backend (Qserv or BigQuery).
 
         Raises
         ------
@@ -309,7 +313,7 @@ class Factory:
             If the backend type is not supported or required configuration
             is missing.
         """
-        if config.enabled_backend == BackendType.QSERV:
+        if config.backend == BackendType.QSERV:
             if self._context.sessionmaker is None:
                 msg = "sessionmaker is required for QSERV backend"
                 raise ValueError(msg)
@@ -320,7 +324,7 @@ class Factory:
                 slack_client=self._context.slack_client,
                 logger=self._logger,
             )
-        elif config.enabled_backend == BackendType.BIGQUERY:
+        elif config.backend == BackendType.BIGQUERY:
             return BigQueryClient(
                 project=config.bigquery_project,
                 location=config.bigquery_location,
@@ -330,9 +334,7 @@ class Factory:
                 logger=self._logger,
             )
         else:
-            raise ValueError(
-                f"Unsupported backend type: {config.enabled_backend}"
-            )
+            raise ValueError(f"Unsupported backend type: {config.backend}")
 
     async def create_query_monitor(self) -> QueryMonitor:
         """Create the singleton monitor for query status.
@@ -391,9 +393,18 @@ class Factory:
         Returns
         -------
         ResultProcessor
-            New service to process a completed query.
+            New service to process a completed query. Returns the appropriate
+            subclass based on the configured backend.
         """
-        return ResultProcessor(
+        processor_class: type[ResultProcessor]
+        if config.backend == BackendType.QSERV:
+            processor_class = QservResultProcessor
+        elif config.backend == BackendType.BIGQUERY:
+            processor_class = BigQueryResultProcessor
+        else:
+            raise ValueError(f"Unsupported backend type: {config.backend}")
+
+        return processor_class(
             backend=self.create_backend_client(),
             state_store=self.create_query_state_store(),
             votable_writer=VOTableWriter(

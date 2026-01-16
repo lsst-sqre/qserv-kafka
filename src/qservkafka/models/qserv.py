@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import timedelta
+from enum import StrEnum
 from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
@@ -10,14 +11,42 @@ from safir.pydantic import UtcDatetime
 from .query import AsyncQueryPhase
 
 __all__ = [
-    "AsyncQueryPhase",
     "AsyncSubmitRequest",
     "AsyncSubmitResponse",
     "BaseResponse",
     "QservAsyncStatusData",
+    "QservQueryPhase",
     "QservStatusResponse",
     "TableUploadStats",
 ]
+
+
+class QservQueryPhase(StrEnum):
+    """Qserv-specific query status values.
+
+    These are the status values returned by the Qserv API. They are
+    translated to generic `AsyncQueryPhase` values for use in the service
+    layer.
+    """
+
+    EXECUTING = "EXECUTING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    FAILED_LR = "FAILED_LR"
+    ABORTED = "ABORTED"
+
+    def to_generic_phase(self) -> AsyncQueryPhase:
+        """Translate to generic query phase.
+
+        Returns
+        -------
+        AsyncQueryPhase
+            The generic phase corresponding to this Qserv-specific phase.
+            FAILED_LR is translated to FAILED.
+        """
+        if self == QservQueryPhase.FAILED_LR:
+            return AsyncQueryPhase.FAILED
+        return AsyncQueryPhase(self.value)
 
 
 class BaseResponse(BaseModel):
@@ -39,33 +68,38 @@ class BaseResponse(BaseModel):
 
 
 class QservAsyncStatusData(BaseModel):
-    """QServ async query status data from REST API.
+    """Qserv async query status data from REST API.
 
-    This model is used to parse QServ's API responses and is designed for use
-    only within QservClient.
+    This model is used to parse Qserv's API responses and is designed for use
+    only within `QservClient`.
     """
 
     model_config = ConfigDict(validate_by_name=True)
 
-    query_id: Annotated[int, Field(validation_alias="queryId")]
+    query_id: Annotated[int, Field(title="ID", validation_alias="queryId")]
 
-    status: Annotated[str, Field(validation_alias="status")]
+    status: Annotated[str, Field(title="Status", validation_alias="status")]
 
-    total_chunks: Annotated[int, Field(validation_alias="totalChunks")]
+    total_chunks: Annotated[
+        int, Field(title="Total query chunks", validation_alias="totalChunks")
+    ]
 
     completed_chunks: Annotated[
         int,
-        Field(validation_alias="completedChunks"),
+        Field(
+            title="Completed query chunks", validation_alias="completedChunks"
+        ),
         BeforeValidator(lambda v: 0 if v is None else v),
     ]
 
     query_begin: Annotated[
-        UtcDatetime, Field(validation_alias="queryBeginEpoch")
+        UtcDatetime,
+        Field(title="Query start time", validation_alias="queryBeginEpoch"),
     ]
 
     last_update: Annotated[
         UtcDatetime | None,
-        Field(validation_alias="lastUpdateEpoch"),
+        Field(title="Last status update", validation_alias="lastUpdateEpoch"),
         BeforeValidator(
             lambda u: None if isinstance(u, int) and u == 0 else u
         ),
@@ -80,18 +114,23 @@ class QservAsyncStatusData(BaseModel):
     ] = None
 
     czar_id: Annotated[
-        int | None, Field(title="Backend czar ID", validation_alias="czarId")
+        int | None,
+        Field(title="Qserv czar processing query", validation_alias="czarId"),
     ] = None
 
     czar_type: Annotated[
         str | None,
-        Field(title="Backend czar type", validation_alias="czarType"),
+        Field(
+            title="Type of Qserv czar processing query",
+            validation_alias="czarType",
+        ),
     ] = None
 
     collected_bytes: Annotated[
         int,
         Field(
-            title="Result bytes collected",
+            title="Size of results",
+            description="Size of results collected so far in bytes",
             validation_alias="collectedBytes",
         ),
         BeforeValidator(lambda v: 0 if v is None else v),
@@ -99,18 +138,17 @@ class QservAsyncStatusData(BaseModel):
 
     final_rows: Annotated[
         int | None,
-        Field(title="Final row count", validation_alias="finalRows"),
+        Field(title="Rows in result", validation_alias="finalRows"),
     ] = None
 
 
 class QservStatusResponse(BaseResponse):
-    """Response to a QServ async query status request.
+    """Response to a Qserv async query status request.
 
-    Replacement for AsyncStatusResponse that uses
-    QservAsyncStatusData for parsing QServ's API responses.
+    Uses `QservAsyncStatusData` to parse Qserv's API responses.
     """
 
-    status: Annotated[QservAsyncStatusData, Field(title="Query status")]
+    status: Annotated[QservAsyncStatusData, Field(title="Async query status")]
 
 
 class AsyncSubmitRequest(BaseModel):

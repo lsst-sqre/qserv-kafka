@@ -4,7 +4,7 @@ import pytest
 
 from qservkafka.factory import Factory
 from qservkafka.models.progress import ChunkProgress
-from qservkafka.storage.backend import BackendProcessStatus
+from qservkafka.models.query import AsyncQueryPhase, ProcessStatus
 
 from ..support.data import read_test_job_run, read_test_job_status
 from ..support.qserv import MockQserv
@@ -29,19 +29,16 @@ async def test_list_running_queries(
     assert status == expected_status
     processes = await qserv.list_running_queries()
     qserv_status = mock_qserv.get_status(1)
-    expected_backend_status = BackendProcessStatus(
-        query_id="1",
-        status=qserv_status.status,
+    expected_process_status = ProcessStatus(
+        status=AsyncQueryPhase.EXECUTING,
         progress=ChunkProgress(
             total_chunks=qserv_status.total_chunks,
             completed_chunks=qserv_status.completed_chunks,
         ),
-        query_begin=qserv_status.query_begin,
         last_update=qserv_status.last_update,
     )
     assert len(processes) == 1
     assert "1" in processes
     actual = processes["1"]
-    assert actual.query_id == expected_backend_status.query_id
-    assert actual.status == expected_backend_status.status
-    assert actual.progress == expected_backend_status.progress
+    assert actual.status == expected_process_status.status
+    assert actual.progress == expected_process_status.progress

@@ -7,9 +7,9 @@ from structlog.stdlib import BoundLogger
 
 from ..events import Events
 from ..models.kafka import JobStatus
-from ..models.query import AsyncQueryPhase
+from ..models.query import AsyncQueryPhase, ProcessStatus
 from ..models.state import RunningQuery
-from ..storage.backend import BackendProcessStatus, DatabaseBackend
+from ..storage.backend import DatabaseBackend
 from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from .results import ResultProcessor
@@ -25,7 +25,7 @@ class QueryMonitor:
     result_processor
         Service used to process results.
     backend
-        Database backend client (QServ, BigQuery, etc.).
+        Database backend client (Qserv, BigQuery, etc.).
     arq_queue
         Queue to which to dispatch result processing requests.
     state_store
@@ -72,7 +72,7 @@ class QueryMonitor:
                 await self._results.publish_status(update)
 
     async def check_query(
-        self, query: RunningQuery, status: BackendProcessStatus | None
+        self, query: RunningQuery, status: ProcessStatus | None
     ) -> JobStatus | None:
         """Check the status of one backend query.
 
@@ -108,12 +108,10 @@ class QueryMonitor:
         # re-retrieve the status from the backend and may at that point find
         # that it is completed.
         if status and status.status == AsyncQueryPhase.EXECUTING:
-            # Convert backend status to process status for comparison
-            process_status = status.to_process_status()
-            if not query.status.is_different_than(process_status):
+            if not query.status.is_different_than(status):
                 logger.debug("Running query has not changed state")
                 return None
-            query.status.update_from(process_status)
+            query.status.update_from(status)
             update = self._results.build_executing_status(query)
             await self._state.update_status(query.query_id, query.status)
             logger = self._logger.bind(**query.to_logging_context())

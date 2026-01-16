@@ -1,13 +1,12 @@
 """Models for tracking the state of running queries."""
 
 from datetime import UTC, datetime
-from typing import Annotated, Any, Self, cast, override
+from typing import Annotated, Any, Self, override
 
 from pydantic import BaseModel, Field
 from safir.datetime import format_datetime_for_logging
 
 from .kafka import JobQueryInfo, JobRun
-from .progress import ByteProgress, ChunkProgress
 from .query import QueryStatus
 
 __all__ = [
@@ -19,7 +18,7 @@ __all__ = [
 class Query(BaseModel):
     """Represents a started query with no backend status."""
 
-    query_id: Annotated[str, Field(title="Backend ID of query")]
+    query_id: Annotated[str, Field(title="ID of query")]
 
     queued: Annotated[
         datetime | None, Field(title="Kafka queue time of query")
@@ -27,7 +26,7 @@ class Query(BaseModel):
 
     start: Annotated[datetime, Field(title="Receipt time of query")]
 
-    created: Annotated[datetime, Field(title="Creation time of Qserv query")]
+    created: Annotated[datetime, Field(title="Creation time of query")]
 
     job: Annotated[JobRun, Field(title="Full job request")]
 
@@ -93,48 +92,16 @@ class RunningQuery(Query):
         JobQueryInfo
             Corresponding query information.
         """
-        # Extract chunk progress if available (QServ only)
-        if self.status.has_chunk_progress():
-            chunk_progress = cast("ChunkProgress", self.status.progress)
-            total_chunks = chunk_progress.total_chunks
-            completed_chunks = chunk_progress.completed_chunks
-        else:
-            total_chunks = 0
-            completed_chunks = 0
-
-        bytes_processed = None
-        bytes_billed = None
-        cached = None
-        if self.status.has_byte_progress():
-            byte_progress = cast("ByteProgress", self.status.progress)
-            bytes_processed = byte_progress.bytes_processed
-            bytes_billed = byte_progress.bytes_billed
-            cached = byte_progress.cached
-
         return JobQueryInfo(
             start_time=self.start,
-            total_chunks=total_chunks,
-            completed_chunks=completed_chunks,
-            bytes_processed=bytes_processed,
-            bytes_billed=bytes_billed,
-            cached=cached,
+            progress=self.status.progress,
             end_time=datetime.now(tz=UTC) if finished else None,
         )
 
     @override
     def to_logging_context(self) -> dict[str, Any]:
         result = super().to_logging_context()
-
-        if self.status.has_chunk_progress():
-            chunk_progress = cast("ChunkProgress", self.status.progress)
-            result["total_chunks"] = chunk_progress.total_chunks
-            result["completed_chunks"] = chunk_progress.completed_chunks
-
-        if self.status.has_byte_progress():
-            byte_progress = cast("ByteProgress", self.status.progress)
-            result["bytes_processed"] = byte_progress.bytes_processed
-
+        result.update(self.status.to_logging_context())
         if self.status.collected_bytes:
             result["backend_size"] = self.status.collected_bytes
-
         return result
