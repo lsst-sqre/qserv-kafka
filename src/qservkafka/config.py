@@ -211,6 +211,20 @@ class Config(BaseSettings):
         ),
     )
 
+    qserv_database_connect_timeout: int = Field(
+        10,
+        title="Qserv database connection timeout",
+        description=(
+            "Timeout (seconds) for establishing a database connection to Qserv"
+        ),
+    )
+
+    qserv_database_read_timeout: int = Field(
+        60,
+        title="Qserv database read timeout",
+        description="Timeout (seconds) for reading from the Qserv database",
+    )
+
     qserv_database_url: MySQLDsn = Field(..., title="Qserv MySQL DSN")
 
     qserv_delete_queries: bool = Field(
