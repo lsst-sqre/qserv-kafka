@@ -144,7 +144,11 @@ class ProcessContext:
         engine = create_database_engine(
             str(config.qserv_database_url),
             config.qserv_database_password,
-            connect_args={"ssl": ssl_context},
+            connect_args={
+                "ssl": ssl_context,
+                "connect_timeout": config.qserv_database_connect_timeout,
+                "read_timeout": config.qserv_database_read_timeout,
+            },
             max_overflow=config.qserv_database_overflow,
             pool_size=qserv_database_pool_size,
         )
