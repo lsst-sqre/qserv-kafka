@@ -26,8 +26,7 @@ from ..events import (
 )
 from ..exceptions import (
     BackendApiError,
-    BackendApiSqlError,
-    BigQueryApiError,
+    BackendApiTransientError,
     UploadWebError,
 )
 from ..models.kafka import JobError, JobErrorCode, JobResultInfo, JobStatus
@@ -193,7 +192,7 @@ class ResultProcessor(ABC):
         )
 
     @abstractmethod
-    async def _publish_success_event(
+    async def publish_success_event(
         self,
         *,
         query: RunningQuery,
@@ -320,7 +319,7 @@ class ResultProcessor(ABC):
         else:
             backend_rate = None
         elapsed = now - (query.queued or query.start)
-        event = await self._publish_success_event(
+        event = await self.publish_success_event(
             query=query,
             stats=stats,
             elapsed=elapsed,
@@ -430,7 +429,7 @@ class ResultProcessor(ABC):
             Status for the query.
         """
         metadata = query.job.to_job_metadata()
-        if query.status.is_results_too_large:
+        if query.status.results_too_large:
             msg = "Query failed in backend because results were too large"
             code = JobErrorCode.backend_results_too_large
             error = (
@@ -512,9 +511,9 @@ class ResultProcessor(ABC):
 
         Raises
         ------
-        BackendApiSqlError
-            Raised if there was a failure retrieving the results via the
-            SQL database connection.
+        BackendApiTransientError
+            Raised if there was a transient failure retrieving results from
+            the backend.
         UploadWebError
             Raised if there was a failure to upload the results.
         TimeoutError
@@ -560,9 +559,9 @@ class ResultProcessor(ABC):
 
         Raises
         ------
-        BackendApiSqlError
-            Raised if there was a failure retrieving the results via the
-            SQL database connection.
+        BackendApiTransientError
+            Raised if there was a transient failure retrieving results from
+            the backend.
         UploadWebError
             Raised if there was a failure to upload the results.
         TimeoutError
@@ -572,9 +571,9 @@ class ResultProcessor(ABC):
         for _ in range(1, config.backend_retry_count):
             try:
                 return await self._upload_results(query)
-            except (BackendApiSqlError, BigQueryApiError, UploadWebError) as e:
+            except (BackendApiTransientError, UploadWebError) as e:
                 delay = config.backend_retry_delay.total_seconds()
-                if isinstance(e, (BackendApiSqlError, BigQueryApiError)):
+                if isinstance(e, BackendApiTransientError):
                     await self._publish_backend_failure_event()
                     msg = f"Backend call failed, retrying after {delay}s"
                 else:
@@ -589,7 +588,7 @@ class ResultProcessor(ABC):
         # re-raising the exception.
         try:
             return await self._upload_results(query)
-        except (BackendApiSqlError, BigQueryApiError):
+        except BackendApiTransientError:
             await self._publish_backend_failure_event()
             raise
 
@@ -601,7 +600,7 @@ class QservResultProcessor(ResultProcessor):
     """
 
     @override
-    async def _publish_success_event(
+    async def publish_success_event(
         self,
         *,
         query: RunningQuery,
@@ -612,22 +611,21 @@ class QservResultProcessor(ResultProcessor):
         delete_elapsed: timedelta | None,
         initial: bool,
     ) -> QservSuccessEvent:
-        """Publish Qserv success event."""
         event = QservSuccessEvent(
             job_id=query.job.job_id,
             username=query.job.owner,
             elapsed=elapsed,
             kafka_elapsed=query.start - query.queued if query.queued else None,
-            qserv_elapsed=backend_elapsed,
+            backend_elapsed=backend_elapsed,
             result_elapsed=stats.elapsed,
             submit_elapsed=query.created - query.start,
             delete_elapsed=delete_elapsed,
             rows=stats.rows,
-            qserv_size=query.status.collected_bytes,
+            backend_size=query.status.collected_bytes,
             encoded_size=stats.data_bytes,
             result_size=stats.total_bytes,
             rate=stats.data_bytes / elapsed.total_seconds(),
-            qserv_rate=backend_rate,
+            backend_rate=backend_rate,
             result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
             upload_tables=len(query.job.upload_tables),
             immediate=initial,
@@ -637,7 +635,6 @@ class QservResultProcessor(ResultProcessor):
 
     @override
     async def _publish_backend_failure_event(self) -> None:
-        """Publish Qserv failure event."""
         event = QservFailureEvent(protocol=QservProtocol.SQL)
         await self._events.qserv_failure.publish(event)
 
@@ -649,7 +646,7 @@ class BigQueryResultProcessor(ResultProcessor):
     """
 
     @override
-    async def _publish_success_event(
+    async def publish_success_event(
         self,
         *,
         query: RunningQuery,
@@ -660,19 +657,18 @@ class BigQueryResultProcessor(ResultProcessor):
         delete_elapsed: timedelta | None,
         initial: bool,
     ) -> BigQuerySuccessEvent:
-        """Publish BigQuery success event."""
         event = BigQuerySuccessEvent(
             job_id=query.job.job_id,
             username=query.job.owner,
             elapsed=elapsed,
             kafka_elapsed=query.start - query.queued if query.queued else None,
-            bigquery_elapsed=backend_elapsed,
+            backend_elapsed=backend_elapsed,
             result_elapsed=stats.elapsed,
             submit_elapsed=query.created - query.start,
             delete_elapsed=delete_elapsed,
             rows=stats.rows,
-            bigquery_size=query.status.collected_bytes,
-            bigquery_rate=backend_rate,
+            backend_size=query.status.collected_bytes,
+            backend_rate=backend_rate,
             encoded_size=stats.data_bytes,
             result_size=stats.total_bytes,
             rate=stats.data_bytes / elapsed.total_seconds(),
@@ -685,6 +681,5 @@ class BigQueryResultProcessor(ResultProcessor):
 
     @override
     async def _publish_backend_failure_event(self) -> None:
-        """Publish BigQuery failure event."""
         event = BigQueryFailureEvent()
         await self._events.bigquery_failure.publish(event)

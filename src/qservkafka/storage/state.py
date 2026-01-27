@@ -82,7 +82,9 @@ class QueryStateStore:
         if query:
             query.result_queued = True
             lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
-            await self._storage.store(query_id, query, lifetime)
+            await self._storage.store(
+                query_id, query, lifetime, exclude_defaults=True
+            )
 
     async def store_query(
         self, query: RunningQuery, *, result_queued: bool = False
@@ -98,7 +100,9 @@ class QueryStateStore:
             processing.
         """
         lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
-        await self._storage.store(query.query_id, query, lifetime)
+        await self._storage.store(
+            query.query_id, query, lifetime, exclude_defaults=True
+        )
 
     async def update_status(self, query_id: str, status: QueryStatus) -> None:
         """Update the status of a query.
@@ -115,4 +119,6 @@ class QueryStateStore:
             query.result_queued = False
             query.status.update_from(status.to_process_status())
             lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
-            await self._storage.store(query_id, query, lifetime)
+            await self._storage.store(
+                query_id, query, lifetime, exclude_defaults=True
+            )

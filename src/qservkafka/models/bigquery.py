@@ -63,9 +63,14 @@ def get_votable_type(bigquery_type: str) -> VOTablePrimitive:
         return BIGQUERY_TO_VOTABLE[normalized_type]
 
     # Parameterized types (e.g., "NUMERIC(10, 2)")
-    base_type = normalized_type.split("(")[0].strip()
-    if base_type in BIGQUERY_TO_VOTABLE:
-        return BIGQUERY_TO_VOTABLE[base_type]
+    try:
+        base_type = normalized_type.split("(")[0].strip()
+        if base_type in BIGQUERY_TO_VOTABLE:
+            return BIGQUERY_TO_VOTABLE[base_type]
+    except Exception as e:
+        raise ValueError(
+            f"Failed to parse BigQuery type '{bigquery_type}': {e}"
+        ) from e
 
     raise ValueError(
         f"Unknown BigQuery type '{bigquery_type}'. "

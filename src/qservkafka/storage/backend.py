@@ -45,26 +45,6 @@ class DatabaseBackend(ABC):
     """
 
     @abstractmethod
-    async def submit_query(self, job: JobRun) -> str:
-        """Submit a query to the backend for execution.
-
-        Parameters
-        ----------
-        job
-            Query job run request from the user via Kafka.
-
-        Returns
-        -------
-        str
-            ID for the submitted query.
-
-        Raises
-        ------
-        Exception
-            Error if the query submit fails.
-        """
-
-    @abstractmethod
     async def cancel_query(self, query_id: str) -> None:
         """Cancel a running query.
 
@@ -78,6 +58,68 @@ class DatabaseBackend(ABC):
         Exception
             Error if cancel fails.
         """
+
+    @abstractmethod
+    async def delete_database(self, database: str) -> None:
+        """Delete a temporary database and all its contents.
+
+        Parameters
+        ----------
+        database
+            Name of the database to delete.
+
+        Raises
+        ------
+        Exception
+           Error if deletion fails.
+
+        Notes
+        -----
+        Backends may implement this as a no-op.
+        """
+
+    @abstractmethod
+    async def delete_result(self, query_id: str) -> None:
+        """Delete the results of a query.
+
+        Parameters
+        ----------
+        query_id
+            ID of the query whose results should be deleted.
+
+        Raises
+        ------
+        Exception
+            Error if delete fails.
+
+        Notes
+        -----
+        Backends that automatically expire results (like BigQuery)
+        may implement this as a no-op.
+        """
+
+    @abstractmethod
+    async def get_query_results_gen(
+        self, query_id: str
+    ) -> AsyncGenerator[Sequence[Any]]:
+        """Stream the results of a completed query.
+
+        Parameters
+        ----------
+        query_id
+            ID of the query.
+
+        Yields
+        ------
+        Sequence
+            Individual rows as sequences of column values (Row or tuple).
+
+        Raises
+        ------
+        Exception
+            Error if result retrieval fails.
+        """
+        yield  # type: ignore[misc]
 
     @abstractmethod
     async def get_query_status(self, query_id: str) -> QueryStatus:
@@ -124,46 +166,23 @@ class DatabaseBackend(ABC):
         """
 
     @abstractmethod
-    async def get_query_results_gen(
-        self, query_id: str
-    ) -> AsyncGenerator[Sequence[Any]]:
-        """Stream the results of a completed query.
+    async def submit_query(self, job: JobRun) -> str:
+        """Submit a query to the backend for execution.
 
         Parameters
         ----------
-        query_id
-            ID of the query.
+        job
+            Query job run request from the user via Kafka.
 
-        Yields
-        ------
-        Sequence
-            Individual rows as sequences of column values (Row or tuple).
+        Returns
+        -------
+        str
+            ID for the submitted query.
 
         Raises
         ------
         Exception
-            Error if result retrieval fails.
-        """
-        yield  # type: ignore[misc]
-
-    @abstractmethod
-    async def delete_result(self, query_id: str) -> None:
-        """Delete the results of a query.
-
-        Parameters
-        ----------
-        query_id
-            ID of the query whose results should be deleted.
-
-        Raises
-        ------
-        Exception
-            Error if delete fails.
-
-        Notes
-        -----
-        Backends that automatically expire results (like BigQuery)
-        may implement this as a no-op.
+            Error if the query submit fails.
         """
 
     @abstractmethod
@@ -191,23 +210,4 @@ class DatabaseBackend(ABC):
         -----
         Backends that don't support this operation should raise
         the appropriate exception.
-        """
-
-    @abstractmethod
-    async def delete_database(self, database: str) -> None:
-        """Delete a temporary database and all its contents.
-
-        Parameters
-        ----------
-        database
-            Name of the database to delete.
-
-        Raises
-        ------
-        Exception
-           Error if deletion fails.
-
-        Notes
-        -----
-        Backends may implement this as a no-op.
         """

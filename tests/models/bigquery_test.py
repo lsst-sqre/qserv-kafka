@@ -8,32 +8,6 @@ from qservkafka.models.bigquery import BIGQUERY_TO_VOTABLE, get_votable_type
 from qservkafka.models.votable import VOTablePrimitive
 
 
-def test_bigquery_to_votable_mapping_exists() -> None:
-    assert isinstance(BIGQUERY_TO_VOTABLE, dict)
-
-    expected_types = [
-        "INT64",
-        "INTEGER",
-        "FLOAT64",
-        "FLOAT",
-        "STRING",
-        "BYTES",
-        "BOOL",
-        "BOOLEAN",
-        "DATE",
-        "DATETIME",
-        "TIME",
-        "TIMESTAMP",
-        "NUMERIC",
-        "BIGNUMERIC",
-        "GEOGRAPHY",
-        "JSON",
-    ]
-
-    for bq_type in expected_types:
-        assert bq_type in BIGQUERY_TO_VOTABLE
-
-
 def test_type_mappings() -> None:
     assert BIGQUERY_TO_VOTABLE["INTEGER"] == VOTablePrimitive.long
     assert BIGQUERY_TO_VOTABLE["FLOAT"] == VOTablePrimitive.double

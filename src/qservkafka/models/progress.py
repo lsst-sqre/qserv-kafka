@@ -148,4 +148,4 @@ class ByteProgress(BaseModel):
 
 
 # Progress metrics type (either chunk-based or byte-based)
-ProgressMetrics = ChunkProgress | ByteProgress
+type ProgressMetrics = ChunkProgress | ByteProgress

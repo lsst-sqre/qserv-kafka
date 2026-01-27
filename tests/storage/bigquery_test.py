@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock
 
+import google.cloud.bigquery as google_bigquery
 import pytest
 from google.api_core.exceptions import GoogleAPIError
 from google.cloud.bigquery import DatasetReference, QueryJob
@@ -13,6 +14,7 @@ from httpx import AsyncClient
 from pydantic import HttpUrl
 from structlog.stdlib import BoundLogger
 
+from qservkafka import config as config_module
 from qservkafka.events import Events
 from qservkafka.exceptions import (
     BackendNotImplementedError,
@@ -43,29 +45,28 @@ def mock_bq_client() -> MagicMock:
 def bigquery_client(
     mock_bq_client: MagicMock,
     logger: BoundLogger,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> BigQueryClient:
     """Create a BigQueryClient with mocked dependencies."""
-    with patch(
-        "qservkafka.storage.bigquery.bigquery.Client"
-    ) as mock_client_class:
-        mock_client_class.return_value = mock_bq_client
+    mock_client_class = MagicMock(return_value=mock_bq_client)
+    monkeypatch.setattr(google_bigquery, "Client", mock_client_class)
 
-        http_client = Mock(spec=AsyncClient)
-        events = Mock(spec=Events)
-        slack_client = None
+    http_client = Mock(spec=AsyncClient)
+    events = Mock(spec=Events)
+    slack_client = None
 
-        client = BigQueryClient(
-            project="test-project",
-            location="US",
-            http_client=http_client,
-            events=events,
-            slack_client=slack_client,
-            logger=logger,
-        )
+    client = BigQueryClient(
+        project="test-project",
+        location="US",
+        http_client=http_client,
+        events=events,
+        slack_client=slack_client,
+        logger=logger,
+    )
 
-        client._client = mock_bq_client
+    client._client = mock_bq_client
 
-        return client
+    return client
 
 
 @pytest.fixture
@@ -121,16 +122,17 @@ async def test_submit_query_with_max_bytes_billed(
     bigquery_client: BigQueryClient,
     sample_job_run: JobRun,
     mock_bq_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_job = MagicMock(spec=QueryJob)
     mock_job.job_id = "bq-job-uuid-456"
     mock_bq_client.query.return_value = mock_job
 
-    with patch("qservkafka.storage.bigquery.config") as mock_config:
-        mock_config.bigquery_max_bytes_billed = 1000000000
-        mock_config.backend_api_timeout.total_seconds.return_value = 30
+    monkeypatch.setattr(
+        config_module.config, "bigquery_max_bytes_billed", 1000000000
+    )
 
-        job_id = await bigquery_client.submit_query(sample_job_run)
+    job_id = await bigquery_client.submit_query(sample_job_run)
 
     assert job_id == "bq-job-uuid-456"
 
@@ -145,16 +147,15 @@ async def test_submit_query_exceeds_max_bytes(
     bigquery_client: BigQueryClient,
     sample_job_run: JobRun,
     mock_bq_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     error_msg = "Query exceeded maximum bytes billed limit"
     mock_bq_client.query.side_effect = GoogleAPIError(error_msg)
 
-    with patch("qservkafka.storage.bigquery.config") as mock_config:
-        mock_config.bigquery_max_bytes_billed = 100
-        mock_config.backend_api_timeout.total_seconds.return_value = 30
+    monkeypatch.setattr(config_module.config, "bigquery_max_bytes_billed", 100)
 
-        with pytest.raises(BigQueryApiProtocolError) as exc_info:
-            await bigquery_client.submit_query(sample_job_run)
+    with pytest.raises(BigQueryApiProtocolError) as exc_info:
+        await bigquery_client.submit_query(sample_job_run)
 
     assert error_msg in str(exc_info.value)
 

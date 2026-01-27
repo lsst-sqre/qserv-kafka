@@ -8,7 +8,8 @@ from typing import Annotated, Any
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from safir.pydantic import UtcDatetime
 
-from .query import AsyncQueryPhase
+from .progress import ChunkProgress
+from .query import AsyncQueryPhase, QservQueryStatus
 
 __all__ = [
     "AsyncSubmitRequest",
@@ -78,7 +79,9 @@ class QservAsyncStatusData(BaseModel):
 
     query_id: Annotated[int, Field(title="ID", validation_alias="queryId")]
 
-    status: Annotated[str, Field(title="Status", validation_alias="status")]
+    status: Annotated[
+        QservQueryPhase, Field(title="Status", validation_alias="status")
+    ]
 
     total_chunks: Annotated[
         int, Field(title="Total query chunks", validation_alias="totalChunks")
@@ -140,6 +143,36 @@ class QservAsyncStatusData(BaseModel):
         int | None,
         Field(title="Rows in result", validation_alias="finalRows"),
     ] = None
+
+    def to_query_status(self) -> QservQueryStatus:
+        """Convert to query status model.
+
+        Returns
+        -------
+        QservQueryStatus
+            Query status for Qserv backend.
+        """
+        qserv_phase = QservQueryPhase(self.status)
+        generic_phase = qserv_phase.to_generic_phase()
+        results_too_large = qserv_phase == QservQueryPhase.FAILED_LR
+
+        return QservQueryStatus(
+            backend_type="Qserv",
+            query_id=str(self.query_id),
+            status=generic_phase,
+            query_begin=self.query_begin,
+            last_update=self.last_update,
+            error=self.error,
+            collected_bytes=self.collected_bytes,
+            final_rows=self.final_rows,
+            chunk_progress=ChunkProgress(
+                total_chunks=self.total_chunks,
+                completed_chunks=self.completed_chunks,
+            ),
+            czar_id=self.czar_id,
+            czar_type=self.czar_type,
+            results_too_large=results_too_large,
+        )
 
 
 class QservStatusResponse(BaseResponse):

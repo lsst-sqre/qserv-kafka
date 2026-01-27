@@ -18,8 +18,7 @@ from qservkafka.models.kafka import (
     JobStatus,
 )
 from qservkafka.models.progress import ChunkProgress
-from qservkafka.models.qserv import QservAsyncStatusData
-from qservkafka.models.query import AsyncQueryPhase
+from qservkafka.models.qserv import QservAsyncStatusData, QservQueryPhase
 from qservkafka.storage import qserv
 
 from ..support.constants import ANY_DATETIME, ANY_STRING
@@ -133,7 +132,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     start = current_datetime()
     query_status = QservAsyncStatusData(
         query_id=4,
-        status=AsyncQueryPhase.FAILED,
+        status=QservQueryPhase.FAILED,
         total_chunks=10,
         completed_chunks=4,
         collected_bytes=150,

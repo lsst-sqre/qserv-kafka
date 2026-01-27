@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Coroutine, Sequence
 from datetime import UTC, datetime
-from typing import Any, override
+from functools import wraps
+from typing import Any, Concatenate, Protocol, override
 
-from google.api_core.exceptions import GoogleAPIError
 from google.cloud import bigquery
 from google.cloud.bigquery import DatasetReference, QueryJob, QueryJobConfig
 from httpx import AsyncClient
@@ -15,10 +15,10 @@ from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
 
 from ..config import config
-from ..events import Events
+from ..events import BigQueryFailureEvent, Events
 from ..exceptions import (
     BackendNotImplementedError,
-    BigQueryApiError,
+    BigQueryApiNetworkError,
     BigQueryApiProtocolError,
 )
 from ..models.kafka import JobRun, JobTableUpload
@@ -32,50 +32,53 @@ __all__ = ["BigQueryClient"]
 # Batch size for streaming result rows from BigQuery.
 _RESULT_BATCH_SIZE = 1000
 
-_RETRYABLE_HTTP = {429, 500, 503}
-_RETRYABLE_GRPC = {
-    "UNAVAILABLE",
-    "DEADLINE_EXCEEDED",
-    "RESOURCE_EXHAUSTED",
-}
+
+class _BigQueryClientProtocol(Protocol):
+    """Protocol used by the retry decorator."""
+
+    events: Events
+    logger: BoundLogger
 
 
-def _extract_google_error_details(exc: Exception) -> dict[str, Any]:
-    """Extract detailed information from a Google API error.
+type _BigQueryClientMethod[**P, T, C: _BigQueryClientProtocol] = Callable[
+    Concatenate[C, P], Coroutine[None, None, T]
+]
+"""The type of a method in the `BigQueryClient` class."""
 
-    Parameters
-    ----------
-    exc
-        Exception to extract details from.
 
-    Returns
-    -------
-    dict
-        Dictionary containing error details suitable for logging.
+def _retry[**P, T, C: _BigQueryClientProtocol](
+    __func: _BigQueryClientMethod[P, T, C], /
+) -> _BigQueryClientMethod[P, T, C]:
+    """Retry a failed BigQuery API action.
+
+    If the wrapped method fails with a transient error, retry it up to
+    ``backend_retry_count`` times. Any method with this decorator must be
+    idempotent, since it may be re-run multiple times.
     """
-    details: dict[str, Any] = {
-        "error": str(exc),
-        "error_type": type(exc).__name__,
-    }
-    if not isinstance(exc, GoogleAPIError):
-        return details
 
-    code = getattr(exc, "code", None)
-    if code is not None:
-        details["code"] = code
+    @wraps(__func)
+    async def retry_wrapper(client: C, *args: P.args, **kwargs: P.kwargs) -> T:
+        for _ in range(1, config.backend_retry_count):
+            try:
+                return await __func(client, *args, **kwargs)
+            except BigQueryApiNetworkError:
+                delay = config.backend_retry_delay.total_seconds()
+                msg = f"BigQuery API call failed, retrying after {delay}s"
+                client.logger.exception(msg)
+                event = BigQueryFailureEvent()
+                await client.events.bigquery_failure.publish(event)
+                await asyncio.sleep(delay)
 
-    errors = getattr(exc, "errors", None)
-    if errors:
-        details["errors"] = [
-            {
-                "reason": err.get("reason"),
-                "message": err.get("message"),
-                "location": err.get("location"),
-            }
-            for err in errors
-        ]
+        # Fell through so failed max_tries - 1 times. Try one last time,
+        # re-raising the exception.
+        try:
+            return await __func(client, *args, **kwargs)
+        except BigQueryApiNetworkError:
+            event = BigQueryFailureEvent()
+            await client.events.bigquery_failure.publish(event)
+            raise
 
-    return details
+    return retry_wrapper
 
 
 class BigQueryClient(DatabaseBackend):
@@ -138,225 +141,6 @@ class BigQueryClient(DatabaseBackend):
         self._http_client = http_client
         self._client = bigquery.Client(project=project, location=location)
 
-    @override
-    async def submit_query(self, job: JobRun) -> str:
-        """Submit a query to BigQuery for execution.
-
-        Parameters
-        ----------
-        job
-            Query job run request from the user via Kafka.
-
-        Returns
-        -------
-        str
-            BigQuery job ID (UUID string).
-
-        Raises
-        ------
-        BigQueryApiProtocolError
-            Raised if query submission fails.
-        """
-
-        def _submit() -> str:
-            """Submit query synchronously for async wrapping."""
-            default_dataset = (
-                DatasetReference(self._project, job.database)
-                if job.database
-                else None
-            )
-            job_config_kwargs: dict[str, Any] = {
-                "default_dataset": default_dataset,
-            }
-            if config.bigquery_max_bytes_billed is not None:
-                job_config_kwargs["maximum_bytes_billed"] = (
-                    config.bigquery_max_bytes_billed
-                )
-
-            job_config = QueryJobConfig(**job_config_kwargs)
-            query_job = self._client.query(job.query, job_config=job_config)
-            return query_job.job_id
-
-        try:
-            job_id = await asyncio.to_thread(_submit)
-        except (TypeError, ValueError, AttributeError, GoogleAPIError) as e:
-            error_details = _extract_google_error_details(e)
-            self.logger.exception(
-                "Failed to submit query to BigQuery", **error_details
-            )
-            raise BigQueryApiProtocolError(
-                method="query",
-                project=self._project,
-                error=str(e),
-            ) from e
-
-        self.logger.info(
-            "Submitted query to BigQuery",
-            job_id=job.job_id,
-            bigquery_job_id=job_id,
-            max_bytes_billed=config.bigquery_max_bytes_billed,
-        )
-        return job_id
-
-    @override
-    async def cancel_query(self, query_id: str) -> None:
-        """Cancel a running BigQuery query.
-
-        Parameters
-        ----------
-        query_id
-            BigQuery job ID.
-
-        Raises
-        ------
-        BigQueryApiError
-            Raised if cancellation fails.
-        """
-
-        def _cancel() -> None:
-            """Cancel query synchronously for async wrapping."""
-            job = self._client.get_job(query_id)
-            job.cancel()
-
-        try:
-            await asyncio.to_thread(_cancel)
-        except (TypeError, ValueError, AttributeError, GoogleAPIError) as e:
-            error_details = _extract_google_error_details(e)
-            self.logger.exception(
-                "Failed to cancel BigQuery query",
-                bigquery_job_id=query_id,
-                **error_details,
-            )
-            raise BigQueryApiError(
-                f"Failed to cancel BigQuery query: {e}"
-            ) from e
-
-        self.logger.info("Cancelled BigQuery query", bigquery_job_id=query_id)
-
-    @override
-    async def get_query_status(self, query_id: str) -> BigQueryQueryStatus:
-        """Get the current status of a BigQuery query.
-
-        Parameters
-        ----------
-        query_id
-            BigQuery job ID.
-
-        Returns
-        -------
-        BigQueryQueryStatus
-            Current status of the query.
-
-        Raises
-        ------
-        BigQueryApiError
-            Raised if status retrieval fails.
-        """
-
-        def _get_status() -> tuple[QueryJob, ByteProgress]:
-            """Retrieve status synchronously for async wrapping."""
-            job = self._client.get_job(query_id)
-
-            if not isinstance(job, QueryJob):
-                raise TypeError(f"Expected QueryJob, got {type(job).__name__}")
-
-            progress = ByteProgress(
-                bytes_processed=job.total_bytes_processed or 0,
-                bytes_billed=job.total_bytes_billed,
-                cached=job.cache_hit or False,
-            )
-
-            return job, progress
-
-        try:
-            job, progress = await asyncio.to_thread(_get_status)
-        except Exception as e:
-            self.logger.exception(
-                "Failed to get BigQuery query status",
-                bigquery_job_id=query_id,
-                error=str(e),
-            )
-            raise BigQueryApiError(
-                f"Failed to get BigQuery query status: {e}"
-            ) from e
-
-        if job.done():
-            if job.error_result:
-                phase = AsyncQueryPhase.FAILED
-                error = job.error_result.get(
-                    "message", "Unknown BigQuery error"
-                )
-            else:
-                phase = AsyncQueryPhase.COMPLETED
-                error = None
-        else:
-            phase = AsyncQueryPhase.EXECUTING
-            error = None
-
-        return BigQueryQueryStatus(
-            query_id=query_id,
-            status=phase,
-            error=error,
-            byte_progress=progress,
-            query_begin=job.created,
-            last_update=datetime.now(tz=UTC),
-            collected_bytes=job.total_bytes_processed or 0,
-            final_rows=job.result().total_rows
-            if (job.done() and not job.error_result)
-            else None,
-        )
-
-    @override
-    async def list_running_queries(self) -> dict[str, ProcessStatus]:
-        """List all currently running BigQuery queries.
-
-        Uses BigQuery's list_jobs API with state_filter="RUNNING" to
-        efficiently retrieve all running queries in a single API call.
-
-        Returns
-        -------
-        dict of ProcessStatus
-            Mapping from query ID to process status.
-
-        Raises
-        ------
-        BigQueryApiError
-            Raised if listing jobs fails.
-        """
-
-        def _list_running() -> dict[str, ProcessStatus]:
-            """List running jobs synchronously for async wrapping."""
-            processes: dict[str, ProcessStatus] = {}
-            try:
-                for job in self._client.list_jobs(state_filter="RUNNING"):
-                    # Only include QueryJob instances
-                    if not isinstance(job, QueryJob):
-                        continue
-
-                    progress = ByteProgress(
-                        bytes_processed=job.total_bytes_processed or 0,
-                        bytes_billed=job.total_bytes_billed,
-                        cached=job.cache_hit or False,
-                    )
-
-                    processes[job.job_id] = ProcessStatus(
-                        status=AsyncQueryPhase.EXECUTING,
-                        progress=progress,
-                        last_update=datetime.now(tz=UTC),
-                    )
-            except Exception as e:
-                self.logger.exception(
-                    "Failed to list running BigQuery jobs",
-                    error=str(e),
-                )
-                raise BigQueryApiError(
-                    f"Failed to list running jobs: {e}"
-                ) from e
-
-            return processes
-
-        return await asyncio.to_thread(_list_running)
-
     def _validate_query_job(self, job: Any, query_id: str) -> QueryJob:
         """Validate and return a `QueryJob`, raising errors for invalid states.
 
@@ -392,29 +176,38 @@ class BigQueryClient(DatabaseBackend):
         return job
 
     @override
+    @_retry
+    async def cancel_query(self, query_id: str) -> None:
+        def _cancel() -> None:
+            job = self._client.get_job(query_id)
+            job.cancel()
+
+        try:
+            await asyncio.to_thread(_cancel)
+        except Exception as e:
+            exc = BigQueryApiNetworkError.from_exception(
+                "cancel", self._project, e
+            )
+            msg = "Failed to cancel BigQuery query"
+            self.logger.exception(msg, **exc.to_logging_context())
+            raise exc from e
+
+        self.logger.info("Cancelled BigQuery query", bigquery_job_id=query_id)
+
+    @override
+    async def delete_database(self, database: str) -> None:
+        raise BackendNotImplementedError(
+            "BigQuery doesn't use temporary databases, no deletion needed"
+        )
+
+    @override
+    async def delete_result(self, query_id: str) -> None:
+        pass  # BigQuery results auto-expire after 24 hours
+
+    @override
     async def get_query_results_gen(
         self, query_id: str
     ) -> AsyncGenerator[Sequence[Any]]:
-        """Stream the results of a completed BigQuery query.
-
-        Parameters
-        ----------
-        query_id
-            BigQuery job ID.
-
-        Yields
-        ------
-        Sequence
-            Individual rows as tuples of column values.
-
-        Raises
-        ------
-        BigQueryApiError
-            Raised if result retrieval fails during iteration.
-        ValueError
-            Raised if the query is not complete or failed.
-        """
-
         def _get_result() -> bigquery.table.RowIterator:
             """Get validated job and return result iterator."""
             job = self._client.get_job(query_id)
@@ -436,16 +229,13 @@ class BigQueryClient(DatabaseBackend):
 
         try:
             result = await asyncio.to_thread(_get_result)
-        except (TypeError, ValueError, AttributeError, GoogleAPIError) as e:
-            error_details = _extract_google_error_details(e)
-            self.logger.exception(
-                "Failed to retrieve BigQuery results",
-                bigquery_job_id=query_id,
-                **error_details,
+        except Exception as e:
+            exc = BigQueryApiNetworkError.from_exception(
+                "get_results", self._project, e
             )
-            raise BigQueryApiError(
-                f"Failed to retrieve BigQuery results: {e}"
-            ) from e
+            msg = "Failed to retrieve BigQuery results"
+            self.logger.exception(msg, **exc.to_logging_context())
+            raise exc from e
 
         result_iter = iter(result)
         while True:
@@ -457,51 +247,132 @@ class BigQueryClient(DatabaseBackend):
                 yield row_values
 
     @override
-    async def delete_result(self, query_id: str) -> None:
-        """Delete the results of a BigQuery query.
+    @_retry
+    async def get_query_status(self, query_id: str) -> BigQueryQueryStatus:
+        def _get_status() -> tuple[QueryJob, ByteProgress]:
+            """Retrieve status synchronously for async wrapping."""
+            job = self._client.get_job(query_id)
 
-        BigQuery query results are cached for 24 hours and auto-expire,
-        so no explicit deletion is needed.
+            if not isinstance(job, QueryJob):
+                raise TypeError(f"Expected QueryJob, got {type(job).__name__}")
 
-        Parameters
-        ----------
-        query_id
-            BigQuery job ID.
-        """
+            progress = ByteProgress(
+                bytes_processed=job.total_bytes_processed or 0,
+                bytes_billed=job.total_bytes_billed,
+                cached=job.cache_hit or False,
+            )
 
-    @override
-    async def upload_table(self, upload: JobTableUpload) -> TableUploadStats:
-        """Upload a temporary table to BigQuery.
+            return job, progress
 
-        Parameters
-        ----------
-        upload
-            Table upload specification.
+        try:
+            job, progress = await asyncio.to_thread(_get_status)
+        except Exception as e:
+            exc = BigQueryApiNetworkError.from_exception(
+                "get_status", self._project, e
+            )
+            msg = "Failed to get BigQuery query status"
+            self.logger.exception(msg, **exc.to_logging_context())
+            raise exc from e
 
-        Raises
-        ------
-        BackendNotImplementedError
-            This operation is not supported for BigQuery in the initial
-            implementation.
-        """
-        raise BackendNotImplementedError(
-            "Table upload is not supported for BigQuery backend"
+        error = None
+        if job.done():
+            if job.error_result:
+                phase = AsyncQueryPhase.FAILED
+                error = job.error_result.get(
+                    "message", "Unknown BigQuery error"
+                )
+            else:
+                phase = AsyncQueryPhase.COMPLETED
+        else:
+            phase = AsyncQueryPhase.EXECUTING
+
+        return BigQueryQueryStatus(
+            backend_type="BigQuery",
+            query_id=query_id,
+            status=phase,
+            error=error,
+            byte_progress=progress,
+            query_begin=job.created,
+            last_update=datetime.now(tz=UTC),
+            collected_bytes=job.total_bytes_processed or 0,
+            final_rows=job.result().total_rows
+            if (job.done() and not job.error_result)
+            else None,
         )
 
     @override
-    async def delete_database(self, database: str) -> None:
-        """Delete a temporary database.
+    @_retry
+    async def list_running_queries(self) -> dict[str, ProcessStatus]:
+        def _list_running() -> dict[str, ProcessStatus]:
+            processes: dict[str, ProcessStatus] = {}
+            try:
+                for job in self._client.list_jobs(state_filter="RUNNING"):
+                    # Only include QueryJob instances
+                    if not isinstance(job, QueryJob):
+                        continue
 
-        Parameters
-        ----------
-        database
-            Name of the database to delete.
+                    progress = ByteProgress(
+                        bytes_processed=job.total_bytes_processed or 0,
+                        bytes_billed=job.total_bytes_billed,
+                        cached=job.cache_hit or False,
+                    )
 
-        Raises
-        ------
-        BackendNotImplementedError
-            Always raised; this operation is not supported for BigQuery.
-        """
+                    processes[job.job_id] = ProcessStatus(
+                        status=AsyncQueryPhase.EXECUTING,
+                        progress=progress,
+                        last_update=datetime.now(tz=UTC),
+                    )
+            except Exception as e:
+                exc = BigQueryApiNetworkError.from_exception(
+                    "list_jobs", self._project, e
+                )
+                msg = "Failed to list running BigQuery jobs"
+                self.logger.exception(msg, **exc.to_logging_context())
+                raise exc from e
+
+            return processes
+
+        return await asyncio.to_thread(_list_running)
+
+    @override
+    async def submit_query(self, job: JobRun) -> str:
+        def _submit() -> str:
+            default_dataset = None
+            if job.database:
+                default_dataset = DatasetReference(self._project, job.database)
+
+            job_config_kwargs: dict[str, Any] = {
+                "default_dataset": default_dataset,
+            }
+            if config.bigquery_max_bytes_billed is not None:
+                job_config_kwargs["maximum_bytes_billed"] = (
+                    config.bigquery_max_bytes_billed
+                )
+
+            job_config = QueryJobConfig(**job_config_kwargs)
+            query_job = self._client.query(job.query, job_config=job_config)
+            return query_job.job_id
+
+        try:
+            job_id = await asyncio.to_thread(_submit)
+        except Exception as e:
+            exc = BigQueryApiProtocolError.from_exception(
+                "query", self._project, e
+            )
+            msg = "Failed to submit query to BigQuery"
+            self.logger.exception(msg, **exc.to_logging_context())
+            raise exc from e
+
+        self.logger.info(
+            "Submitted query to BigQuery",
+            job_id=job.job_id,
+            bigquery_job_id=job_id,
+            max_bytes_billed=config.bigquery_max_bytes_billed,
+        )
+        return job_id
+
+    @override
+    async def upload_table(self, upload: JobTableUpload) -> TableUploadStats:
         raise BackendNotImplementedError(
-            "BigQuery doesn't use temporary databases, no deletion needed"
+            "Table upload is not supported for BigQuery backend"
         )

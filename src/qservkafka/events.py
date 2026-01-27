@@ -1,6 +1,5 @@
 """Metrics events implementation for the Qserv Kafka bridge."""
 
-from abc import abstractmethod
 from datetime import timedelta
 from enum import StrEnum
 from typing import Any, override
@@ -166,108 +165,56 @@ class QuerySuccessEvent(BaseQueryEvent):
         ),
     )
 
-    @abstractmethod
-    def to_logging_context(self) -> dict[str, Any]:
-        """Convert relevant information to a dictionary for logging.
+    backend_elapsed: timedelta = Field(
+        ...,
+        title="Backend processing time",
+        description="How long it took for the backend to process the query",
+    )
 
-        Subclasses must implement this to provide backend-specific logging.
-        """
+    backend_size: int = Field(
+        ...,
+        title="Data size from backend",
+        description="Result size reported by the backend in bytes",
+    )
+
+    backend_rate: float | None = Field(
+        None,
+        title="Backend result rate",
+        description=(
+            "Backend data bytes per second for query, or null if the"
+            " query completed too quickly to determine a meaningful rate"
+        ),
+    )
+
+    def to_logging_context(self) -> dict[str, Any]:
+        """Convert relevant information to a dictionary for logging."""
+        result: dict[str, Any] = {
+            "rows": self.rows,
+            "backend_size": self.backend_size,
+            "encoded_size": self.encoded_size,
+            "total_size": self.result_size,
+            "elapsed": self.elapsed.total_seconds(),
+        }
+        if self.kafka_elapsed:
+            result["kafka_elapsed"] = self.kafka_elapsed.total_seconds()
+        result.update(
+            {
+                "backend_elapsed": self.backend_elapsed.total_seconds(),
+                "result_elapsed": self.result_elapsed.total_seconds(),
+                "submit_elapsed": self.submit_elapsed.total_seconds(),
+            }
+        )
+        if self.delete_elapsed:
+            result["delete_elapsed"] = self.delete_elapsed.total_seconds()
+        return result
 
 
 class QservSuccessEvent(QuerySuccessEvent):
     """Successful end-to-end completion of a Qserv query."""
 
-    qserv_elapsed: timedelta = Field(
-        ...,
-        title="Qserv processing time",
-        description="How long it took for Qserv to process the query",
-    )
-
-    qserv_size: int = Field(
-        ...,
-        title="Data size from Qserv",
-        description="Result size reported by Qserv in bytes",
-    )
-
-    qserv_rate: float | None = Field(
-        None,
-        title="Qserv result rate",
-        description=(
-            "Qserv data bytes per second for query, or null if the"
-            " query completed too quickly to determine a meaningful rate"
-        ),
-    )
-
-    @override
-    def to_logging_context(self) -> dict[str, Any]:
-        """Convert relevant information to a dictionary for logging."""
-        result: dict[str, Any] = {
-            "rows": self.rows,
-            "qserv_size": self.qserv_size,
-            "encoded_size": self.encoded_size,
-            "total_size": self.result_size,
-            "elapsed": self.elapsed.total_seconds(),
-        }
-        if self.kafka_elapsed:
-            result["kafka_elapsed"] = self.kafka_elapsed.total_seconds()
-        result.update(
-            {
-                "qserv_elapsed": self.qserv_elapsed.total_seconds(),
-                "result_elapsed": self.result_elapsed.total_seconds(),
-                "submit_elapsed": self.submit_elapsed.total_seconds(),
-            }
-        )
-        if self.delete_elapsed:
-            result["delete_elapsed"] = self.delete_elapsed.total_seconds()
-        return result
-
 
 class BigQuerySuccessEvent(QuerySuccessEvent):
     """Successful end-to-end completion of a BigQuery query."""
-
-    bigquery_elapsed: timedelta = Field(
-        ...,
-        title="BigQuery processing time",
-        description="How long it took for BigQuery to process the query",
-    )
-
-    bigquery_size: int = Field(
-        ...,
-        title="Data size from BigQuery",
-        description="Result size reported by BigQuery in bytes",
-    )
-
-    bigquery_rate: float | None = Field(
-        None,
-        title="BigQuery result rate",
-        description=(
-            "BigQuery data bytes per second for query, or null if the"
-            " query completed too quickly to determine a meaningful rate"
-        ),
-    )
-
-    @override
-    def to_logging_context(self) -> dict[str, Any]:
-        """Convert relevant information to a dictionary for logging."""
-        result: dict[str, Any] = {
-            "rows": self.rows,
-            "bigquery_size": self.bigquery_size,
-            "encoded_size": self.encoded_size,
-            "total_size": self.result_size,
-            "elapsed": self.elapsed.total_seconds(),
-        }
-        if self.kafka_elapsed:
-            result["kafka_elapsed"] = self.kafka_elapsed.total_seconds()
-        result.update(
-            {
-                "bigquery_elapsed": self.bigquery_elapsed.total_seconds(),
-                "result_elapsed": self.result_elapsed.total_seconds(),
-                "submit_elapsed": self.submit_elapsed.total_seconds(),
-            }
-        )
-        if self.delete_elapsed:
-            result["delete_elapsed"] = self.delete_elapsed.total_seconds()
-        return result
 
 
 class QueryAbortEvent(BaseQueryEvent):

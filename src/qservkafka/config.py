@@ -93,6 +93,62 @@ class Config(BaseSettings):
         description="The arq queue name that worker will listen on",
     )
 
+    backend: BackendType = Field(
+        BackendType.QSERV,
+        title="Database backend",
+        description="Which database backend to use (Qserv or BigQuery)",
+    )
+
+    backend_api_timeout: HumanTimedelta = Field(
+        timedelta(seconds=30),
+        title="Backend API call timeout",
+        description=(
+            "Timeout for individual backend API calls (get_job, "
+            "list_jobs, etc.). Used by both Qserv REST API and BigQuery API."
+        ),
+    )
+
+    backend_poll_interval: HumanTimedelta = Field(
+        timedelta(seconds=1),
+        title="Backend poll interval",
+        description="How frequently to poll the backend for query status",
+    )
+
+    backend_retry_count: int = Field(
+        3,
+        title="Number of Backend retries",
+        description=(
+            "How many times to retry a Backend API call before giving up"
+        ),
+    )
+
+    backend_retry_delay: HumanTimedelta = Field(
+        timedelta(seconds=1),
+        title="Backend retry delay",
+        description="How long to pause between retries of backend API calls",
+    )
+
+    bigquery_location: str = Field(
+        "US",
+        title="BigQuery location",
+        description="BigQuery processing location",
+    )
+
+    bigquery_max_bytes_billed: int | None = Field(
+        None,
+        title="BigQuery maximum bytes billed",
+        description=(
+            "Maximum bytes that can be billed for a single query. "
+            "Queries exceeding this will fail. None means no limit."
+        ),
+    )
+
+    bigquery_project: str = Field(
+        "",
+        title="BigQuery project ID",
+        description="GCP project ID containing the BigQuery datasets to query",
+    )
+
     consumer_group_id: str | None = Field(
         "qserv", title="Kafka consumer group ID"
     )
@@ -101,11 +157,6 @@ class Config(BaseSettings):
         ...,
         title="Gafaelfawr token",
         description="Token to use for Gafaelfawr API calls",
-    )
-
-    kafka: KafkaConnectionSettings = Field(
-        default_factory=KafkaConnectionSettings,
-        title="Kafka connection settings",
     )
 
     job_cancel_topic: str = Field(
@@ -132,52 +183,9 @@ class Config(BaseSettings):
         "lsst.tap.job-status", title="Topic for job status"
     )
 
-    backend: BackendType = Field(
-        BackendType.QSERV,
-        title="Database backend",
-        description="Which database backend to use (Qserv or BigQuery)",
-    )
-
-    backend_poll_interval: HumanTimedelta = Field(
-        timedelta(seconds=1),
-        title="Backend poll interval",
-        description="How frequently to poll the backend for query status",
-    )
-
-    backend_retry_delay: HumanTimedelta = Field(
-        timedelta(seconds=1),
-        title="Backend retry delay",
-        description="How long to pause between retries of backend API calls",
-    )
-
-    backend_api_timeout: HumanTimedelta = Field(
-        timedelta(seconds=30),
-        title="Backend API call timeout",
-        description=(
-            "Timeout for individual backend API calls (get_job, "
-            "list_jobs, etc.). Used by both Qserv REST API and BigQuery API."
-        ),
-    )
-
-    bigquery_project: str = Field(
-        "",
-        title="BigQuery project ID",
-        description="GCP project ID containing the BigQuery datasets to query",
-    )
-
-    bigquery_location: str = Field(
-        "US",
-        title="BigQuery location",
-        description="BigQuery processing location",
-    )
-
-    bigquery_max_bytes_billed: int | None = Field(
-        None,
-        title="BigQuery maximum bytes billed",
-        description=(
-            "Maximum bytes that can be billed for a single query. "
-            "Queries exceeding this will fail. None means no limit."
-        ),
+    kafka: KafkaConnectionSettings = Field(
+        default_factory=KafkaConnectionSettings,
+        title="Kafka connection settings",
     )
 
     log_level: LogLevel = Field(
@@ -202,10 +210,6 @@ class Config(BaseSettings):
         title="Metrics configuration",
     )
 
-    sentry: SentryConfig | None = Field(None, title="Sentry configuration")
-
-    slack: SlackConfig = Field(SlackConfig(), title="Slack configuration")
-
     name: str = Field("qserv-kafka", title="Name of application")
 
     parquet_batch_size: int = Field(
@@ -214,30 +218,6 @@ class Config(BaseSettings):
         description=(
             "Number of rows to batch together when encoding Parquet files."
         ),
-    )
-
-    redis_max_connections: int = Field(
-        15,
-        title="Redis connection pool size",
-        description=(
-            "Should be larger than the batch size to handle simultaneous"
-            " quota requests for the batch, plus an extra connection for"
-            " the background monitor and another for cancel messages"
-        ),
-    )
-
-    redis_password: SecretStr = Field(
-        ..., title="Redis password", description="Password for Redis server"
-    )
-
-    redis_url: EnvRedisDsn = Field(
-        ...,
-        title="Redis DSN",
-        description="DSN for the Redis server storing query state",
-    )
-
-    qserv_database_password: SecretStr | None = Field(
-        None, title="Qserv MySQL password"
     )
 
     qserv_database_overflow: int = Field(
@@ -249,6 +229,10 @@ class Config(BaseSettings):
             " be closed when idle until the connection count returns to the"
             " pool size."
         ),
+    )
+
+    qserv_database_password: SecretStr | None = Field(
+        None, title="Qserv MySQL password"
     )
 
     qserv_database_pool_size: int = Field(
@@ -336,14 +320,6 @@ class Config(BaseSettings):
         ),
     )
 
-    backend_retry_count: int = Field(
-        3,
-        title="Number of Backend retries",
-        description=(
-            "How many times to retry a Backend API call before giving up"
-        ),
-    )
-
     qserv_upload_timeout: HumanTimedelta = Field(
         timedelta(minutes=5),
         title="Qserv table upload timeout",
@@ -351,6 +327,26 @@ class Config(BaseSettings):
             "Maximum timeout for a REST API call to Qserv to upload a table."
             " This includes the time spent waiting for a free connection."
         ),
+    )
+
+    redis_max_connections: int = Field(
+        15,
+        title="Redis connection pool size",
+        description=(
+            "Should be larger than the batch size to handle simultaneous"
+            " quota requests for the batch, plus an extra connection for"
+            " the background monitor and another for cancel messages"
+        ),
+    )
+
+    redis_password: SecretStr = Field(
+        ..., title="Redis password", description="Password for Redis server"
+    )
+
+    redis_url: EnvRedisDsn = Field(
+        ...,
+        title="Redis DSN",
+        description="DSN for the Redis server storing query state",
     )
 
     result_timeout: HumanTimedelta = Field(
@@ -364,6 +360,10 @@ class Config(BaseSettings):
             " with the Kubernetes shutdown grace period."
         ),
     )
+
+    sentry: SentryConfig | None = Field(None, title="Sentry configuration")
+
+    slack: SlackConfig = Field(SlackConfig(), title="Slack configuration")
 
     tap_service: str = Field(
         ...,

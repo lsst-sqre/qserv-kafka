@@ -82,6 +82,7 @@ class MockDatabaseBackend(DatabaseBackend):
         """Mock status retrieval returning QservQueryStatus."""
         now = datetime.now(tz=UTC)
         return QservQueryStatus(
+            backend_type="Qserv",
             query_id=query_id,
             status=AsyncQueryPhase.EXECUTING,
             query_begin=now,
@@ -236,6 +237,7 @@ async def test_backend_interface_requires_all_methods() -> None:
 def test_qserv_query_status_serialization() -> None:
     now = datetime.now(tz=UTC)
     original = QservQueryStatus(
+        backend_type="Qserv",
         query_id="123",
         status=AsyncQueryPhase.EXECUTING,
         query_begin=now,
@@ -260,6 +262,7 @@ def test_qserv_query_status_serialization() -> None:
 def test_bigquery_query_status_serialization() -> None:
     now = datetime.now(tz=UTC)
     original = BigQueryQueryStatus(
+        backend_type="BigQuery",
         query_id="bq-job-uuid-123",
         status=AsyncQueryPhase.COMPLETED,
         query_begin=now,
@@ -319,6 +322,7 @@ def test_query_status_to_bigquery() -> None:
 def test_query_status_is_different_with_process_status() -> None:
     now = datetime.now(tz=UTC)
     old_status = QservQueryStatus(
+        backend_type="Qserv",
         query_id="123",
         status=AsyncQueryPhase.EXECUTING,
         query_begin=now,
@@ -353,6 +357,7 @@ def test_query_status_update_from_process_status() -> None:
     later = datetime.now(tz=UTC)
 
     status = QservQueryStatus(
+        backend_type="Qserv",
         query_id="123",
         status=AsyncQueryPhase.EXECUTING,
         query_begin=now,

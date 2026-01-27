@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from enum import StrEnum
 from typing import Annotated, Any, Literal, override
 
@@ -33,7 +34,7 @@ class AsyncQueryPhase(StrEnum):
     ABORTED = "ABORTED"
 
 
-class QueryStatusBase(BaseModel):
+class QueryStatusBase(BaseModel, ABC):
     """Base class for query status models."""
 
     query_id: Annotated[str, Field(title="Backend query ID")]
@@ -55,6 +56,14 @@ class QueryStatusBase(BaseModel):
     final_rows: Annotated[int | None, Field(title="Final row count")] = None
 
     query: Annotated[str | None, Field(title="Query text")] = None
+
+    results_too_large: Annotated[
+        bool,
+        Field(
+            title="Results too large",
+            description="Query failed because results exceeded size limit",
+        ),
+    ] = False
 
     def to_process_status(self) -> ProcessStatus:
         """Extract minimal process status for monitoring.
@@ -99,16 +108,18 @@ class QueryStatusBase(BaseModel):
         """
         self.status = other.status
         self.last_update = other.last_update
-        self._update_progress_from(other.progress)
+        self.update_progress_from(other.progress)
 
-    def _update_progress_from(self, progress: ProgressMetrics | None) -> None:
+    @abstractmethod
+    def update_progress_from(self, progress: ProgressMetrics | None) -> None:
         """Update progress from a `ProcessStatus`."""
 
     @property
+    @abstractmethod
     def progress(self) -> ProgressMetrics | None:
         """Backend-specific progress."""
-        return None
 
+    @abstractmethod
     def to_logging_context(self) -> dict[str, Any]:
         """Get backend-specific fields for logging context.
 
@@ -117,15 +128,6 @@ class QueryStatusBase(BaseModel):
         dict
             Dictionary of field names to values for logging.
         """
-        return {}
-
-    @property
-    def is_results_too_large(self) -> bool:
-        """Whether query failed due to results exceeding size limit.
-
-        Override in subclasses that support this failure mode.
-        """
-        return False
 
 
 class QservQueryStatus(QueryStatusBase):
@@ -137,7 +139,7 @@ class QservQueryStatus(QueryStatusBase):
 
     backend_type: Annotated[
         Literal["Qserv"], Field(title="Backend type discriminator")
-    ] = "Qserv"
+    ]
 
     chunk_progress: Annotated[
         ChunkProgress | None,
@@ -148,14 +150,6 @@ class QservQueryStatus(QueryStatusBase):
 
     czar_type: Annotated[str | None, Field(title="Qserv czar type")] = None
 
-    results_too_large: Annotated[
-        bool,
-        Field(
-            title="Results too large",
-            description="Query failed because results exceeded size limit",
-        ),
-    ] = False
-
     @override
     @property
     def progress(self) -> ChunkProgress | None:
@@ -163,7 +157,7 @@ class QservQueryStatus(QueryStatusBase):
         return self.chunk_progress
 
     @override
-    def _update_progress_from(self, progress: ProgressMetrics | None) -> None:
+    def update_progress_from(self, progress: ProgressMetrics | None) -> None:
         """Update chunk progress from `ProcessStatus`."""
         if isinstance(progress, ChunkProgress):
             self.chunk_progress = progress
@@ -189,12 +183,6 @@ class QservQueryStatus(QueryStatusBase):
             result["completed_chunks"] = self.chunk_progress.completed_chunks
         return result
 
-    @override
-    @property
-    def is_results_too_large(self) -> bool:
-        """Whether Qserv query failed due to results exceeding size limit."""
-        return self.results_too_large
-
 
 class BigQueryQueryStatus(QueryStatusBase):
     """Query status for BigQuery backend.
@@ -204,7 +192,7 @@ class BigQueryQueryStatus(QueryStatusBase):
 
     backend_type: Annotated[
         Literal["BigQuery"], Field(title="Backend type discriminator")
-    ] = "BigQuery"
+    ]
 
     byte_progress: Annotated[
         ByteProgress | None,
@@ -218,7 +206,7 @@ class BigQueryQueryStatus(QueryStatusBase):
         return self.byte_progress
 
     @override
-    def _update_progress_from(self, progress: ProgressMetrics | None) -> None:
+    def update_progress_from(self, progress: ProgressMetrics | None) -> None:
         """Update byte progress from ProcessStatus."""
         if isinstance(progress, ByteProgress):
             self.byte_progress = progress
@@ -238,7 +226,7 @@ class BigQueryQueryStatus(QueryStatusBase):
         return result
 
 
-QueryStatus = Annotated[
+type QueryStatus = Annotated[
     QservQueryStatus | BigQueryQueryStatus,
     Field(discriminator="backend_type"),
 ]

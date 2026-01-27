@@ -29,9 +29,9 @@ from qservkafka.models.qserv import (
     AsyncSubmitRequest,
     BaseResponse,
     QservAsyncStatusData,
+    QservQueryPhase,
     QservStatusResponse,
 )
-from qservkafka.models.query import AsyncQueryPhase
 from qservkafka.storage import qserv
 from qservkafka.storage.qserv import API_VERSION
 
@@ -305,13 +305,13 @@ class MockQserv:
                 json={"success": 0, "error": f"Query {query_id} not found"},
                 request=request,
             )
-        if status.status != AsyncQueryPhase.EXECUTING:
+        if status.status != QservQueryPhase.EXECUTING:
             return Response(
                 200,
                 json={"success": 0, "error": f"Query {query_id} completed"},
                 request=request,
             )
-        status.status = AsyncQueryPhase.ABORTED
+        status.status = QservQueryPhase.ABORTED
         status.last_update = datetime.now(tz=UTC)
         return Response(200, json={"success": 1}, request=request)
 
@@ -534,7 +534,7 @@ class MockQserv:
             New query status.
         """
         assert query_id in self._queries
-        if status.status == AsyncQueryPhase.EXECUTING:
+        if status.status == QservQueryPhase.EXECUTING:
             async with self._sessionmaker() as session:
                 async with session.begin():
                     stmt = select(_Process).where(_Process.id == query_id)

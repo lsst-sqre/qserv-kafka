@@ -348,11 +348,9 @@ class QueryService:
         except BackendApiError as e:
             await self._rate_store.end_query(job.owner)
             if isinstance(e, BackendApiFailedError):
-                msg = "Query rejected by backend"
-                log_kwargs = {"error": str(e)}
-                if hasattr(e, "detail"):
-                    log_kwargs["detail"] = e.detail
-                logger.info(msg, **log_kwargs)
+                logger.info(
+                    "Query rejected by backend", **e.to_logging_context()
+                )
             else:
                 await report_exception(e, self._slack_client)
                 logger.exception("Unable to start query", error=str(e))

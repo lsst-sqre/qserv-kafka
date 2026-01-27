@@ -39,8 +39,6 @@ from ..models.qserv import (
     AsyncSubmitRequest,
     AsyncSubmitResponse,
     BaseResponse,
-    QservAsyncStatusData,
-    QservQueryPhase,
     QservStatusResponse,
     TableUploadStats,
 )
@@ -229,65 +227,26 @@ class QservClient(DatabaseBackend):
 
     @override
     async def cancel_query(self, query_id: str) -> None:
-        """Cancel a running query.
-
-        Parameters
-        ----------
-        query_id
-            Identifier of the query.
-
-        Raises
-        ------
-        QservApiError
-            Raised if there was some error canceling the query.
-        """
         await self._delete(f"/query-async/{query_id}")
 
     @override
     async def delete_result(self, query_id: str) -> None:
         """Delete the results of a query.
 
+        Notes
+        -----
         This should be called after the results have been successfully
         retrieved, although it is not a disaster if it's not called. The
         results will be automatically garbage-collected after some time.
-
-        Parameters
-        ----------
-        query_id
-            Identifier of the query.
-
-        Raises
-        ------
-        QservApiError
-            Raised if there was some error deleting the results.
         """
         await self._delete(f"/query-async/result/{query_id}")
 
     async def delete_table(self, database: str, table: str) -> None:
-        """Delete a user table.
-
-        Parameters
-        ----------
-        database
-            Name of the database (normally :samp:`user_{username}`).
-        table
-            Name of the table.
-
-        Raises
-        ------
-        QservApiError
-            Raised if there was some error deleting the table.
-        """
         await self._delete(f"/ingest/table/{database}/{table}")
 
     @override
     async def delete_database(self, database: str) -> None:
         """Delete a user database.
-
-        Parameters
-        ----------
-        database
-            Name of the database.
 
         Notes
         -----
@@ -301,11 +260,6 @@ class QservClient(DatabaseBackend):
         With a short lived database for each upload, we can delete the entire
         temporary database oncd the job is completed and not have to worry
         about interactions with other queries.
-
-        Raises
-        ------
-        QservApiError
-            Raised if there was some error deleting the database.
         """
         await self._delete(f"/ingest/database/{database}")
 
@@ -315,24 +269,11 @@ class QservClient(DatabaseBackend):
     ) -> AsyncGenerator[Row[Any]]:
         """Get an async iterator for the results of a query.
 
+        Notes
+        -----
         Qserv discards the results after they're retrieved, so be aware that
         the results may not be available once this method has been called once
         for a given query.
-
-        Parameters
-        ----------
-        query_id
-            Identifier of the query.
-
-        Returns
-        -------
-        collections.abc.AsyncIterator
-            Iterator over the rows of the query results.
-
-        Raises
-        ------
-        QservApiSqlError
-            Raised if there was some error retrieving results.
         """
         stmt = text(_query_results_sql())
         results = None
@@ -351,42 +292,18 @@ class QservClient(DatabaseBackend):
 
     @override
     async def get_query_status(self, query_id: str) -> QservQueryStatus:
-        """Query for the status of an async job.
-
-        Parameters
-        ----------
-        query_id
-            Identifier of the query.
-
-        Returns
-        -------
-        QservQueryStatus
-            Status of the query.
-        """
         url = f"/query-async/status/{query_id}"
         result = await self._get(url, {}, QservStatusResponse)
-        return self._to_query_status(result.status)
+        return result.status.to_query_status()
 
     @override
     @_retry(qserv_protocol=QservProtocol.SQL)
     async def list_running_queries(self) -> dict[str, ProcessStatus]:
-        """Return information about all running queries.
-
-        Returns
-        -------
-        dict of ProcessStatus
-            Mapping from query ID to information about a running query.
-
-        Raises
-        ------
-        QservApiSqlError
-            Raised if there was some error retrieving status.
-        """
         try:
             async with self._sessionmaker() as session:
                 async with session.begin():
                     result = await session.stream(text(_query_list_sql()))
-                    processes: dict[str, ProcessStatus] = {}
+                    processes = {}
                     try:
                         async for row in result:
                             msg = "Saw running query"
@@ -408,48 +325,12 @@ class QservClient(DatabaseBackend):
 
     @override
     async def submit_query(self, job: JobRun) -> str:
-        """Submit an async query to Qserv.
-
-        Parameters
-        ----------
-        job
-            Query job run request from the user via Kafka.
-
-        Returns
-        -------
-        str
-            Qserv identifier of the query.
-
-        Raises
-        ------
-        QservApiError
-            Raised if something failed when attempting to submit the job.
-        """
         request = AsyncSubmitRequest(query=job.query, database=job.database)
         result = await self._post("/query-async", request, AsyncSubmitResponse)
         return str(result.query_id)
 
     @override
     async def upload_table(self, upload: JobTableUpload) -> TableUploadStats:
-        """Upload a table to Qserv.
-
-        Parameters
-        ----------
-        upload
-            Table to upload.
-
-        Returns
-        -------
-        TableUploadStats
-            Statistics about the uploaded table.
-
-        Raises
-        ------
-        QservApiError
-            Raised if something failed when uploading the table.
-        TableUploadWebError
-            Raised if retrieving the uploaded table or schema failed.
-        """
         schema = await self._get_table(upload.schema_url)
         source = await self._get_table(upload.source_url)
         start = datetime.now(tz=UTC)
@@ -471,40 +352,6 @@ class QservClient(DatabaseBackend):
         )
         return TableUploadStats(
             size=len(source), elapsed=datetime.now(tz=UTC) - start
-        )
-
-    def _to_query_status(self, data: QservAsyncStatusData) -> QservQueryStatus:
-        """Convert Qserv API response data to query status.
-
-        Parameters
-        ----------
-        data
-            Parsed Qserv API response data.
-
-        Returns
-        -------
-        QservQueryStatus
-            Query status for Qserv backend.
-        """
-        qserv_phase = QservQueryPhase(data.status)
-        generic_phase = qserv_phase.to_generic_phase()
-        results_too_large = qserv_phase == QservQueryPhase.FAILED_LR
-
-        return QservQueryStatus(
-            query_id=str(data.query_id),
-            status=generic_phase,
-            query_begin=data.query_begin,
-            last_update=data.last_update,
-            error=data.error,
-            collected_bytes=data.collected_bytes,
-            final_rows=data.final_rows,
-            chunk_progress=ChunkProgress(
-                total_chunks=data.total_chunks,
-                completed_chunks=data.completed_chunks,
-            ),
-            czar_id=data.czar_id,
-            czar_type=data.czar_type,
-            results_too_large=results_too_large,
         )
 
     @_retry
