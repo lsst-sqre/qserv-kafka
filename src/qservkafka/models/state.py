@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from safir.datetime import format_datetime_for_logging
 
 from .kafka import JobQueryInfo, JobRun
-from .qserv import AsyncQueryStatus
+from .query import QueryStatus
 
 __all__ = [
     "Query",
@@ -16,9 +16,9 @@ __all__ = [
 
 
 class Query(BaseModel):
-    """Represents a started Qserv query with no Qserv status."""
+    """Represents a started query with no backend status."""
 
-    query_id: Annotated[int, Field(title="Qserv ID of query")]
+    query_id: Annotated[str, Field(title="ID of query")]
 
     queued: Annotated[
         datetime | None, Field(title="Kafka queue time of query")
@@ -26,7 +26,7 @@ class Query(BaseModel):
 
     start: Annotated[datetime, Field(title="Receipt time of query")]
 
-    created: Annotated[datetime, Field(title="Creation time of Qserv query")]
+    created: Annotated[datetime, Field(title="Creation time of query")]
 
     job: Annotated[JobRun, Field(title="Full job request")]
 
@@ -34,7 +34,7 @@ class Query(BaseModel):
         """Convert to variables for a structlog logging context."""
         result: dict[str, str | float] = {
             "job_id": self.job.job_id,
-            "qserv_id": str(self.query_id),
+            "backend_id": self.query_id,
             "username": self.job.owner,
             "start_time": format_datetime_for_logging(self.start),
         }
@@ -44,16 +44,16 @@ class Query(BaseModel):
 
 
 class RunningQuery(Query):
-    """Represents a running Qserv query with a known status."""
+    """Represents a running query with a known status."""
 
-    status: Annotated[AsyncQueryStatus, Field(title="Last known status")]
+    status: Annotated[QueryStatus, Field(title="Last known status")]
 
     result_queued: Annotated[
         bool, Field(title="Whether queued for result procesing")
     ]
 
     @classmethod
-    def from_query(cls, query: Query, status: AsyncQueryStatus) -> Self:
+    def from_query(cls, query: Query, status: QueryStatus) -> Self:
         """Convert a started query to full query state by recording status.
 
         Parameters
@@ -94,16 +94,14 @@ class RunningQuery(Query):
         """
         return JobQueryInfo(
             start_time=self.start,
-            total_chunks=self.status.total_chunks,
-            completed_chunks=self.status.completed_chunks,
+            progress=self.status.progress,
             end_time=datetime.now(tz=UTC) if finished else None,
         )
 
     @override
     def to_logging_context(self) -> dict[str, Any]:
         result = super().to_logging_context()
-        result["total_chunks"] = self.status.total_chunks
-        result["completed_chunks"] = self.status.completed_chunks
+        result.update(self.status.to_logging_context())
         if self.status.collected_bytes:
-            result["qserv_size"] = self.status.collected_bytes
+            result["backend_size"] = self.status.collected_bytes
         return result
