@@ -4,7 +4,7 @@ import asyncio
 import struct
 from abc import ABCMeta, abstractmethod
 from binascii import b2a_base64
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from datetime import datetime
 from io import BytesIO
 from typing import Any, override
@@ -16,7 +16,6 @@ from bitstring import BitArray
 from httpx import AsyncClient, HTTPError
 from pydantic import HttpUrl
 from rubin.repertoire import DiscoveryClient
-from sqlalchemy import Row
 from structlog.stdlib import BoundLogger
 
 from ..config import config as global_config
@@ -141,7 +140,7 @@ class VOTableEncoder(metaclass=ABCMeta):
     @abstractmethod
     async def encode(
         self,
-        results: AsyncGenerator[Row[Any] | tuple[Any]],
+        results: AsyncGenerator[Sequence[Any]],
         *,
         maxrec: int | None = None,
     ) -> AsyncGenerator[bytes]:
@@ -232,7 +231,7 @@ class Binary2Encoder(VOTableEncoder):
     @override
     async def encode(
         self,
-        results: AsyncGenerator[Row[Any] | tuple[Any]],
+        results: AsyncGenerator[Sequence[Any]],
         *,
         maxrec: int | None = None,
     ) -> AsyncGenerator[bytes]:
@@ -395,7 +394,7 @@ class Binary2Encoder(VOTableEncoder):
             return column.datatype.pack(value)
 
     async def _encode_row(
-        self, types: list[JobResultColumnType], row: Row[Any] | tuple[Any]
+        self, types: list[JobResultColumnType], row: Sequence[Any]
     ) -> bytes:
         """Encode a single row of output in BINARY2.
 
@@ -608,7 +607,7 @@ class VOParquetEncoder(VOTableEncoder):
     @override
     async def encode(
         self,
-        results: AsyncGenerator[Row[Any] | tuple[Any]],
+        results: AsyncGenerator[Sequence[Any]],
         *,
         maxrec: int | None = None,
     ) -> AsyncGenerator[bytes]:
@@ -771,7 +770,7 @@ class VOParquetEncoder(VOTableEncoder):
         return base_type
 
     async def _process_row_for_parquet(
-        self, row: Row[Any] | tuple[Any]
+        self, row: Sequence[Any]
     ) -> dict[str, Any]:
         """Process row for the VOParquet format.
 
@@ -863,7 +862,7 @@ class VOTableWriter:
         self,
         url: str | HttpUrl,
         config: JobResultConfig,
-        results: AsyncGenerator[Row[Any]],
+        results: AsyncGenerator[Sequence[Any]],
         *,
         maxrec: int | None = None,
         overflow: bool = False,
@@ -879,7 +878,7 @@ class VOTableWriter:
             and type information. The type information must exactly match the
             columns of the results. This is not checked.
         results
-            Async generator that yields one result row (or batch) at a time.
+            Async generator that yields one result row at a time.
         maxrec
             Maximum record limit, if not `None`.
         overflow

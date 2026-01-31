@@ -16,6 +16,7 @@ from qservkafka.models.kafka import (
     JobRun,
     JobStatus,
 )
+from qservkafka.models.progress import ChunkProgress
 from qservkafka.models.votable import VOTableSize
 
 
@@ -76,8 +77,7 @@ def test_job_status() -> None:
         query_info=JobQueryInfo(
             start_time=start,
             end_time=end,
-            total_chunks=167,
-            completed_chunks=167,
+            progress=ChunkProgress(total_chunks=167, completed_chunks=167),
         ),
         result_info=JobResultInfo(
             total_rows=1000,
@@ -99,8 +99,10 @@ def test_job_status() -> None:
         "queryInfo": {
             "startTime": int(start.timestamp() * 1000),
             "endTime": int(end.timestamp() * 1000),
-            "totalChunks": 167,
-            "completedChunks": 167,
+            "progress": {
+                "totalChunks": 167,
+                "completedChunks": 167,
+            },
         },
         "resultInfo": {
             "totalRows": 1000,

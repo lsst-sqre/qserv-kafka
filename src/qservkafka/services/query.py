@@ -9,8 +9,8 @@ from vo_models.uws.types import ExecutionPhase
 
 from ..events import Events, TemporaryTableUploadEvent
 from ..exceptions import (
-    QservApiError,
-    QservApiFailedError,
+    BackendApiError,
+    BackendApiFailedError,
     TableUploadWebError,
 )
 from ..models.kafka import (
@@ -22,10 +22,10 @@ from ..models.kafka import (
     JobRun,
     JobStatus,
 )
-from ..models.qserv import AsyncQueryPhase
+from ..models.query import AsyncQueryPhase
 from ..models.state import Query
+from ..storage.backend import DatabaseBackend
 from ..storage.gafaelfawr import GafaelfawrStorage
-from ..storage.qserv import QservClient
 from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from .results import ResultProcessor
@@ -38,8 +38,8 @@ class QueryService:
 
     Parameters
     ----------
-    qserv_client
-        Client to talk to the Qserv REST API.
+    backend
+        Database backend client (Qserv, BigQuery, etc.).
     state_store
         Storage for query state.
     result_processor
@@ -59,7 +59,7 @@ class QueryService:
     def __init__(
         self,
         *,
-        qserv_client: QservClient,
+        backend: DatabaseBackend,
         state_store: QueryStateStore,
         result_processor: ResultProcessor,
         rate_limit_store: RateLimitStore,
@@ -68,7 +68,7 @@ class QueryService:
         slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
     ) -> None:
-        self._qserv = qserv_client
+        self._backend = backend
         self._state = state_store
         self._results = result_processor
         self._rate_store = rate_limit_store
@@ -94,13 +94,8 @@ class QueryService:
         logger = self._logger.bind(
             job_id=message.job_id, username=message.owner
         )
-        try:
-            query_id = int(message.execution_id)
-        except Exception as e:
-            await report_exception(e, self._slack_client)
-            logger.exception("Invalid exectionID in cancel message")
-            return None
-        logger = logger.bind(qserv_id=str(query_id))
+        query_id = message.execution_id
+        logger = logger.bind(backend_id=query_id)
         query = await self._state.get_query(query_id)
         if not query:
             logger.warning("Cannot cancel unknown or completed job")
@@ -116,13 +111,13 @@ class QueryService:
         # TAP server, so we send a status update matching the last known
         # status in that case.
         try:
-            await self._qserv.cancel_query(query_id)
-        except QservApiError as e:
+            await self._backend.cancel_query(query_id)
+        except BackendApiError as e:
             try:
-                status = await self._qserv.get_query_status(query_id)
+                status = await self._backend.get_query_status(query_id)
                 if status.status != AsyncQueryPhase.EXECUTING:
                     return None
-            except QservApiError:
+            except BackendApiError:
                 pass
             await report_exception(e, self._slack_client)
             logger.exception("Failed to cancel query", error=str(e))
@@ -320,7 +315,7 @@ class QueryService:
         # Upload any tables.
         try:
             for upload in job.upload_tables:
-                stats = await self._qserv.upload_table(upload)
+                stats = await self._backend.upload_table(upload)
                 logger.info("Uploaded table", table_name=upload.table_name)
                 event = TemporaryTableUploadEvent(
                     job_id=job.job_id,
@@ -329,7 +324,7 @@ class QueryService:
                     elapsed=stats.elapsed,
                 )
                 await self._events.temporary_table.publish(event)
-        except (QservApiError, TableUploadWebError) as e:
+        except (BackendApiError, TableUploadWebError) as e:
             await self._rate_store.end_query(job.owner)
             if isinstance(e, TableUploadWebError):
                 msg = "Unable to retrieve table to upload"
@@ -349,12 +344,13 @@ class QueryService:
         # Start the query.
         query_id = None
         try:
-            query_id = await self._qserv.submit_query(job)
-        except QservApiError as e:
+            query_id = await self._backend.submit_query(job)
+        except BackendApiError as e:
             await self._rate_store.end_query(job.owner)
-            if isinstance(e, QservApiFailedError):
-                msg = "Query rejected by Qserv"
-                logger.info(msg, error=str(e), detail=e.detail)
+            if isinstance(e, BackendApiFailedError):
+                logger.info(
+                    "Query rejected by backend", **e.to_logging_context()
+                )
             else:
                 await report_exception(e, self._slack_client)
                 logger.exception("Unable to start query", error=str(e))
@@ -367,7 +363,7 @@ class QueryService:
                 metadata=metadata,
             )
         created = datetime.now(tz=UTC)
-        logger.info("Started query", qserv_id=str(query_id))
+        logger.info("Started query", backend_id=query_id)
 
         # Analyze the initial status and return it.
         query = Query(

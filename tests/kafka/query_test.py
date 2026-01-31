@@ -80,24 +80,24 @@ async def test_success(
     assert set(redis_client.scan_iter("query:*")) == set()
 
     # Check that the correct metrics event was sent.
-    assert isinstance(factory.events.query_success, MockEventPublisher)
-    events = factory.events.query_success.published
+    assert isinstance(factory.events.qserv_success, MockEventPublisher)
+    events = factory.events.qserv_success.published
     assert len(events) == 1
     assert events[0].model_dump(mode="json") == {
         "job_id": job.job_id,
         "username": job.owner,
         "elapsed": ANY,
         "kafka_elapsed": ANY,
-        "qserv_elapsed": ANY,
+        "backend_elapsed": ANY,
         "result_elapsed": ANY,
         "submit_elapsed": ANY,
         "delete_elapsed": ANY,
         "rows": 2,
-        "qserv_size": qserv_status.collected_bytes,
+        "backend_size": qserv_status.collected_bytes,
+        "backend_rate": ANY,
         "encoded_size": ANY,
         "result_size": ANY,
         "rate": ANY,
-        "qserv_rate": ANY,
         "result_rate": ANY,
         "upload_tables": 0,
         "immediate": False,

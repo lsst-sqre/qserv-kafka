@@ -8,7 +8,7 @@ from vo_models.uws.types import ExecutionPhase
 from ...factory import Factory
 
 
-async def handle_finished_query(ctx: dict[Any, Any], query_id: int) -> None:
+async def handle_finished_query(ctx: dict[Any, Any], query_id: str) -> None:
     """Process a completed query.
 
     Parameters
@@ -16,7 +16,7 @@ async def handle_finished_query(ctx: dict[Any, Any], query_id: int) -> None:
     ctx
         arq context.
     query_id
-        Qserv query ID of completed query.
+        Backend query ID of completed query.
     """
     factory: Factory = ctx["factory"]
     logger: BoundLogger = ctx["logger"]
