@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 from enum import StrEnum
-from typing import override
+from typing import Any, override
 
 from pydantic import Field
 from safir.dependencies.metrics import EventMaker
@@ -11,9 +11,13 @@ from safir.metrics import EventManager, EventPayload
 from .models.kafka import JobErrorCode
 
 __all__ = [
+    "BackendFailureEvent",
+    "BigQueryFailureEvent",
+    "BigQuerySuccessEvent",
     "Events",
     "QservFailureEvent",
     "QservProtocol",
+    "QservSuccessEvent",
     "QueryAbortEvent",
     "QueryFailureEvent",
     "QuerySuccessEvent",
@@ -22,20 +26,39 @@ __all__ = [
 
 
 class QservProtocol(StrEnum):
-    """Protocol of Qserv API used."""
+    """Protocol of Qserv API used.
+
+    Qserv uses both HTTP (REST API) and SQL (direct database connection).
+    """
 
     HTTP = "HTTP"
     SQL = "SQL"
 
 
-class QservFailureEvent(EventPayload):
+class BackendFailureEvent(EventPayload):
+    """Base class for backend-specific failure events.
+
+    Different backends (Qserv, BigQuery, etc.) inherit from this to create
+    backend specific failure events with appropriate fields.
+    """
+
+
+class QservFailureEvent(BackendFailureEvent):
     """Unexpected failure sending a Qserv API request.
 
     This event will be logged for each low-level API failure (either HTTP or
-    SQL).
+    SQL) to the Qserv backend.
     """
 
     protocol: QservProtocol = Field(..., title="Protocol of Qserv API")
+
+
+class BigQueryFailureEvent(BackendFailureEvent):
+    """Unexpected failure sending a BigQuery API request.
+
+    This event will be logged for each low-level API failure to the BigQuery
+    backend. BigQuery uses HTTP-based APIs exclusively.
+    """
 
 
 class BaseQueryEvent(EventPayload):
@@ -52,7 +75,11 @@ class BaseQueryEvent(EventPayload):
 
 
 class QuerySuccessEvent(BaseQueryEvent):
-    """Successful end-to-end completion of a query."""
+    """Base class for backend-specific query success events.
+
+    Different backends (Qserv, BigQuery, etc.) inherit from this to create
+    backend-specific success events with appropriate metrics.
+    """
 
     elapsed: timedelta = Field(
         ...,
@@ -69,12 +96,6 @@ class QuerySuccessEvent(BaseQueryEvent):
         description="Time from Kafka message queuing to start of processing",
     )
 
-    qserv_elapsed: timedelta = Field(
-        ...,
-        title="Qserv processing time",
-        description="How long it took for Qserv to process the query",
-    )
-
     result_elapsed: timedelta = Field(
         ...,
         title="Result processing time",
@@ -88,7 +109,7 @@ class QuerySuccessEvent(BaseQueryEvent):
         title="Job submission time",
         description=(
             "How long it took from receipt of the Kafka message to successful"
-            " creation of the query job in Qserv"
+            " creation of the query job in the backend"
         ),
     )
 
@@ -96,19 +117,13 @@ class QuerySuccessEvent(BaseQueryEvent):
         None,
         title="Job deletion time",
         description=(
-            "How long it took to delete the query from Qserv after successful"
-            " completion"
+            "How long it took to delete the query from the backend after"
+            " successful completion"
         ),
     )
 
     rows: int = Field(
         ..., title="Row count", description="Number of rows in the output"
-    )
-
-    qserv_size: int = Field(
-        ...,
-        title="Data size in Qserv",
-        description="Reported result size from Qserv in bytes",
     )
 
     encoded_size: int = Field(
@@ -127,15 +142,6 @@ class QuerySuccessEvent(BaseQueryEvent):
         ...,
         title="Query rate",
         description="Encoded data bytes per second for the whole query",
-    )
-
-    qserv_rate: float | None = Field(
-        ...,
-        title="Qserv result rate",
-        description=(
-            "Qserv data bytes per second for Qserv query, or null if the"
-            " query completed too quickly to determine a meaningful rate"
-        ),
     )
 
     result_rate: float = Field(
@@ -159,11 +165,32 @@ class QuerySuccessEvent(BaseQueryEvent):
         ),
     )
 
-    def to_logging_context(self) -> dict[str, float]:
+    backend_elapsed: timedelta = Field(
+        ...,
+        title="Backend processing time",
+        description="How long it took for the backend to process the query",
+    )
+
+    backend_size: int = Field(
+        ...,
+        title="Data size from backend",
+        description="Result size reported by the backend in bytes",
+    )
+
+    backend_rate: float | None = Field(
+        None,
+        title="Backend result rate",
+        description=(
+            "Backend data bytes per second for query, or null if the"
+            " query completed too quickly to determine a meaningful rate"
+        ),
+    )
+
+    def to_logging_context(self) -> dict[str, Any]:
         """Convert relevant information to a dictionary for logging."""
-        result = {
+        result: dict[str, Any] = {
             "rows": self.rows,
-            "qserv_size": self.qserv_size,
+            "backend_size": self.backend_size,
             "encoded_size": self.encoded_size,
             "total_size": self.result_size,
             "elapsed": self.elapsed.total_seconds(),
@@ -172,7 +199,7 @@ class QuerySuccessEvent(BaseQueryEvent):
             result["kafka_elapsed"] = self.kafka_elapsed.total_seconds()
         result.update(
             {
-                "qserv_elapsed": self.qserv_elapsed.total_seconds(),
+                "backend_elapsed": self.backend_elapsed.total_seconds(),
                 "result_elapsed": self.result_elapsed.total_seconds(),
                 "submit_elapsed": self.submit_elapsed.total_seconds(),
             }
@@ -180,6 +207,14 @@ class QuerySuccessEvent(BaseQueryEvent):
         if self.delete_elapsed:
             result["delete_elapsed"] = self.delete_elapsed.total_seconds()
         return result
+
+
+class QservSuccessEvent(QuerySuccessEvent):
+    """Successful end-to-end completion of a Qserv query."""
+
+
+class BigQuerySuccessEvent(QuerySuccessEvent):
+    """Successful end-to-end completion of a BigQuery query."""
 
 
 class QueryAbortEvent(BaseQueryEvent):
@@ -240,8 +275,12 @@ class Events(EventMaker):
     ----------
     qserv_failure
         Qserv API call failed with a protocol error.
-    query_success
-        Successful query execution.
+    bigquery_failure
+        BigQuery API call failed with a protocol error.
+    qserv_success
+        Successful Qserv query execution.
+    bigquery_success
+        Successful BigQuery query execution.
     query_failure
         Failed query.
     query_abort
@@ -253,8 +292,14 @@ class Events(EventMaker):
         self.qserv_failure = await manager.create_publisher(
             "qserv_failure", QservFailureEvent
         )
-        self.query_success = await manager.create_publisher(
-            "query_success", QuerySuccessEvent
+        self.bigquery_failure = await manager.create_publisher(
+            "bigquery_failure", BigQueryFailureEvent
+        )
+        self.qserv_success = await manager.create_publisher(
+            "qserv_success", QservSuccessEvent
+        )
+        self.bigquery_success = await manager.create_publisher(
+            "bigquery_success", BigQuerySuccessEvent
         )
         self.query_failure = await manager.create_publisher(
             "query_failure", QueryFailureEvent

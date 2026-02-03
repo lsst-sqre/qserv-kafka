@@ -26,11 +26,11 @@ from structlog.stdlib import BoundLogger
 from qservkafka.config import config
 from qservkafka.models.kafka import JobRun
 from qservkafka.models.qserv import (
-    AsyncQueryPhase,
-    AsyncQueryStatus,
-    AsyncStatusResponse,
     AsyncSubmitRequest,
     BaseResponse,
+    QservAsyncStatusData,
+    QservQueryPhase,
+    QservStatusResponse,
 )
 from qservkafka.storage import qserv
 from qservkafka.storage.qserv import API_VERSION
@@ -137,7 +137,7 @@ class MockQserv:
         self._next_query_id: int
         self._override_status: Response | None
         self._override_submit: Response | None
-        self._queries: dict[int, AsyncQueryStatus]
+        self._queries: dict[int, QservAsyncStatusData]
         self._results_stored: bool
         self._upload_delay: timedelta | None
         self._uploaded_table: str | None = None
@@ -158,7 +158,7 @@ class MockQserv:
         """Whether results are currently stored."""
         return self._results_stored
 
-    def get_status(self, query_id: int) -> AsyncQueryStatus:
+    def get_status(self, query_id: int) -> QservAsyncStatusData:
         """Return the current stored status.
 
         This is used by tests that need to poke at the mock directly.
@@ -170,7 +170,7 @@ class MockQserv:
 
         Returns
         -------
-        AsyncQueryStatus
+        QservAsyncStatusData
             Current stored status for that query ID.
         """
         return self._queries[query_id]
@@ -305,13 +305,13 @@ class MockQserv:
                 json={"success": 0, "error": f"Query {query_id} not found"},
                 request=request,
             )
-        if status.status != AsyncQueryPhase.EXECUTING:
+        if status.status != QservQueryPhase.EXECUTING:
             return Response(
                 200,
                 json={"success": 0, "error": f"Query {query_id} completed"},
                 request=request,
             )
-        status.status = AsyncQueryPhase.ABORTED
+        status.status = QservQueryPhase.ABORTED
         status.last_update = datetime.now(tz=UTC)
         return Response(200, json={"success": 1}, request=request)
 
@@ -433,7 +433,7 @@ class MockQserv:
                 json={"success": 0, "error": f"Query {query_id} not found"},
                 request=request,
             )
-        result = AsyncStatusResponse(success=1, status=status)
+        result = QservStatusResponse(success=1, status=status)
         return Response(
             200,
             json=result.model_dump(mode="json", exclude_none=True),
@@ -522,7 +522,7 @@ class MockQserv:
         )
 
     async def update_status(
-        self, query_id: int, status: AsyncQueryStatus
+        self, query_id: int, status: QservAsyncStatusData
     ) -> None:
         """Update the status of a query for future requests.
 
@@ -534,7 +534,7 @@ class MockQserv:
             New query status.
         """
         assert query_id in self._queries
-        if status.status == AsyncQueryPhase.EXECUTING:
+        if status.status == QservQueryPhase.EXECUTING:
             async with self._sessionmaker() as session:
                 async with session.begin():
                     stmt = select(_Process).where(_Process.id == query_id)

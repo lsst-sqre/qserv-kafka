@@ -1,6 +1,6 @@
 """Custom exceptions for the Qserv Kafka bridge."""
 
-from typing import ClassVar, Self, override
+from typing import Any, ClassVar, Self, override
 
 from safir.slack.blockkit import (
     SlackCodeBlock,
@@ -16,6 +16,18 @@ from .models.kafka import JobError, JobErrorCode
 from .models.qserv import BaseResponse
 
 __all__ = [
+    "BackendApiError",
+    "BackendApiFailedError",
+    "BackendApiNetworkError",
+    "BackendApiProtocolError",
+    "BackendApiSqlError",
+    "BackendApiTransientError",
+    "BackendApiWebError",
+    "BackendNotImplementedError",
+    "BigQueryApiError",
+    "BigQueryApiFailedError",
+    "BigQueryApiNetworkError",
+    "BigQueryApiProtocolError",
     "QservApiError",
     "QservApiFailedError",
     "QservApiProtocolError",
@@ -43,11 +55,218 @@ class QueryError(SlackException):
         return JobError(code=self.error, message=str(self))
 
 
-class QservApiError(QueryError):
-    """Base class for failures talking to the Qserv API."""
+class BackendApiError(QueryError):
+    """Base class for failures talking to any database backend API.
+
+    This is the generic exception that service layer code should catch.
+    Specific backends (Qserv, BigQuery) raise subclasses of this.
+    """
+
+    def to_logging_context(self) -> dict[str, Any]:
+        """Convert exception details to logging context.
+
+        Returns
+        -------
+        dict
+            Dictionary of field names to values.
+        """
+        return {"error": str(self)}
 
 
-class QservApiFailedError(QservApiError):
+class BackendApiFailedError(BackendApiError):
+    """A backend API request returned a failure status.
+
+    This is a generic base class, backend-specific subclasses should provide
+    additional context.
+    """
+
+    @override
+    def to_logging_context(self) -> dict[str, Any]:
+        """Convert exception details to logging context.
+
+        Returns
+        -------
+        dict
+            Dictionary of field names to values.
+        """
+        return {"error": str(self)}
+
+
+class BackendApiProtocolError(BackendApiError):
+    """A backend API returned an unexpected response.
+
+    This indicates a protocol error where the response could not be parsed
+    or was missing expected fields. We won't retry these.
+    """
+
+    error = JobErrorCode.backend_internal_error
+
+
+class BackendApiTransientError(BackendApiError):
+    """Base class for transient backend errors that should be retried.
+
+    This is the base for all retriable errors such as network timeouts,
+    connection failures, rate limiting, and temporary unavailability.
+    """
+
+    error = JobErrorCode.backend_request_error
+
+
+class BackendApiSqlError(BackendApiTransientError):
+    """A SQL request to a backend failed due to a transient error.
+
+    This is used by SQL-based backends (like Qserv) to wrap SQLAlchemy
+    errors from connection failures, timeouts, etc.
+    """
+
+    error = JobErrorCode.backend_sql_error
+
+
+class BackendApiNetworkError(BackendApiTransientError):
+    """A network request to a backend failed due to a transient error.
+
+    This is for network-level failures (timeouts, connection refused, rate
+    limits). Not tied to any specific HTTP library.
+    """
+
+    error = JobErrorCode.backend_request_error
+
+
+class BackendApiWebError(SlackWebException, BackendApiNetworkError):
+    """A web request to a backend failed at the HTTP level.
+
+    This wraps httpx HTTP errors and includes Slack-formatted error details.
+    Use BackendApiNetworkError for non-httpx backends.
+    """
+
+    error = JobErrorCode.backend_request_error
+
+
+class BackendNotImplementedError(BackendApiError):
+    """Feature not implemented by this backend.
+
+    This is raised when a backend doesn't support a particular feature.
+    """
+
+    error = JobErrorCode.backend_error
+
+
+class QservApiError(BackendApiError):
+    """Base class for failures talking to the Qserv API.
+
+    Deprecated: Use BackendApiError for generic handling.
+    """
+
+
+class BigQueryApiError(BackendApiError):
+    """Base class for failures talking to the BigQuery API.
+
+    All BigQuery errors carry the API method and GCP project that failed,
+    which are included in Slack, Sentry, and logging output.
+
+    Parameters
+    ----------
+    method
+        BigQuery API method that failed.
+    project
+        GCP project ID.
+    error
+        Error message.
+    """
+
+    def __init__(self, method: str, project: str, error: str) -> None:
+        super().__init__(f"BigQuery error: {error}")
+        self.method = method
+        self.project = project
+
+    @override
+    def to_slack(self) -> SlackMessage:
+        result = super().to_slack()
+        text = f"{self.method} in project {self.project}"
+        result.blocks.append(SlackTextBlock(heading="Request", text=text))
+        return result
+
+    @override
+    def to_sentry(self) -> SentryEventInfo:
+        info = super().to_sentry()
+        info.tags["method"] = self.method
+        info.tags["project"] = self.project
+        return info
+
+    @override
+    def to_logging_context(self) -> dict[str, Any]:
+        result = super().to_logging_context()
+        result["method"] = self.method
+        result["project"] = self.project
+        return result
+
+    @classmethod
+    def from_exception(
+        cls,
+        method: str,
+        project: str,
+        exc: Exception,
+    ) -> Self:
+        """Create an exception from a caught exception.
+
+        Parameters
+        ----------
+        method
+            BigQuery method name.
+        project
+            GCP project ID.
+        exc
+            Underlying exception.
+        """
+        return cls(method=method, project=project, error=str(exc))
+
+
+class BigQueryApiFailedError(BigQueryApiError, BackendApiFailedError):
+    """A BigQuery API request returned a failure status.
+
+    This represents a query that BigQuery rejected or returned an error for.
+
+    Attributes
+    ----------
+    error_message
+        Error message from BigQuery.
+    """
+
+    def __init__(self, method: str, project: str, error: str) -> None:
+        super().__init__(method, project, error)
+        self.error_message = error
+
+    @override
+    def to_slack(self) -> SlackMessage:
+        result = super().to_slack()
+        if self.error_message:
+            block = SlackCodeBlock(heading="Error", code=self.error_message)
+            result.blocks.append(block)
+        return result
+
+    @override
+    def to_sentry(self) -> SentryEventInfo:
+        info = super().to_sentry()
+        if self.error_message:
+            info.contexts["bigquery_error"] = {"error": self.error_message}
+        return info
+
+
+class BigQueryApiProtocolError(BigQueryApiError, BackendApiProtocolError):
+    """A BigQuery API call failed due to protocol or unexpected errors.
+
+    This indicates an unexpected error when communicating with BigQuery,
+    (e.g. malformed responses)
+    """
+
+    error = JobErrorCode.backend_internal_error
+
+
+class BigQueryApiNetworkError(BigQueryApiError, BackendApiNetworkError):
+    """A BigQuery API call failed due to a transient network error."""
+
+
+class QservApiFailedError(QservApiError, BackendApiFailedError):
     """A Qserv API request returned failure.
 
     Parameters
@@ -61,7 +280,7 @@ class QservApiFailedError(QservApiError):
 
     Attributes
     ----------
-    details
+    detail
         Supplemental error details from Qserv.
     error
         Qesrv error.
@@ -113,8 +332,17 @@ class QservApiFailedError(QservApiError):
             info.contexts["qserv_error"] = context
         return info
 
+    @override
+    def to_logging_context(self) -> dict[str, Any]:
+        result = super().to_logging_context()
+        result["method"] = self.method
+        result["url"] = self.url
+        if self.detail:
+            result["detail"] = self.detail
+        return result
 
-class QservApiProtocolError(QservApiError):
+
+class QservApiProtocolError(QservApiError, BackendApiProtocolError):
     """A Qserv REST API returned unexpected results.
 
     Parameters
@@ -156,7 +384,7 @@ class QservApiProtocolError(QservApiError):
         return info
 
 
-class QservApiSqlError(QservApiError):
+class QservApiSqlError(QservApiError, BackendApiSqlError):
     """A SQL request to Qserv failed unexpectedly."""
 
     error = JobErrorCode.backend_sql_error
@@ -182,7 +410,7 @@ class QservApiSqlError(QservApiError):
         return cls(f"SQL query error: {msg}")
 
 
-class QservApiWebError(SlackWebException, QservApiError):
+class QservApiWebError(QservApiError, BackendApiWebError):
     """A web request to Qserv failed at the HTTP protocol level."""
 
     error = JobErrorCode.backend_request_error

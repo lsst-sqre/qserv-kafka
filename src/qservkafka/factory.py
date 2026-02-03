@@ -32,7 +32,13 @@ from .events import Events
 from .models.state import RunningQuery
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
-from .services.results import ResultProcessor
+from .services.results import (
+    BigQueryResultProcessor,
+    QservResultProcessor,
+    ResultProcessor,
+)
+from .storage.backend import BackendType, DatabaseBackend
+from .storage.bigquery import BigQueryClient
 from .storage.gafaelfawr import GafaelfawrStorage
 from .storage.qserv import QservClient
 from .storage.rate import RateLimitStore
@@ -57,11 +63,11 @@ class ProcessContext:
     discovery_client: DiscoveryClient
     """Shared service discovery client."""
 
-    engine: AsyncEngine
-    """Database engine."""
+    engine: AsyncEngine | None
+    """Database engine (only for Qserv backend)."""
 
-    sessionmaker: async_sessionmaker
-    """Factory for database sessions."""
+    sessionmaker: async_sessionmaker | None
+    """Factory for database sessions (only for Qserv backend)."""
 
     kafka_broker: KafkaBroker
     """Kafka broker to use for publishing messages from background jobs."""
@@ -105,25 +111,94 @@ class ProcessContext:
             Shared context for a Qserv Kafka bridge process.
         """
         logger = get_logger("qservkafka")
-        if not qserv_database_pool_size:
-            qserv_database_pool_size = config.qserv_database_pool_size
 
-        # Qserv currently uses a self-signed certificate.
-        limits = Limits(max_connections=config.qserv_rest_max_connections)
-        http_client = AsyncClient(
-            timeout=config.qserv_rest_timeout.total_seconds(),
-            limits=limits,
-            verify=False,  # noqa: S501
-        )
-
-        # Qserv uses a self-signed certificate with no known certificate
-        # chain. We do not use TLS to validate the identity of the server.
-        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
+        # Create HTTP client and SSL context with backend-specific config.
+        http_client = cls._create_http_client()
+        ssl_context = cls._create_ssl_context()
 
         # Create a Redis client pool with exponential backoff and the state
         # store that stores job state in Redis.
+        redis_client = cls._create_redis_client()
+
+        # Create the database engine (only for Qserv backend).
+        engine, sessionmaker = cls._create_database_engine(
+            ssl_context, qserv_database_pool_size
+        )
+
+        # Create a Kafka broker used for background tasks. This needs to be a
+        # separate broker from the one used by handlers, since the one used by
+        # handlers will be shut down when SIGTERM is retrieved, thus
+        # preventing the Qserv Kafka bridge from completing any result
+        # processing that is still running.
+        if not kafka_broker:
+            kafka_broker = KafkaBroker(
+                client_id="qserv-kafka", **config.kafka.to_faststream_params()
+            )
+        await kafka_broker.connect()
+
+        event_manager = config.metrics.make_manager(kafka_broker=kafka_broker)
+        await event_manager.initialize()
+        events = Events()
+        await events.initialize(event_manager)
+
+        slack_client = cls._create_slack_client(logger)
+        discovery_client = DiscoveryClient(http_client)
+        gafaelfawr = GafaelfawrStorage(
+            http_client=http_client,
+            discovery_client=discovery_client,
+            slack_client=slack_client,
+            logger=logger,
+        )
+
+        return cls(
+            http_client=http_client,
+            discovery_client=discovery_client,
+            engine=engine,
+            sessionmaker=sessionmaker,
+            kafka_broker=kafka_broker,
+            event_manager=event_manager,
+            slack_client=slack_client,
+            gafaelfawr=gafaelfawr,
+            events=events,
+            redis=redis_client,
+        )
+
+    @classmethod
+    def _create_http_client(cls) -> AsyncClient:
+        """Create the shared HTTP client with backend-specific config."""
+        match config.backend:
+            case BackendType.QSERV:
+                # Qserv uses a self-signed certificate.
+                limits = Limits(
+                    max_connections=config.qserv_rest_max_connections
+                )
+                return AsyncClient(
+                    timeout=config.backend_api_timeout.total_seconds(),
+                    limits=limits,
+                    verify=False,  # noqa: S501
+                )
+            case BackendType.BIGQUERY:
+                # BigQuery uses standard HTTPS.
+                return AsyncClient()
+
+    @classmethod
+    def _create_ssl_context(cls) -> ssl.SSLContext | None:
+        """Create SSL context for database connections (Qserv only)."""
+        match config.backend:
+            case BackendType.QSERV:
+                # Qserv uses a self-signed certificate with no known
+                # certificate chain. We do not use TLS to validate the
+                # identity of the server.
+                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                return ssl_context
+            case BackendType.BIGQUERY:
+                return None
+
+    @classmethod
+    def _create_redis_client(cls) -> Redis:
+        """Create the Redis client pool with exponential backoff."""
         redis_password = config.redis_password.get_secret_value()
         backoff = ExponentialBackoff(
             base=REDIS_BACKOFF_START, cap=REDIS_BACKOFF_MAX
@@ -138,74 +213,56 @@ class ProcessContext:
             socket_timeout=REDIS_TIMEOUT,
             timeout=REDIS_POOL_TIMEOUT,
         )
-        redis_client = Redis.from_pool(redis_pool)
+        return Redis.from_pool(redis_pool)
 
-        # Create the database engine.
-        engine = create_database_engine(
-            str(config.qserv_database_url),
-            config.qserv_database_password,
-            connect_args={
-                "ssl": ssl_context,
-                "connect_timeout": config.qserv_database_connect_timeout,
-                "read_timeout": config.qserv_database_read_timeout,
-            },
-            max_overflow=config.qserv_database_overflow,
-            pool_size=qserv_database_pool_size,
-        )
+    @classmethod
+    def _create_database_engine(
+        cls,
+        ssl_context: ssl.SSLContext | None,
+        pool_size_override: int | None,
+    ) -> tuple[AsyncEngine | None, async_sessionmaker | None]:
+        """Create the database engine and sessionmaker (Qserv only)."""
+        match config.backend:
+            case BackendType.QSERV:
+                if config.qserv_database_url is None:
+                    msg = "qserv_database_url is required for Qserv backend"
+                    raise ValueError(msg)
+                pool_size = (
+                    pool_size_override or config.qserv_database_pool_size
+                )
+                connect_args = {
+                    "ssl": ssl_context,
+                    "connect_timeout": config.qserv_database_connect_timeout,
+                    "read_timeout": config.qserv_database_read_timeout,
+                }
+                engine = create_database_engine(
+                    str(config.qserv_database_url),
+                    config.qserv_database_password,
+                    connect_args=connect_args,
+                    max_overflow=config.qserv_database_overflow,
+                    pool_size=pool_size,
+                )
+                sessionmaker = async_sessionmaker(
+                    engine, expire_on_commit=False
+                )
+                return engine, sessionmaker
+            case BackendType.BIGQUERY:
+                return None, None
 
-        # Create a Kafka broker used for background tasks. This needs to be a
-        # separate broker from the one used by handlers, since the one used by
-        # handlers will be shut down when SIGTERM is retrieved, thus
-        # preventing the Qserv Kafka bridge from completing any result
-        # processing that is still running.
-        if not kafka_broker:
-            kafka_broker = KafkaBroker(
-                client_id="qserv-kafka", **config.kafka.to_faststream_params()
-            )
-        await kafka_broker.connect()
-
-        # Create an event manager for posting metrics events.
-        event_manager = config.metrics.make_manager(kafka_broker=kafka_broker)
-        await event_manager.initialize()
-        events = Events()
-        await events.initialize(event_manager)
-
-        # Create a Slack client for notifying on errors
-        if config.slack.enabled:
-            if config.slack.webhook is None:
-                msg = "Slack: if enabled is true, then webhook must be set"
-                raise RuntimeError(msg)
-            slack_client = SlackWebhookClient(
-                hook_url=config.slack.webhook,
-                application="qserv-kafka",
-                logger=logger,
-            )
-        else:
-            slack_client = None
-
-        # Create a shared caching service discovery client.
-        discovery_client = DiscoveryClient(http_client)
-
-        # Create a shared caching Gafaelfawr client.
-        gafaelfawr = GafaelfawrStorage(
-            http_client=http_client,
-            discovery_client=discovery_client,
-            slack_client=slack_client,
+    @classmethod
+    def _create_slack_client(
+        cls, logger: BoundLogger
+    ) -> SlackWebhookClient | None:
+        """Create the Slack client for error notifications."""
+        if not config.slack.enabled:
+            return None
+        if config.slack.webhook is None:
+            msg = "Slack: if enabled is true, then webhook must be set"
+            raise RuntimeError(msg)
+        return SlackWebhookClient(
+            hook_url=config.slack.webhook,
+            application="qserv-kafka",
             logger=logger,
-        )
-
-        # Return the newly-constructed context.
-        return cls(
-            http_client=http_client,
-            discovery_client=discovery_client,
-            engine=engine,
-            sessionmaker=async_sessionmaker(engine, expire_on_commit=False),
-            kafka_broker=kafka_broker,
-            event_manager=event_manager,
-            slack_client=slack_client,
-            gafaelfawr=gafaelfawr,
-            events=events,
-            redis=redis_client,
         )
 
     async def aclose(self) -> None:
@@ -217,7 +274,8 @@ class ProcessContext:
         await self.event_manager.aclose()
         await self.kafka_broker.stop()
         await self.redis.aclose()
-        await self.engine.dispose()
+        if self.engine is not None:
+            await self.engine.dispose()
         await self.http_client.aclose()
 
 
@@ -254,12 +312,12 @@ class Factory:
         return self._context.gafaelfawr
 
     async def create_background_task_manager(self) -> BackgroundTaskManager:
-        """Create the background task manager to monitor qserv jobs.
+        """Create the background task manager to monitor Qserv jobs.
 
         Returns
         -------
         BackgroundTaskManager
-            Manager for periodically checking the status of qserv jobs.
+            Manager for periodically checking the status of Qserv jobs.
         """
         monitor = await self.create_query_monitor()
         return BackgroundTaskManager(
@@ -281,21 +339,41 @@ class Factory:
         )
         return QueryStateStore(redis_storage, self._logger)
 
-    def create_qserv_client(self) -> QservClient:
-        """Create a client for talking to the Qserv API.
+    def create_backend_client(self) -> DatabaseBackend:
+        """Create a client for the configured database backend.
 
         Returns
         -------
-        QservClient
-            Client for the Qserv API.
+        DatabaseBackend
+            Client for the database backend (Qserv or BigQuery).
+
+        Raises
+        ------
+        ValueError
+            If the backend type is not supported or required configuration
+            is missing.
         """
-        return QservClient(
-            sessionmaker=self._context.sessionmaker,
-            http_client=self._context.http_client,
-            events=self._context.events,
-            slack_client=self._context.slack_client,
-            logger=self._logger,
-        )
+        match config.backend:
+            case BackendType.QSERV:
+                if self._context.sessionmaker is None:
+                    msg = "sessionmaker is required for Qserv backend"
+                    raise ValueError(msg)
+                return QservClient(
+                    sessionmaker=self._context.sessionmaker,
+                    http_client=self._context.http_client,
+                    events=self._context.events,
+                    slack_client=self._context.slack_client,
+                    logger=self._logger,
+                )
+            case BackendType.BIGQUERY:
+                return BigQueryClient(
+                    project=config.bigquery_project,
+                    location=config.bigquery_location,
+                    http_client=self._context.http_client,
+                    events=self._context.events,
+                    slack_client=self._context.slack_client,
+                    logger=self._logger,
+                )
 
     async def create_query_monitor(self) -> QueryMonitor:
         """Create the singleton monitor for query status.
@@ -316,7 +394,7 @@ class Factory:
             arq_queue = MockArqQueue()
         return QueryMonitor(
             result_processor=self.create_result_processor(),
-            qserv_client=self.create_qserv_client(),
+            backend=self.create_backend_client(),
             arq_queue=arq_queue,
             state_store=self.create_query_state_store(),
             rate_limit_store=self.create_rate_limit_store(),
@@ -338,7 +416,7 @@ class Factory:
             New service to start queries.
         """
         return QueryService(
-            qserv_client=self.create_qserv_client(),
+            backend=self.create_backend_client(),
             state_store=self.create_query_state_store(),
             result_processor=self.create_result_processor(),
             rate_limit_store=self.create_rate_limit_store(),
@@ -354,10 +432,20 @@ class Factory:
         Returns
         -------
         ResultProcessor
-            New service to process a completed query.
+            New service to process a completed query. Returns the appropriate
+            subclass based on the configured backend.
         """
-        return ResultProcessor(
-            qserv_client=self.create_qserv_client(),
+        processor_class: type[ResultProcessor]
+        match config.backend:
+            case BackendType.QSERV:
+                processor_class = QservResultProcessor
+            case BackendType.BIGQUERY:
+                processor_class = BigQueryResultProcessor
+            case _:
+                raise ValueError(f"Unsupported backend type: {config.backend}")
+
+        return processor_class(
+            backend=self.create_backend_client(),
             state_store=self.create_query_state_store(),
             votable_writer=VOTableWriter(
                 self._context.http_client,

@@ -11,7 +11,7 @@ from collections.abc import (
 from copy import copy
 from datetime import UTC, datetime, timedelta
 from functools import wraps
-from typing import Any, Concatenate, Protocol, overload
+from typing import Any, Concatenate, Protocol, overload, override
 
 from httpx import AsyncClient, HTTPError, Response
 from pydantic import BaseModel, ValidationError
@@ -34,16 +34,16 @@ from ..exceptions import (
     TableUploadWebError,
 )
 from ..models.kafka import JobRun, JobTableUpload
+from ..models.progress import ChunkProgress
 from ..models.qserv import (
-    AsyncProcessStatus,
-    AsyncQueryPhase,
-    AsyncQueryStatus,
-    AsyncStatusResponse,
     AsyncSubmitRequest,
     AsyncSubmitResponse,
     BaseResponse,
+    QservStatusResponse,
     TableUploadStats,
 )
+from ..models.query import AsyncQueryPhase, ProcessStatus, QservQueryStatus
+from .backend import DatabaseBackend
 
 API_VERSION = 51
 """Version of the REST API that this client requests."""
@@ -146,11 +146,11 @@ def _retry[**P, T, C: _QservClientProtocol](
         async def retry_wrapper(
             client: C, *args: P.args, **kwargs: P.kwargs
         ) -> T:
-            for _ in range(1, config.qserv_retry_count):
+            for _ in range(1, config.backend_retry_count):
                 try:
                     return await f(client, *args, **kwargs)
                 except (QservApiSqlError, SlackWebException):
-                    delay = config.qserv_retry_delay.total_seconds()
+                    delay = config.backend_retry_delay.total_seconds()
                     msg = f"Qserv API call failed, retrying after {delay}s"
 
                     # We don't want to notify Sentry or Slack about exceptions
@@ -177,7 +177,7 @@ def _retry[**P, T, C: _QservClientProtocol](
         return retry_decorator
 
 
-class QservClient:
+class QservClient(DatabaseBackend):
     """Client for the Qserv API.
 
     Only the routes and queries needed by the Qserv Kafka bridge are
@@ -225,64 +225,28 @@ class QservClient:
         self._sessionmaker = sessionmaker
         self._client = http_client
 
-    async def cancel_query(self, query_id: int) -> None:
-        """Cancel a running query.
-
-        Parameters
-        ----------
-        query_id
-            Identifier of the query.
-
-        Raises
-        ------
-        QservApiError
-            Raised if there was some error canceling the query.
-        """
+    @override
+    async def cancel_query(self, query_id: str) -> None:
         await self._delete(f"/query-async/{query_id}")
 
-    async def delete_result(self, query_id: int) -> None:
+    @override
+    async def delete_result(self, query_id: str) -> None:
         """Delete the results of a query.
 
+        Notes
+        -----
         This should be called after the results have been successfully
         retrieved, although it is not a disaster if it's not called. The
         results will be automatically garbage-collected after some time.
-
-        Parameters
-        ----------
-        query_id
-            Identifier of the query.
-
-        Raises
-        ------
-        QservApiError
-            Raised if there was some error deleting the results.
         """
         await self._delete(f"/query-async/result/{query_id}")
 
     async def delete_table(self, database: str, table: str) -> None:
-        """Delete a user table.
-
-        Parameters
-        ----------
-        database
-            Name of the database (normally :samp:`user_{username}`).
-        table
-            Name of the table.
-
-        Raises
-        ------
-        QservApiError
-            Raised if there was some error deleting the table.
-        """
         await self._delete(f"/ingest/table/{database}/{table}")
 
+    @override
     async def delete_database(self, database: str) -> None:
         """Delete a user database.
-
-        Parameters
-        ----------
-        database
-            Name of the database.
 
         Notes
         -----
@@ -296,44 +260,27 @@ class QservClient:
         With a short lived database for each upload, we can delete the entire
         temporary database oncd the job is completed and not have to worry
         about interactions with other queries.
-
-        Raises
-        ------
-        QservApiError
-            Raised if there was some error deleting the database.
         """
         await self._delete(f"/ingest/database/{database}")
 
+    @override
     async def get_query_results_gen(
-        self, query_id: int
+        self, query_id: str
     ) -> AsyncGenerator[Row[Any]]:
         """Get an async iterator for the results of a query.
 
+        Notes
+        -----
         Qserv discards the results after they're retrieved, so be aware that
         the results may not be available once this method has been called once
         for a given query.
-
-        Parameters
-        ----------
-        query_id
-            Identifier of the query.
-
-        Returns
-        -------
-        collections.abc.AsyncIterator
-            Iterator over the rows of the query results.
-
-        Raises
-        ------
-        QservApiSqlError
-            Raised if there was some error retrieving results.
         """
         stmt = text(_query_results_sql())
         results = None
         try:
             async with self._sessionmaker() as session:
                 async with session.begin():
-                    results = await session.stream(stmt, {"id": query_id})
+                    results = await session.stream(stmt, {"id": int(query_id)})
                     results = results.yield_per(100)
                     try:
                         async for result in results:
@@ -343,37 +290,15 @@ class QservClient:
         except SQLAlchemyError as e:
             raise QservApiSqlError.from_exception(e) from e
 
-    async def get_query_status(self, query_id: int) -> AsyncQueryStatus:
-        """Query for the status of an async job.
-
-        Parameters
-        ----------
-        query_id
-            Identifier of the query.
-
-        Returns
-        -------
-        AsyncStatusResponse
-            Status of the query.
-        """
+    @override
+    async def get_query_status(self, query_id: str) -> QservQueryStatus:
         url = f"/query-async/status/{query_id}"
-        result = await self._get(url, {}, AsyncStatusResponse)
-        return result.status
+        result = await self._get(url, {}, QservStatusResponse)
+        return result.status.to_query_status()
 
+    @override
     @_retry(qserv_protocol=QservProtocol.SQL)
-    async def list_running_queries(self) -> dict[int, AsyncProcessStatus]:
-        """Return information about all running queries.
-
-        Returns
-        -------
-        dict of AsyncQueryStatus
-            Mapping from query ID to information about a running query.
-
-        Raises
-        ------
-        QservApiSqlError
-            Raised if there was some error retrieving status.
-        """
+    async def list_running_queries(self) -> dict[str, ProcessStatus]:
         try:
             async with self._sessionmaker() as session:
                 async with session.begin():
@@ -383,12 +308,12 @@ class QservClient:
                         async for row in result:
                             msg = "Saw running query"
                             self.logger.debug(msg, query=row._asdict())
-                            processes[row.id] = AsyncProcessStatus(
-                                query_id=row.id,
+                            processes[str(row.id)] = ProcessStatus(
                                 status=AsyncQueryPhase.EXECUTING,
-                                total_chunks=row.chunks,
-                                completed_chunks=row.chunks_comp,
-                                query_begin=datetime_from_db(row.submitted),
+                                progress=ChunkProgress(
+                                    total_chunks=row.chunks,
+                                    completed_chunks=row.chunks_comp,
+                                ),
                                 last_update=datetime_from_db(row.updated),
                             )
                     finally:
@@ -398,48 +323,14 @@ class QservClient:
         self.logger.debug("Listed running queries", count=len(processes))
         return processes
 
-    async def submit_query(self, job: JobRun) -> int:
-        """Submit an async query to Qserv.
-
-        Parameters
-        ----------
-        job
-            Query job run request from the user via Kafka.
-
-        Returns
-        -------
-        int
-            Qserv identifier of the query.
-
-        Raises
-        ------
-        QservApiError
-            Raised if something failed when attempting to submit the job.
-        """
+    @override
+    async def submit_query(self, job: JobRun) -> str:
         request = AsyncSubmitRequest(query=job.query, database=job.database)
         result = await self._post("/query-async", request, AsyncSubmitResponse)
-        return result.query_id
+        return str(result.query_id)
 
+    @override
     async def upload_table(self, upload: JobTableUpload) -> TableUploadStats:
-        """Upload a table to Qserv.
-
-        Parameters
-        ----------
-        upload
-            Table to upload.
-
-        Returns
-        -------
-        TableUploadStats
-            Statistics about the uploaded table.
-
-        Raises
-        ------
-        QservApiError
-            Raised if something failed when uploading the table.
-        TableUploadWebError
-            Raised if retrieving the uploaded table or schema failed.
-        """
         schema = await self._get_table(upload.schema_url)
         source = await self._get_table(upload.source_url)
         start = datetime.now(tz=UTC)

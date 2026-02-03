@@ -133,10 +133,10 @@ async def wait_for_dispatch(
 
     # Use polling of Redis, since subscribing to key updates in Redis is
     # complicated enough that I don't feel like writing all that code.
-    poll_delay = config.qserv_poll_interval.total_seconds() / 2
+    poll_delay = config.backend_poll_interval.total_seconds() / 2
     async with asyncio.timeout(timeout.total_seconds()):
         while True:
-            query = await state_store.get_query(query_id)
+            query = await state_store.get_query(str(query_id))
             assert query
             if query.result_queued:
                 return

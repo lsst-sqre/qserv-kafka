@@ -1,8 +1,10 @@
 """Processing of completed queries."""
 
 import asyncio
+from abc import ABC, abstractmethod
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import override
 
 from faststream.kafka import KafkaBroker
 from safir.sentry import report_exception
@@ -12,33 +14,44 @@ from vo_models.uws.types import ExecutionPhase
 
 from ..config import config
 from ..events import (
+    BigQueryFailureEvent,
+    BigQuerySuccessEvent,
     Events,
     QservFailureEvent,
     QservProtocol,
+    QservSuccessEvent,
     QueryAbortEvent,
     QueryFailureEvent,
     QuerySuccessEvent,
 )
-from ..exceptions import QservApiError, QservApiSqlError, UploadWebError
+from ..exceptions import (
+    BackendApiError,
+    BackendApiTransientError,
+    UploadWebError,
+)
 from ..models.kafka import JobError, JobErrorCode, JobResultInfo, JobStatus
-from ..models.qserv import AsyncQueryPhase
+from ..models.query import AsyncQueryPhase
 from ..models.state import Query, RunningQuery
 from ..models.votable import UploadStats
-from ..storage.qserv import QservClient
+from ..storage.backend import DatabaseBackend
 from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from ..storage.votable import VOTableWriter
 
-__all__ = ["ResultProcessor"]
+__all__ = [
+    "BigQueryResultProcessor",
+    "QservResultProcessor",
+    "ResultProcessor",
+]
 
 
-class ResultProcessor:
+class ResultProcessor(ABC):
     """Process the results of a completed query.
 
     Parameters
     ----------
-    qserv_client
-        Client to talk to the Qserv REST API.
+    backend
+        Database backend client (Qserv, BigQuery, etc.).
     state_store
         Storage for query state.
     votable_writer
@@ -58,7 +71,7 @@ class ResultProcessor:
     def __init__(
         self,
         *,
-        qserv_client: QservClient,
+        backend: DatabaseBackend,
         state_store: QueryStateStore,
         votable_writer: VOTableWriter,
         kafka_broker: KafkaBroker,
@@ -67,7 +80,7 @@ class ResultProcessor:
         slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
     ) -> None:
-        self._qserv = qserv_client
+        self._backend = backend
         self._state = state_store
         self._votable = votable_writer
         self._kafka = kafka_broker
@@ -92,7 +105,7 @@ class ResultProcessor:
         self._logger.debug("Query is executing", **query.to_logging_context())
         return JobStatus(
             job_id=query.job.job_id,
-            execution_id=str(query.status.query_id),
+            execution_id=str(query.query_id),
             timestamp=query.status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.EXECUTING,
             query_info=query.to_job_query_info(),
@@ -125,8 +138,8 @@ class ResultProcessor:
 
         # Get the current query status.
         try:
-            status = await self._qserv.get_query_status(query.query_id)
-        except QservApiError as e:
+            status = await self._backend.get_query_status(query.query_id)
+        except BackendApiError as e:
             await report_exception(e, slack_client=self._slack_client)
             logger.exception("Unable to get job status", error=str(e))
             update = JobStatus(
@@ -155,7 +168,7 @@ class ResultProcessor:
                 result = await self._build_completed_status(
                     full_query, initial=initial
                 )
-            case AsyncQueryPhase.FAILED | AsyncQueryPhase.FAILED_LR:
+            case AsyncQueryPhase.FAILED:
                 result = await self._build_failed_status(full_query)
 
         # Query was completed, either successfully or unsuccessfully. Delete
@@ -177,6 +190,47 @@ class ResultProcessor:
             config.job_status_topic,
             headers={"Content-Type": "application/json"},
         )
+
+    @abstractmethod
+    async def publish_success_event(
+        self,
+        *,
+        query: RunningQuery,
+        stats: UploadStats,
+        elapsed: timedelta,
+        backend_elapsed: timedelta,
+        backend_rate: float | None,
+        delete_elapsed: timedelta | None,
+        initial: bool,
+    ) -> QuerySuccessEvent:
+        """Publish backend-specific success event.
+
+        Parameters
+        ----------
+        query
+            Query metadata.
+        stats
+            Upload statistics.
+        elapsed
+            Total elapsed time.
+        backend_elapsed
+            Time spent in backend.
+        backend_rate
+            Backend processing rate (bytes/sec).
+        delete_elapsed
+            Time spent deleting results.
+        initial
+            Whether this was immediate completion.
+
+        Returns
+        -------
+        QuerySuccessEvent
+            The published event for logging.
+        """
+
+    @abstractmethod
+    async def _publish_backend_failure_event(self) -> None:
+        """Publish backend-specific failure event during retry."""
 
     async def _build_aborted_status(self, query: RunningQuery) -> JobStatus:
         """Construct the status for an aborted job.
@@ -201,7 +255,7 @@ class ResultProcessor:
         await self._events.query_abort.publish(event)
         return JobStatus(
             job_id=query.job.job_id,
-            execution_id=str(query.status.query_id),
+            execution_id=str(query.query_id),
             timestamp=query.status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.ABORTED,
             query_info=query.to_job_query_info(finished=True),
@@ -216,7 +270,7 @@ class ResultProcessor:
     ) -> JobStatus:
         """Retrieve results and construct status for a completed job.
 
-        This method is responsible for retrieving the results from Qserv,
+        This method is responsible for retrieving the results from the backend,
         encoding them, and uploading the resulting VOTable to the provided
         URL, as well as constructing the status response.
 
@@ -239,7 +293,7 @@ class ResultProcessor:
         # Retrieve and upload the results.
         try:
             stats = await self._upload_results_with_retry(query, logger)
-        except (QservApiError, UploadWebError, TimeoutError) as e:
+        except (BackendApiError, UploadWebError, TimeoutError) as e:
             return await self._build_exception_status(query, e)
 
         # Delete the results if configured to do so.
@@ -247,42 +301,33 @@ class ResultProcessor:
         if config.qserv_delete_queries:
             delete_start = datetime.now(tz=UTC)
             try:
-                await self._qserv.delete_result(query.query_id)
-            except QservApiError as e:
+                await self._backend.delete_result(query.query_id)
+                delete_elapsed = datetime.now(tz=UTC) - delete_start
+            except BackendApiError as e:
+                delete_elapsed = None
                 await report_exception(e, slack_client=self._slack_client)
                 logger.exception("Cannot delete results")
             delete_elapsed = datetime.now(tz=UTC) - delete_start
 
         # Send a metrics event for the job completion and log it.
         now = datetime.now(tz=UTC)
-        qserv_end = query.status.last_update or now
-        qserv_elapsed = qserv_end - query.status.query_begin
-        qserv_elapsed_sec = int(qserv_elapsed.total_seconds())
-        if qserv_elapsed.total_seconds() > 0:
-            qserv_rate = query.status.collected_bytes / qserv_elapsed_sec
+        backend_end = query.status.last_update or now
+        backend_elapsed = backend_end - query.status.query_begin
+        backend_elapsed_sec = backend_elapsed.total_seconds()
+        if backend_elapsed_sec > 0:
+            backend_rate = query.status.collected_bytes / backend_elapsed_sec
         else:
-            qserv_rate = None
+            backend_rate = None
         elapsed = now - (query.queued or query.start)
-        event = QuerySuccessEvent(
-            job_id=query.job.job_id,
-            username=query.job.owner,
+        event = await self.publish_success_event(
+            query=query,
+            stats=stats,
             elapsed=elapsed,
-            kafka_elapsed=query.start - query.queued if query.queued else None,
-            qserv_elapsed=qserv_elapsed,
-            result_elapsed=stats.elapsed,
-            submit_elapsed=query.created - query.start,
+            backend_elapsed=backend_elapsed,
+            backend_rate=backend_rate,
             delete_elapsed=delete_elapsed,
-            rows=stats.rows,
-            qserv_size=query.status.collected_bytes,
-            encoded_size=stats.data_bytes,
-            result_size=stats.total_bytes,
-            rate=stats.data_bytes / elapsed.total_seconds(),
-            qserv_rate=qserv_rate,
-            result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
-            upload_tables=len(query.job.upload_tables),
-            immediate=initial,
+            initial=initial,
         )
-        await self._events.query_success.publish(event)
         logger.info(
             "Job complete and results uploaded", **event.to_logging_context()
         )
@@ -305,7 +350,7 @@ class ResultProcessor:
     async def _build_exception_status(
         self,
         query: RunningQuery,
-        exc: QservApiError | UploadWebError | TimeoutError,
+        exc: BackendApiError | UploadWebError | TimeoutError,
     ) -> JobStatus:
         """Construct the job status for an exception.
 
@@ -328,7 +373,7 @@ class ResultProcessor:
 
         # Analyze the exception.
         match exc:
-            case QservApiError() | UploadWebError():
+            case BackendApiError() | UploadWebError():
                 if isinstance(exc, UploadWebError):
                     msg = "Unable to upload results"
                 else:
@@ -384,7 +429,7 @@ class ResultProcessor:
             Status for the query.
         """
         metadata = query.job.to_job_metadata()
-        if query.status.status == AsyncQueryPhase.FAILED_LR:
+        if query.status.results_too_large:
             msg = "Query failed in backend because results were too large"
             code = JobErrorCode.backend_results_too_large
             error = (
@@ -412,7 +457,7 @@ class ResultProcessor:
         await self._events.query_failure.publish(event)
         return JobStatus(
             job_id=query.job.job_id,
-            execution_id=str(query.status.query_id),
+            execution_id=str(query.query_id),
             timestamp=query.status.last_update or datetime.now(tz=UTC),
             status=ExecutionPhase.ERROR,
             query_info=query.to_job_query_info(finished=True),
@@ -425,8 +470,8 @@ class ResultProcessor:
     ) -> None:
         """Delete stored information for the query.
 
-        Remove the query from the Qserv Kafka bridge state storage and delete
-        any uploaded temporary tables from Qserv.
+        Remove the query from the Kafka bridge state storage and delete
+        any uploaded temporary tables.
 
         Parameters
         ----------
@@ -442,8 +487,8 @@ class ResultProcessor:
         databases_to_delete = {t.database for t in query.job.upload_tables}
         for database in databases_to_delete:
             try:
-                await self._qserv.delete_database(database)
-            except QservApiError as e:
+                await self._backend.delete_database(database)
+            except BackendApiError as e:
                 await report_exception(e, slack_client=self._slack_client)
                 logger.exception(
                     "Unable to delete temporary database, orphaning it",
@@ -466,9 +511,9 @@ class ResultProcessor:
 
         Raises
         ------
-        QservApiSqlError
-            Raised if there was a failure retrieving the results via the
-            SQL database connection.
+        BackendApiTransientError
+            Raised if there was a transient failure retrieving results from
+            the backend.
         UploadWebError
             Raised if there was a failure to upload the results.
         TimeoutError
@@ -476,7 +521,7 @@ class ResultProcessor:
             configured timeout.
         """
         result_start = datetime.now(tz=UTC)
-        results = self._qserv.get_query_results_gen(query.query_id)
+        results = self._backend.get_query_results_gen(query.query_id)
         timeout = config.result_timeout.total_seconds()
 
         async with asyncio.timeout(timeout):
@@ -496,7 +541,7 @@ class ResultProcessor:
         """Retrieve and upload the results, with retries.
 
         Retry the attempt to retrieve and upload the results on SQL or HTTP
-        error to work around flaky connections to Qserv (and the occasional
+        error to work around flaky connections to backend (and the occasional
         GCS hiccup). This cannot use the retry logic at the storage level
         since the SQL call and the HTTP call have to be coordinated.
 
@@ -514,24 +559,23 @@ class ResultProcessor:
 
         Raises
         ------
-        QservApiSqlError
-            Raised if there was a failure retrieving the results via the
-            SQL database connection.
+        BackendApiTransientError
+            Raised if there was a transient failure retrieving results from
+            the backend.
         UploadWebError
             Raised if there was a failure to upload the results.
         TimeoutError
             Raised if the processing and upload did not complete within the
             configured timeout.
         """
-        for _ in range(1, config.qserv_retry_count):
+        for _ in range(1, config.backend_retry_count):
             try:
                 return await self._upload_results(query)
-            except (QservApiSqlError, UploadWebError) as e:
-                delay = config.qserv_retry_delay.total_seconds()
-                if isinstance(e, QservApiSqlError):
-                    msg = f"SQL call to Qserv failed, retrying after {delay}s"
-                    event = QservFailureEvent(protocol=QservProtocol.SQL)
-                    await self._events.qserv_failure.publish(event)
+            except (BackendApiTransientError, UploadWebError) as e:
+                delay = config.backend_retry_delay.total_seconds()
+                if isinstance(e, BackendApiTransientError):
+                    await self._publish_backend_failure_event()
+                    msg = f"Backend call failed, retrying after {delay}s"
                 else:
                     msg = f"Upload of results failed, retrying after {delay}s"
 
@@ -544,7 +588,98 @@ class ResultProcessor:
         # re-raising the exception.
         try:
             return await self._upload_results(query)
-        except QservApiSqlError:
-            event = QservFailureEvent(protocol=QservProtocol.SQL)
-            await self._events.qserv_failure.publish(event)
+        except BackendApiTransientError:
+            await self._publish_backend_failure_event()
             raise
+
+
+class QservResultProcessor(ResultProcessor):
+    """Result processor for Qserv backend.
+
+    Publishes Qserv-specific metrics events.
+    """
+
+    @override
+    async def publish_success_event(
+        self,
+        *,
+        query: RunningQuery,
+        stats: UploadStats,
+        elapsed: timedelta,
+        backend_elapsed: timedelta,
+        backend_rate: float | None,
+        delete_elapsed: timedelta | None,
+        initial: bool,
+    ) -> QservSuccessEvent:
+        event = QservSuccessEvent(
+            job_id=query.job.job_id,
+            username=query.job.owner,
+            elapsed=elapsed,
+            kafka_elapsed=query.start - query.queued if query.queued else None,
+            backend_elapsed=backend_elapsed,
+            result_elapsed=stats.elapsed,
+            submit_elapsed=query.created - query.start,
+            delete_elapsed=delete_elapsed,
+            rows=stats.rows,
+            backend_size=query.status.collected_bytes,
+            encoded_size=stats.data_bytes,
+            result_size=stats.total_bytes,
+            rate=stats.data_bytes / elapsed.total_seconds(),
+            backend_rate=backend_rate,
+            result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
+            upload_tables=len(query.job.upload_tables),
+            immediate=initial,
+        )
+        await self._events.qserv_success.publish(event)
+        return event
+
+    @override
+    async def _publish_backend_failure_event(self) -> None:
+        event = QservFailureEvent(protocol=QservProtocol.SQL)
+        await self._events.qserv_failure.publish(event)
+
+
+class BigQueryResultProcessor(ResultProcessor):
+    """Result processor for BigQuery backend.
+
+    Publishes BigQuery-specific metrics events.
+    """
+
+    @override
+    async def publish_success_event(
+        self,
+        *,
+        query: RunningQuery,
+        stats: UploadStats,
+        elapsed: timedelta,
+        backend_elapsed: timedelta,
+        backend_rate: float | None,
+        delete_elapsed: timedelta | None,
+        initial: bool,
+    ) -> BigQuerySuccessEvent:
+        event = BigQuerySuccessEvent(
+            job_id=query.job.job_id,
+            username=query.job.owner,
+            elapsed=elapsed,
+            kafka_elapsed=query.start - query.queued if query.queued else None,
+            backend_elapsed=backend_elapsed,
+            result_elapsed=stats.elapsed,
+            submit_elapsed=query.created - query.start,
+            delete_elapsed=delete_elapsed,
+            rows=stats.rows,
+            backend_size=query.status.collected_bytes,
+            backend_rate=backend_rate,
+            encoded_size=stats.data_bytes,
+            result_size=stats.total_bytes,
+            rate=stats.data_bytes / elapsed.total_seconds(),
+            result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
+            upload_tables=len(query.job.upload_tables),
+            immediate=initial,
+        )
+        await self._events.bigquery_success.publish(event)
+        return event
+
+    @override
+    async def _publish_backend_failure_event(self) -> None:
+        event = BigQueryFailureEvent()
+        await self._events.bigquery_failure.publish(event)
