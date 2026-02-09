@@ -7,6 +7,20 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-4.3.0'></a>
+## 4.3.0 (2026-02-09)
+
+### New features
+
+- Add support for Google BigQuery as a database backend using its REST API. The database backend, either BigQuery (new) or Qsev (existing), is selected via the new `backend` query parameter.
+
+### Other changes
+
+- Split the `query_success` metrics event into backend-specific events (`qserv_success` and `bigquery_success`). Both use generic field names (`backend_elapsed`, `backend_size`, `backend_rate`) for backend timing and size metrics.
+- Split the protocol failure metrics event into `qserv_failure` and `bigquery_failure`.
+- Add timeouts to database engine in factory. Used to address issue with monitor SQL query not returning.
+- Log a warning when query state is not found in worker during query result handling.
+
 <a id='changelog-4.2.1'></a>
 ## 4.2.1 (2026-01-06)
 
