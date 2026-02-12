@@ -311,8 +311,8 @@ class QservClient(DatabaseBackend):
                             processes[str(row.id)] = ProcessStatus(
                                 status=AsyncQueryPhase.EXECUTING,
                                 progress=ChunkProgress(
-                                    total_chunks=row.chunks,
-                                    completed_chunks=row.chunks_comp,
+                                    total_chunks=row.chunks or 0,
+                                    completed_chunks=row.chunks_comp or 0,
                                 ),
                                 last_update=datetime_from_db(row.updated),
                             )

@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from typing import Annotated, Any, Self, override
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from safir.datetime import format_datetime_for_logging
 
 from .kafka import JobQueryInfo, JobRun
@@ -51,6 +51,31 @@ class RunningQuery(Query):
     result_queued: Annotated[
         bool, Field(title="Whether queued for result procesing")
     ]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_old_schema(cls, data: Any) -> Any:
+        """Accept data stored by versions prior to 4.3.0.
+        The backend abstractions changed in 4.3.0, so the query_id and status
+        fields may be in different formats.
+        This validator converts the old formats to the new ones.
+        """
+        if not isinstance(data, dict):
+            return data
+        if isinstance(data.get("query_id"), int):
+            data["query_id"] = str(data["query_id"])
+        status = data.get("status")
+        if isinstance(status, dict) and "backend_type" not in status:
+            status["backend_type"] = "Qserv"
+            if isinstance(status.get("query_id"), int):
+                status["query_id"] = str(status["query_id"])
+            total = status.pop("total_chunks", 0) or 0
+            completed = status.pop("completed_chunks", 0) or 0
+            status["chunk_progress"] = {
+                "total_chunks": total,
+                "completed_chunks": completed,
+            }
+        return data
 
     @classmethod
     def from_query(cls, query: Query, status: QueryStatus) -> Self:
