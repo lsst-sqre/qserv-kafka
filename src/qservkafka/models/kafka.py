@@ -21,9 +21,11 @@ from .votable import VOTableArraySize, VOTablePrimitive
 type DatetimeMillis = Annotated[
     datetime,
     BeforeValidator(
-        lambda t: t
-        if not isinstance(t, float)
-        else datetime.fromtimestamp(t / 1000, tz=UTC)
+        lambda t: (
+            t
+            if not isinstance(t, float)
+            else datetime.fromtimestamp(t / 1000, tz=UTC)
+        )
     ),
     PlainSerializer(lambda t: int(t.timestamp() * 1000), return_type=int),
 ]

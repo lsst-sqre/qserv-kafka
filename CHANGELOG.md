@@ -7,6 +7,14 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-4.3.1'></a>
+## 4.3.1 (2026-02-17)
+
+### Bug fixes
+
+- Fix bug where null chunk information error would cause a Pydantic validation exception
+- Catch deserialization error due to schema changes and delete stale query with a warning logged
+
 <a id='changelog-4.3.0'></a>
 ## 4.3.0 (2026-02-09)
 
