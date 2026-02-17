@@ -113,7 +113,7 @@ class QservAsyncStatusData(BaseModel):
     error: Annotated[
         str | None,
         Field(title="Error for failed query"),
-        BeforeValidator(lambda v: v if v else None),
+        BeforeValidator(lambda v: v or None),
     ] = None
 
     czar_id: Annotated[
