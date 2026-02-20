@@ -165,32 +165,10 @@ class QuerySuccessEvent(BaseQueryEvent):
         ),
     )
 
-    backend_elapsed: timedelta = Field(
-        ...,
-        title="Backend processing time",
-        description="How long it took for the backend to process the query",
-    )
-
-    backend_size: int = Field(
-        ...,
-        title="Data size from backend",
-        description="Result size reported by the backend in bytes",
-    )
-
-    backend_rate: float | None = Field(
-        None,
-        title="Backend result rate",
-        description=(
-            "Backend data bytes per second for query, or null if the"
-            " query completed too quickly to determine a meaningful rate"
-        ),
-    )
-
     def to_logging_context(self) -> dict[str, Any]:
         """Convert relevant information to a dictionary for logging."""
         result: dict[str, Any] = {
             "rows": self.rows,
-            "backend_size": self.backend_size,
             "encoded_size": self.encoded_size,
             "total_size": self.result_size,
             "elapsed": self.elapsed.total_seconds(),
@@ -199,7 +177,6 @@ class QuerySuccessEvent(BaseQueryEvent):
             result["kafka_elapsed"] = self.kafka_elapsed.total_seconds()
         result.update(
             {
-                "backend_elapsed": self.backend_elapsed.total_seconds(),
                 "result_elapsed": self.result_elapsed.total_seconds(),
                 "submit_elapsed": self.submit_elapsed.total_seconds(),
             }
@@ -212,9 +189,65 @@ class QuerySuccessEvent(BaseQueryEvent):
 class QservSuccessEvent(QuerySuccessEvent):
     """Successful end-to-end completion of a Qserv query."""
 
+    qserv_elapsed: timedelta = Field(
+        ...,
+        title="Qserv processing time",
+        description="How long it took for Qserv to process the query",
+    )
+
+    qserv_size: int = Field(
+        ...,
+        title="Data size from Qserv",
+        description="Result size reported by Qserv in bytes",
+    )
+
+    qserv_rate: float | None = Field(
+        None,
+        title="Qserv result rate",
+        description=(
+            "Qserv data bytes per second for query, or null if the"
+            " query completed too quickly to determine a meaningful rate"
+        ),
+    )
+
+    @override
+    def to_logging_context(self) -> dict[str, Any]:
+        result = super().to_logging_context()
+        result["qserv_size"] = self.qserv_size
+        result["qserv_elapsed"] = self.qserv_elapsed.total_seconds()
+        return result
+
 
 class BigQuerySuccessEvent(QuerySuccessEvent):
     """Successful end-to-end completion of a BigQuery query."""
+
+    bigquery_elapsed: timedelta = Field(
+        ...,
+        title="BigQuery processing time",
+        description="How long it took for BigQuery to process the query",
+    )
+
+    bigquery_size: int = Field(
+        ...,
+        title="Data size from BigQuery",
+        description="Result size reported by BigQuery in bytes",
+    )
+
+    bigquery_rate: float | None = Field(
+        None,
+        title="BigQuery result rate",
+        description=(
+            "BigQuery data bytes per second for query, or null if the"
+            " query completed too quickly to determine a meaningful rate"
+        ),
+    )
+
+    @override
+    def to_logging_context(self) -> dict[str, Any]:
+        result = super().to_logging_context()
+        result["bigquery_size"] = self.bigquery_size
+        result["bigquery_elapsed"] = self.bigquery_elapsed.total_seconds()
+        return result
 
 
 class QueryAbortEvent(BaseQueryEvent):

@@ -128,5 +128,9 @@ class RunningQuery(Query):
         result = super().to_logging_context()
         result.update(self.status.to_logging_context())
         if self.status.collected_bytes:
-            result["backend_size"] = self.status.collected_bytes
+            match self.status.backend_type:
+                case "Qserv":
+                    result["qserv_size"] = self.status.collected_bytes
+                case "BigQuery":
+                    result["bigquery_size"] = self.status.collected_bytes
         return result
