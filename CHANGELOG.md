@@ -7,6 +7,13 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-4.4.0'></a>
+## 4.4.0 (2026-02-24)
+
+## Other changes
+
+- Change event field names to use backend-specific prefix
+
 <a id='changelog-4.3.1'></a>
 ## 4.3.1 (2026-02-17)
 
