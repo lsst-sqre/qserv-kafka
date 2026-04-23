@@ -5,7 +5,6 @@ from unittest.mock import ANY
 
 import pytest
 from pydantic import SecretStr
-from safir.datetime import current_datetime
 from safir.metrics import MockEventPublisher
 from safir.testing.slack import MockSlackWebhook
 
@@ -274,14 +273,14 @@ async def test_cancel_completed(
     cancel = read_test_job_cancel("simple")
 
     # Start the query.
-    start_time = current_datetime()
+    start_time = datetime.now(tz=UTC).replace(microsecond=0)
     assert await query_service.start_query(job) == expected_status
 
     # Mark the query complete in the mock behind the back of the bridge.
     qserv_status = read_test_qserv_status(
         "simple-completed",
         query_begin=start_time,
-        last_update=current_datetime(),
+        last_update=datetime.now(tz=UTC).replace(microsecond=0),
     )
     await mock_qserv.update_status(1, qserv_status)
 

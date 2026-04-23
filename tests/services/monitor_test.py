@@ -1,10 +1,10 @@
 """Tests for the query status monitor."""
 
+from datetime import UTC, datetime
 from unittest.mock import call, patch
 
 import pytest
 from safir.arq import RedisArqQueue
-from safir.datetime import current_datetime
 from testcontainers.redis import RedisContainer
 
 from qservkafka.factory import Factory
@@ -32,7 +32,7 @@ async def test_dispatch(factory: Factory, mock_qserv: MockQserv) -> None:
     assert status == expected_status
 
     qserv_status = mock_qserv.get_status(1)
-    now = current_datetime()
+    now = datetime.now(tz=UTC).replace(microsecond=0)
     qserv_status = read_test_qserv_status(
         "simple-completed",
         query_begin=qserv_status.query_begin,

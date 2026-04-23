@@ -5,7 +5,6 @@ from unittest.mock import ANY, patch
 
 import pytest
 from httpx import Response
-from safir.datetime import current_datetime
 from safir.metrics import MockEventPublisher
 from vo_models.uws.types import ExecutionPhase
 
@@ -83,7 +82,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
     job = read_test_job_run("simple")
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    now = current_datetime()
+    now = datetime.now(tz=UTC).replace(microsecond=0)
 
     # HTTP failure getting the job status.
     mock_qserv.set_status_response(Response(500))
@@ -129,7 +128,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
 
     # Return a normal reply from the status endpoint but mark the job as being
     # in an error state.
-    start = current_datetime()
+    start = datetime.now(tz=UTC).replace(microsecond=0)
     query_status = QservAsyncStatusData(
         query_id=4,
         status=QservQueryPhase.FAILED,
@@ -179,7 +178,7 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
 async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    now = current_datetime()
+    now = datetime.now(tz=UTC).replace(microsecond=0)
 
     job = read_test_job_run("tabledata")
     status = await query_service.start_query(job)
@@ -225,7 +224,7 @@ async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
     job = read_test_job_run("data")
-    now = current_datetime()
+    now = datetime.now(tz=UTC).replace(microsecond=0)
 
     mock_qserv.set_immediate_success(job)
     results_sql = "SELECT * FROM nonexistent"
@@ -269,7 +268,7 @@ async def test_upload_timeout(
     expected = JobStatus(
         job_id=job.job_id,
         execution_id="1",
-        timestamp=current_datetime(),
+        timestamp=datetime.now(tz=UTC).replace(microsecond=0),
         status=ExecutionPhase.ERROR,
         error=JobError(
             code=JobErrorCode.result_timeout,
