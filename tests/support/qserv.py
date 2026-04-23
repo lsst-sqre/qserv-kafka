@@ -16,7 +16,6 @@ import respx
 from httpx import Request, Response
 from multipart import MultipartParser, parse_options_header
 from safir.database import datetime_to_db, initialize_database
-from safir.datetime import current_datetime
 from sqlalchemy import BigInteger, Double, String, delete, select
 from sqlalchemy.dialects.mysql import DATETIME
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
@@ -490,7 +489,7 @@ class MockQserv:
             return Response(500, text="Something failed")
         query_id = self._next_query_id
         self._next_query_id += 1
-        now = current_datetime()
+        now = datetime.now(tz=UTC).replace(microsecond=0)
         if self._immediate_success:
             self._queries[query_id] = read_test_qserv_status(
                 "data-completed",

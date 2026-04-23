@@ -16,7 +16,6 @@ from rubin.gafaelfawr import (
     GafaelfawrUserInfo,
     MockGafaelfawr,
 )
-from safir.datetime import current_datetime
 from safir.metrics import MockEventPublisher
 from testcontainers.redis import RedisContainer
 
@@ -61,7 +60,7 @@ async def test_success(
         qserv_status = read_test_qserv_status(
             "data-completed",
             query_begin=start_time,
-            last_update=current_datetime(),
+            last_update=datetime.now(tz=UTC).replace(microsecond=0),
         )
         await mock_qserv.update_status(1, qserv_status)
 
@@ -124,7 +123,7 @@ async def test_failure(
         assert status.query_info
         start_time = status.query_info.start_time
 
-        now = current_datetime()
+        now = datetime.now(tz=UTC).replace(microsecond=0)
         qserv_status = read_test_qserv_status(
             "simple-partial", query_begin=start_time, last_update=now
         )
@@ -134,7 +133,7 @@ async def test_failure(
         assert status.query_info
         assert status.query_info.start_time == start_time
 
-        now = current_datetime()
+        now = datetime.now(tz=UTC).replace(microsecond=0)
         qserv_status = read_test_qserv_status(
             "simple-failed", query_begin=start_time, last_update=now
         )
@@ -174,7 +173,7 @@ async def test_too_large(
         assert status.query_info
         start_time = status.query_info.start_time
 
-        now = current_datetime()
+        now = datetime.now(tz=UTC).replace(microsecond=0)
         qserv_status = read_test_qserv_status(
             "simple-large", query_begin=start_time, last_update=now
         )
@@ -224,7 +223,7 @@ async def test_qserv_error(
         qserv_status = read_test_qserv_status(
             "simple-completed",
             query_begin=start_time,
-            last_update=current_datetime(),
+            last_update=datetime.now(tz=UTC).replace(microsecond=0),
         )
         await mock_qserv.update_status(1, qserv_status)
         await wait_for_dispatch(factory, 1)
@@ -330,7 +329,7 @@ async def test_upload(
         qserv_status = read_test_qserv_status(
             "upload-failed",
             query_begin=start_time,
-            last_update=current_datetime(),
+            last_update=datetime.now(tz=UTC).replace(microsecond=0),
         )
         await mock_qserv.update_status(1, qserv_status)
         await wait_for_dispatch(factory, 1)
@@ -401,7 +400,7 @@ async def test_quota(
         qserv_status = read_test_qserv_status(
             "data-completed",
             query_begin=start_time,
-            last_update=current_datetime(),
+            last_update=datetime.now(tz=UTC).replace(microsecond=0),
         )
         await mock_qserv.update_status(1, qserv_status)
         await wait_for_dispatch(factory, 1)
