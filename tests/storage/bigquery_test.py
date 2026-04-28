@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
 from unittest.mock import MagicMock, Mock
 
 import google.cloud.bigquery as google_bigquery
+import google.cloud.bigquery_storage as google_bq_storage
+import pyarrow as pa
 import pytest
 from google.api_core.exceptions import GoogleAPIError
 from google.cloud.bigquery import DatasetReference, QueryJob
@@ -42,20 +43,33 @@ def mock_bq_client() -> MagicMock:
 
 
 @pytest.fixture
+def mock_storage_client() -> MagicMock:
+    """Create a mock BigQuery Storage client."""
+    return MagicMock()
+
+
+@pytest.fixture
 def bigquery_client(
     mock_bq_client: MagicMock,
+    mock_storage_client: MagicMock,
     logger: BoundLogger,
     monkeypatch: pytest.MonkeyPatch,
 ) -> BigQueryClient:
     """Create a BigQueryClient with mocked dependencies."""
-    mock_client_class = MagicMock(return_value=mock_bq_client)
-    monkeypatch.setattr(google_bigquery, "Client", mock_client_class)
+    monkeypatch.setattr(
+        google_bigquery, "Client", MagicMock(return_value=mock_bq_client)
+    )
+    monkeypatch.setattr(
+        google_bq_storage,
+        "BigQueryReadClient",
+        MagicMock(return_value=mock_storage_client),
+    )
 
     http_client = Mock(spec=AsyncClient)
     events = Mock(spec=Events)
     slack_client = None
 
-    client = BigQueryClient(
+    return BigQueryClient(
         project="test-project",
         location="US",
         http_client=http_client,
@@ -63,10 +77,6 @@ def bigquery_client(
         slack_client=slack_client,
         logger=logger,
     )
-
-    client._client = mock_bq_client
-
-    return client
 
 
 @pytest.fixture
@@ -273,22 +283,24 @@ async def test_get_query_results_gen(
     bigquery_client: BigQueryClient,
     mock_bq_client: MagicMock,
 ) -> None:
-    class MockBQRow:
-        def __init__(self, fields: list[str], values_tuple: tuple) -> None:
-            self._fields = fields
-            self._values_tuple = values_tuple
-
-        def values(self) -> tuple:
-            return self._values_tuple
-
-        def items(self) -> list[tuple[str, Any]]:
-            return list(zip(self._fields, self._values_tuple, strict=True))
-
-    mock_row1 = MockBQRow(["id", "name", "value"], (1, "test1", 100.5))
-    mock_row2 = MockBQRow(["id", "name", "value"], (2, "test2", 200.5))
+    schema = pa.schema(
+        [
+            pa.field("id", pa.int64()),
+            pa.field("name", pa.string()),
+            pa.field("value", pa.float64()),
+        ]
+    )
+    batch = pa.record_batch(
+        [
+            pa.array([1, 2], type=pa.int64()),
+            pa.array(["test1", "test2"], type=pa.string()),
+            pa.array([100.5, 200.5], type=pa.float64()),
+        ],
+        schema=schema,
+    )
 
     mock_result = MagicMock()
-    mock_result.__iter__.return_value = iter([mock_row1, mock_row2])
+    mock_result.to_arrow_iterable.return_value = iter([batch])
 
     mock_job = MagicMock(spec=QueryJob)
     mock_job.done.return_value = True
