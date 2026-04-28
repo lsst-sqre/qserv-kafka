@@ -742,6 +742,22 @@ wheels = [
 ]
 
 [[package]]
+name = "google-cloud-bigquery-storage"
+version = "2.37.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/13/31/5c6fa9e7b8e266a765ec80d13a2b2852cb0a6d3733572e7dbdc0cb39003c/google_cloud_bigquery_storage-2.37.0.tar.gz", hash = "sha256:f88ee7f1e49db1e639da3d9a8b79835ca4bc47afbb514fb2adfc0ccb41a7fd97", size = 310578, upload-time = "2026-03-30T22:51:13.418Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/74/0e/2950d4d0160300f51c7397a080b1685d3e25b40badb2c96f03d58d0ee868/google_cloud_bigquery_storage-2.37.0-py3-none-any.whl", hash = "sha256:1e319c27ef60fc31030f6e0b52e5e891e1cdd50551effe8c6f673a4c3c56fcb6", size = 306678, upload-time = "2026-03-30T22:47:42.333Z" },
+]
+
+[[package]]
 name = "google-cloud-core"
 version = "2.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1893,6 +1909,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "faststream", extra = ["kafka"] },
     { name = "google-cloud-bigquery" },
+    { name = "google-cloud-bigquery-storage" },
     { name = "httpx" },
     { name = "humanize" },
     { name = "memray" },
@@ -1947,6 +1964,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.112.2" },
     { name = "faststream", extras = ["kafka"], specifier = ">=0.6" },
     { name = "google-cloud-bigquery", specifier = ">=3.25.0" },
+    { name = "google-cloud-bigquery-storage", specifier = ">=2.27" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "humanize", specifier = ">=4.15.0" },
     { name = "memray", specifier = ">=1.17" },
