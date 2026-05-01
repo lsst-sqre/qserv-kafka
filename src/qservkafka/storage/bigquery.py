@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Callable, Coroutine, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    Callable,
+    Coroutine,
+    Iterator,
+    Sequence,
+)
 from datetime import UTC, datetime
 from functools import wraps
 from typing import Any, Concatenate, Protocol, override
 
-from google.cloud import bigquery
+import pyarrow as pa
+from google.cloud import bigquery, bigquery_storage
 from google.cloud.bigquery import DatasetReference, QueryJob, QueryJobConfig
 from httpx import AsyncClient
 from safir.slack.webhook import SlackWebhookClient
@@ -29,8 +36,16 @@ from .backend import DatabaseBackend
 
 __all__ = ["BigQueryClient"]
 
-# Batch size for streaming result rows from BigQuery.
 _RESULT_BATCH_SIZE = 1000
+
+
+def _next_record_batch(
+    batch_iter: Iterator[pa.RecordBatch],
+) -> pa.RecordBatch | None:
+    try:
+        return next(batch_iter)
+    except StopIteration:
+        return None
 
 
 class _BigQueryClientProtocol(Protocol):
@@ -140,6 +155,7 @@ class BigQueryClient(DatabaseBackend):
         self._location = location
         self._http_client = http_client
         self._client = bigquery.Client(project=project, location=location)
+        self._storage_client = bigquery_storage.BigQueryReadClient()
 
     def _validate_query_job(self, job: Any, query_id: str) -> QueryJob:
         """Validate and return a `QueryJob`, raising errors for invalid states.
@@ -208,27 +224,15 @@ class BigQueryClient(DatabaseBackend):
     async def get_query_results_gen(
         self, query_id: str
     ) -> AsyncGenerator[Sequence[Any]]:
-        def _get_result() -> bigquery.table.RowIterator:
-            """Get validated job and return result iterator."""
+        def _setup_stream() -> Iterator[pa.RecordBatch]:
             job = self._client.get_job(query_id)
             validated_job = self._validate_query_job(job, query_id)
-            return validated_job.result()
-
-        def _fetch_batch(
-            result_iter: Any, batch_size: int = _RESULT_BATCH_SIZE
-        ) -> list[tuple[Any, ...]]:
-            """Fetch a batch of rows."""
-            batch = []
-            for _ in range(batch_size):
-                try:
-                    bq_row = next(result_iter)
-                    batch.append(tuple(bq_row.values()))
-                except StopIteration:
-                    break
-            return batch
+            return validated_job.result().to_arrow_iterable(
+                bqstorage_client=self._storage_client,
+            )
 
         try:
-            result = await asyncio.to_thread(_get_result)
+            batch_iter = await asyncio.to_thread(_setup_stream)
         except Exception as e:
             exc = BigQueryApiNetworkError.from_exception(
                 "get_results", self._project, e
@@ -237,19 +241,32 @@ class BigQueryClient(DatabaseBackend):
             self.logger.exception(msg, **exc.to_logging_context())
             raise exc from e
 
-        result_iter = iter(result)
         while True:
-            batch = await asyncio.to_thread(_fetch_batch, result_iter)
-            if not batch:
+            try:
+                batch = await asyncio.to_thread(_next_record_batch, batch_iter)
+            except Exception as e:
+                exc = BigQueryApiNetworkError.from_exception(
+                    "get_results", self._project, e
+                )
+                self.logger.exception(
+                    "Failed to stream BigQuery results",
+                    **exc.to_logging_context(),
+                )
+                raise exc from e
+            if batch is None:
                 break
-
-            for row_values in batch:
-                yield row_values
+            for offset in range(0, len(batch), _RESULT_BATCH_SIZE):
+                length = min(_RESULT_BATCH_SIZE, len(batch) - offset)
+                sliced = batch.slice(offset, length)
+                columns = [col.to_pylist() for col in sliced.columns]
+                if columns:
+                    for row in zip(*columns, strict=True):
+                        yield row
 
     @override
     @_retry
     async def get_query_status(self, query_id: str) -> BigQueryQueryStatus:
-        def _get_status() -> tuple[QueryJob, ByteProgress]:
+        def _get_status() -> tuple[QueryJob, ByteProgress, int | None]:
             """Retrieve status synchronously for async wrapping."""
             job = self._client.get_job(query_id)
 
@@ -262,10 +279,14 @@ class BigQueryClient(DatabaseBackend):
                 cached=job.cache_hit or False,
             )
 
-            return job, progress
+            final_rows = None
+            if job.done() and not job.error_result:
+                final_rows = job.result().total_rows
+
+            return job, progress, final_rows
 
         try:
-            job, progress = await asyncio.to_thread(_get_status)
+            job, progress, final_rows = await asyncio.to_thread(_get_status)
         except Exception as e:
             exc = BigQueryApiNetworkError.from_exception(
                 "get_status", self._project, e
@@ -295,9 +316,7 @@ class BigQueryClient(DatabaseBackend):
             query_begin=job.created,
             last_update=datetime.now(tz=UTC),
             collected_bytes=job.total_bytes_processed or 0,
-            final_rows=job.result().total_rows
-            if (job.done() and not job.error_result)
-            else None,
+            final_rows=final_rows,
         )
 
     @override
