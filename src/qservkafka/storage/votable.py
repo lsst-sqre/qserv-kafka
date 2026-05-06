@@ -219,9 +219,12 @@ class Binary2Encoder(VOTableEncoder):
         config: JobResultConfig,
         discovery_client: DiscoveryClient,
         logger: BoundLogger,
+        *,
+        max_bytes: int | None = None,
     ) -> None:
         super().__init__(config, discovery_client, logger)
         self._wrapper_size = 0
+        self._max_bytes = max_bytes
 
     @property
     @override
@@ -270,6 +273,17 @@ class Binary2Encoder(VOTableEncoder):
                 )
                 self._total_rows += 1
                 encoded.write(encoded_row)
+                if (
+                    self._max_bytes is not None
+                    and encoded.tell() >= self._max_bytes
+                ):
+                    self._logger.info(
+                        "Result truncated: max_result_bytes limit reached",
+                        max_bytes=self._max_bytes,
+                        rows_processed=self._total_rows,
+                    )
+                    overflow = True
+                    break
                 if self._total_rows % 100000 == 0:
                     self._logger.debug(f"Processed {self._total_rows} rows")
                 if encoded.tell() >= threshold:
@@ -905,7 +919,12 @@ class VOTableWriter:
                 )
                 mime_type = "application/vnd.apache.parquet"
             case JobResultType.VOTable:
-                encoder = Binary2Encoder(config, self._discovery, self._logger)
+                encoder = Binary2Encoder(
+                    config,
+                    self._discovery,
+                    self._logger,
+                    max_bytes=global_config.max_result_bytes,
+                )
                 mime_type = "application/x-votable+xml; serialization=binary2"
 
         generator = encoder.encode(results, maxrec=maxrec)

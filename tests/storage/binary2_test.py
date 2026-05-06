@@ -197,3 +197,34 @@ async def test_type_encoder() -> None:
     ]
     for column, data, expected in tests:
         await assert_encoded_value(column, data, expected)
+
+
+@pytest.mark.asyncio
+async def test_max_bytes_truncation() -> None:
+    config = JobResultConfig(
+        format=JobResultFormat(
+            type=JobResultType.VOTable,
+            serialization=JobResultSerialization.BINARY2,
+        ),
+        column_types=[
+            JobResultColumnType.model_validate(
+                {"name": "a", "datatype": "int"}
+            )
+        ],
+        envelope=JobResultEnvelope(
+            header="<header>",
+            footer="<footer>",
+            footer_overflow="<overflow>",
+        ),
+    )
+    rows = [(1,), (2,), (3,)]
+    logger = get_logger(__name__)
+    encoder = Binary2Encoder(config, DiscoveryClient(), logger, max_bytes=1)
+    encoded = b""
+    async for blob in encoder.encode(data_generator(rows)):
+        encoded += blob
+
+    assert encoded.startswith(b"<header>")
+    assert encoded.endswith(b"<overflow>")
+    assert b"<footer>" not in encoded
+    assert encoder.total_rows < 3
