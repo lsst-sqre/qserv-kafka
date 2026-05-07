@@ -143,6 +143,16 @@ class Config(BaseSettings):
         ),
     )
 
+    max_result_bytes: int | None = Field(
+        None,
+        title="Maximum result bytes",
+        description=(
+            "Maximum bytes that can be returned for a single query. "
+            "Results exceeding this will be truncated and returned with "
+            "an overflow marker. None means no limit."
+        ),
+    )
+
     bigquery_project: str = Field(
         "",
         title="BigQuery project ID",
