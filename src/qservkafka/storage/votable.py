@@ -346,7 +346,12 @@ class Binary2Encoder(VOTableEncoder):
             binary.seek(0)
             binary.write(leftover)
         self._encoded_size += len(output)
-        return output
+
+        # Technically, we're returning a bytearray, but httpx.AsyncClient
+        # expects bytes. They function identically for its purposes (bytes is
+        # a read-only bytearray), so tell the type system to ignore the
+        # difference.
+        return output  # type: ignore[return-value]
 
     async def _encode_char_column(
         self, column: JobResultColumnType, value_raw: Any
