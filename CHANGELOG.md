@@ -7,6 +7,15 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-4.5.0'></a>
+## 4.5.0 (2026-05-15)
+
+### New features
+
+- Switch BigQuery result streaming to the Storage Read API using Arrow-based retrieval. This improves result processing by making it faster at the expense of more resource utilization.
+
+- Add configurable max result size limit.
+
 <a id='changelog-4.4.0'></a>
 ## 4.4.0 (2026-02-24)
 
