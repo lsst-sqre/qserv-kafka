@@ -1,0 +1,85 @@
+{
+  "query": "SELECT TOP 10 * FROM user_username.table",
+  "jobID": "uws123",
+  "ownerID": "username",
+  "resultDestination": "https://results.example.com/1",
+  "resultLocation": "https://gcs.example.com/upload",
+  "resultFormat": {
+    "format": {
+      "type": "VOTable",
+      "serialization": "BINARY2"
+    },
+    "envelope": {
+      "header": "<VOTable xmlns=\"http://www.ivoa.net/xml/VOTable/v1.3\" version=\"1.3\"><RESOURCE type=\"results\"><TABLE><FIELD ID=\"col_0\" arraysize=\"*\" datatype=\"char\" name=\"col1\"/>",
+      "footer": "</TABLE></RESOURCE></VOTable>",
+      "footerOverflow": "</TABLE><INFO name=\"QUERY_STATUS\" value=\"OVERFLOW\"/></RESOURCE></VOTABLE>"
+    },
+    "columnTypes": [
+      {
+        "name": "id",
+        "datatype": "int"
+      },
+      {
+        "name": "a",
+        "datatype": "boolean"
+      },
+      {
+        "name": "b",
+        "datatype": "char"
+      },
+      {
+        "name": "c",
+        "datatype": "char",
+        "arraysize": "10"
+      },
+      {
+        "name": "d",
+        "datatype": "char",
+        "arraysize": "*",
+        "requiresUrlRewrite": true
+      },
+      {
+        "name": "e",
+        "datatype": "double"
+      },
+      {
+        "name": "f",
+        "datatype": "float"
+      },
+      {
+        "name": "g",
+        "datatype": "int"
+      },
+      {
+        "name": "h",
+        "datatype": "long"
+      },
+      {
+        "name": "i",
+        "datatype": "char",
+        "arraysize": "4*"
+      },
+      {
+        "name": "j",
+        "datatype": "char",
+        "arraysize": "*"
+      },
+      {
+        "name": "k",
+        "datatype": "short"
+      }
+    ]
+  },
+  "uploadTables": [
+    {
+      "tableName": "user_username.table",
+      "sourceUrl": "https://gcs.example.com/table.csv",
+      "schemaUrl": "https://gcs.example.com/table.json",
+      "partitionType": "DEPENDENT",
+      "idColName": "objectId",
+      "refDirectorDatabase": "dp1",
+      "refDirectorTable": "Object",
+      "refDirectorIdColName": "objectId"
+    }
+  ]
+}

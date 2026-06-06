@@ -472,3 +472,41 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
 
     # Only the second query should be active.
     assert await state_store.get_active_queries() == {"2"}
+
+
+@pytest.mark.asyncio
+async def test_upload_director(
+    factory: Factory, mock_qserv: MockQserv
+) -> None:
+    """Test upload of a spatially-partitioned (director) table."""
+    query_service = factory.create_query_service()
+    job = read_test_job_run("upload-director")
+    completed_status = read_test_job_status("upload-completed")
+
+    await assert_query_successful(
+        query_service=query_service,
+        mock_qserv=mock_qserv,
+        job=job,
+        expected_status=completed_status,
+    )
+    assert mock_qserv.get_uploaded_table() is None
+    assert mock_qserv.get_uploaded_database() is None
+
+
+@pytest.mark.asyncio
+async def test_upload_dependent(
+    factory: Factory, mock_qserv: MockQserv
+) -> None:
+    """Test upload of a dependent (FK-partitioned) table."""
+    query_service = factory.create_query_service()
+    job = read_test_job_run("upload-dependent")
+    completed_status = read_test_job_status("upload-completed")
+
+    await assert_query_successful(
+        query_service=query_service,
+        mock_qserv=mock_qserv,
+        job=job,
+        expected_status=completed_status,
+    )
+    assert mock_qserv.get_uploaded_table() is None
+    assert mock_qserv.get_uploaded_database() is None

@@ -29,7 +29,7 @@ from qservkafka.models.kafka import (
     JobResultSerialization,
     JobResultType,
     JobRun,
-    JobTableUpload,
+    ReplicatedTableUpload,
 )
 from qservkafka.models.progress import ByteProgress
 from qservkafka.models.query import AsyncQueryPhase
@@ -345,7 +345,7 @@ async def test_delete_result(
 async def test_upload_table_not_implemented(
     bigquery_client: BigQueryClient,
 ) -> None:
-    upload = JobTableUpload(
+    upload = ReplicatedTableUpload(
         table_name="user_test.temp_table",
         source_url="https://example.com/data.csv",
         schema_url="https://example.com/schema.json",

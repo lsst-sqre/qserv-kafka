@@ -17,6 +17,7 @@ from qservkafka.models.kafka import (
     JobResultType,
     JobRun,
     JobTableUpload,
+    ReplicatedTableUpload,
 )
 from qservkafka.models.progress import ByteProgress, ChunkProgress
 from qservkafka.models.qserv import TableUploadStats
@@ -201,7 +202,7 @@ async def test_backend_delete_result() -> None:
 @pytest.mark.asyncio
 async def test_backend_upload_table() -> None:
     backend = MockDatabaseBackend()
-    upload = JobTableUpload(
+    upload = ReplicatedTableUpload(
         table_name="user_test.temp_table",
         source_url="https://example.com/data.csv",
         schema_url="https://example.com/schema.json",

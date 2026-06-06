@@ -2,15 +2,17 @@
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Discriminator,
     Field,
     HttpUrl,
     PlainSerializer,
+    Tag,
 )
 from safir.pydantic import SecondsTimedelta
 from vo_models.uws.types import ExecutionPhase
@@ -32,6 +34,8 @@ type DatetimeMillis = Annotated[
 """Type for timestamps, which are represented in Kafka in milliseconds."""
 
 __all__ = [
+    "DependentTableUpload",
+    "DirectorTableUpload",
     "JobCancel",
     "JobError",
     "JobErrorCode",
@@ -46,6 +50,9 @@ __all__ = [
     "JobResultType",
     "JobRun",
     "JobStatus",
+    "JobTableUpload",
+    "ReplicatedTableUpload",
+    "UploadTablePartitionType",
 ]
 
 
@@ -236,8 +243,23 @@ class JobResultConfig(BaseModel):
     ] = None
 
 
-class JobTableUpload(BaseModel):
-    """Table to upload for a query."""
+class UploadTablePartitionType(StrEnum):
+    """Partition strategy for a TAP_UPLOAD table in Qserv."""
+
+    DIRECTOR = "DIRECTOR"
+    DEPENDENT = "DEPENDENT"
+
+
+def _partition_type_discriminator(v: Any) -> str:
+    if isinstance(v, dict):
+        val = v.get("partitionType") or v.get("partition_type")
+    else:
+        val = getattr(v, "partition_type", None)
+    return str(val) if val is not None else "replicated"
+
+
+class _UploadTableBase(BaseModel):
+    """Common fields for all upload table classes."""
 
     model_config = ConfigDict(validate_by_name=True)
 
@@ -283,6 +305,84 @@ class JobTableUpload(BaseModel):
     def table(self) -> str:
         """Name of the table."""
         return self.table_name.split(".", 1)[1]
+
+
+class ReplicatedTableUpload(_UploadTableBase):
+    """Upload table fully replicated across all Qserv nodes."""
+
+    partition_type: Annotated[
+        None,
+        Field(validation_alias="partitionType"),
+    ] = None
+
+
+class DirectorTableUpload(_UploadTableBase):
+    """Upload table spatially partitioned by RA/Dec (Qserv director table)."""
+
+    partition_type: Annotated[
+        Literal[UploadTablePartitionType.DIRECTOR],
+        Field(validation_alias="partitionType"),
+    ]
+
+    longitude_col_name: Annotated[
+        str,
+        Field(
+            title="Longitude column name", validation_alias="longitudeColName"
+        ),
+    ]
+
+    latitude_col_name: Annotated[
+        str,
+        Field(
+            title="Latitude column name", validation_alias="latitudeColName"
+        ),
+    ]
+
+
+class DependentTableUpload(_UploadTableBase):
+    """Upload table partitioned by FK reference to a director table."""
+
+    partition_type: Annotated[
+        Literal[UploadTablePartitionType.DEPENDENT],
+        Field(validation_alias="partitionType"),
+    ]
+
+    id_col_name: Annotated[
+        str,
+        Field(title="ID column name", validation_alias="idColName"),
+    ]
+
+    ref_director_database: Annotated[
+        str,
+        Field(
+            title="Reference director database",
+            validation_alias="refDirectorDatabase",
+        ),
+    ]
+
+    ref_director_table: Annotated[
+        str,
+        Field(
+            title="Reference director table",
+            validation_alias="refDirectorTable",
+        ),
+    ]
+
+    ref_director_id_col_name: Annotated[
+        str,
+        Field(
+            title="Reference director ID column name",
+            validation_alias="refDirectorIdColName",
+        ),
+    ]
+
+
+JobTableUpload = Annotated[
+    Annotated[ReplicatedTableUpload, Tag("replicated")]
+    | Annotated[DirectorTableUpload, Tag("DIRECTOR")]
+    | Annotated[DependentTableUpload, Tag("DEPENDENT")],
+    Discriminator(_partition_type_discriminator),
+]
 
 
 class JobMetadata(BaseModel):
