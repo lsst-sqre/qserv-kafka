@@ -16,4 +16,3 @@ async def test_get_index(client: AsyncClient) -> None:
     assert isinstance(data["version"], str)
     assert isinstance(data["description"], str)
     assert isinstance(data["repository_url"], str)
-    assert isinstance(data["documentation_url"], str)

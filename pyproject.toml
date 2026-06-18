@@ -47,7 +47,6 @@ dynamic = ["version"]
 qserv-kafka = "qservkafka.cli:main"
 
 [project.urls]
-Homepage = "https://qserv-kafka.lsst.io"
 Source = "https://github.com/lsst-sqre/qserv-kafka"
 
 [build-system]
