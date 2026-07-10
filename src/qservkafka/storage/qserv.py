@@ -149,7 +149,7 @@ def _retry[**P, T, C: _QservClientProtocol](
             for _ in range(1, config.backend_retry_count):
                 try:
                     return await f(client, *args, **kwargs)
-                except (QservApiSqlError, SlackWebException):
+                except QservApiSqlError, SlackWebException:
                     delay = config.backend_retry_delay.total_seconds()
                     msg = f"Qserv API call failed, retrying after {delay}s"
 
@@ -164,7 +164,7 @@ def _retry[**P, T, C: _QservClientProtocol](
             # re-raising the exception.
             try:
                 return await f(client, *args, **kwargs)
-            except (QservApiSqlError, SlackWebException):
+            except QservApiSqlError, SlackWebException:
                 event = QservFailureEvent(protocol=qserv_protocol)
                 await client.events.qserv_failure.publish(event)
                 raise
