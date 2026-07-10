@@ -37,8 +37,8 @@ jobs:
       - name: Update dependencies
         run: make update-deps
 
-      - name: Run tox
-        run: uv run --only-group=tox tox run -e lint,typing,py
+      - name: Run nox
+        run: uv run --only-group=nox nox run -s lint typing test
 
       - name: Report status
         if: failure()
