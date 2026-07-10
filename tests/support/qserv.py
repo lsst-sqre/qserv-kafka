@@ -23,11 +23,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from structlog.stdlib import BoundLogger
 
 from qservkafka.config import config
-from qservkafka.models.kafka import (
-    DependentTableUpload,
-    DirectorTableUpload,
-    JobRun,
-)
+from qservkafka.models.kafka import JobRun
 from qservkafka.models.qserv import (
     AsyncSubmitRequest,
     BaseResponse,
@@ -625,22 +621,8 @@ class MockQserv:
             "collation_name": "utf8mb4_uca1400_ai_ci",
             "timeout": str(int(config.qserv_upload_timeout.total_seconds())),
         }
-        if isinstance(upload_table, DirectorTableUpload):
-            expected["is_partitioned"] = "1"
-            expected["is_director"] = "1"
-            expected["longitude_col_name"] = upload_table.longitude_col_name
-            expected["latitude_col_name"] = upload_table.latitude_col_name
-        elif isinstance(upload_table, DependentTableUpload):
-            expected["is_partitioned"] = "1"
-            expected["is_director"] = "0"
-            expected["id_col_name"] = upload_table.id_col_name
-            expected["ref_director_database"] = (
-                upload_table.ref_director_database
-            )
-            expected["ref_director_table"] = upload_table.ref_director_table
-            expected["ref_director_id_col_name"] = (
-                upload_table.ref_director_id_col_name
-            )
+        for key, value in upload_table.to_ingest_fields().items():
+            expected[key] = str(value)
         assert data == expected
         assert files == [
             (

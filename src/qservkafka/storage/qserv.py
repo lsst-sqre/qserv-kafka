@@ -33,12 +33,7 @@ from ..exceptions import (
     QservApiWebError,
     TableUploadWebError,
 )
-from ..models.kafka import (
-    DependentTableUpload,
-    DirectorTableUpload,
-    JobRun,
-    JobTableUpload,
-)
+from ..models.kafka import JobRun, JobTableUpload
 from ..models.progress import ChunkProgress
 from ..models.qserv import (
     AsyncSubmitRequest,
@@ -347,18 +342,7 @@ class QservClient(DatabaseBackend):
             "collation_name": "utf8mb4_uca1400_ai_ci",
             "timeout": int(config.qserv_upload_timeout.total_seconds()),
         }
-        if isinstance(upload, DirectorTableUpload):
-            data["is_partitioned"] = 1
-            data["is_director"] = 1
-            data["longitude_col_name"] = upload.longitude_col_name
-            data["latitude_col_name"] = upload.latitude_col_name
-        elif isinstance(upload, DependentTableUpload):
-            data["is_partitioned"] = 1
-            data["is_director"] = 0
-            data["id_col_name"] = upload.id_col_name
-            data["ref_director_database"] = upload.ref_director_database
-            data["ref_director_table"] = upload.ref_director_table
-            data["ref_director_id_col_name"] = upload.ref_director_id_col_name
+        data.update(upload.to_ingest_fields())
         await self._post_multipart(
             "/ingest/csv",
             data=data,

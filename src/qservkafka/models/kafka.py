@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, override
 
 from pydantic import (
     BaseModel,
@@ -252,7 +252,7 @@ class UploadTablePartitionType(StrEnum):
 
 def _partition_type_discriminator(v: Any) -> str:
     if isinstance(v, dict):
-        val = v.get("partitionType") or v.get("partition_type")
+        val = v.get("partitionType", v.get("partition_type"))
     else:
         val = getattr(v, "partition_type", None)
     return str(val) if val is not None else "replicated"
@@ -306,12 +306,16 @@ class _UploadTableBase(BaseModel):
         """Name of the table."""
         return self.table_name.split(".", 1)[1]
 
+    def to_ingest_fields(self) -> dict[str, str | int]:
+        """Qserv ingest API fields specific to this partition strategy."""
+        return {}
+
 
 class ReplicatedTableUpload(_UploadTableBase):
     """Upload table fully replicated across all Qserv nodes."""
 
     partition_type: Annotated[
-        None,
+        Literal["replicated"] | None,
         Field(validation_alias="partitionType"),
     ] = None
 
@@ -337,6 +341,15 @@ class DirectorTableUpload(_UploadTableBase):
             title="Latitude column name", validation_alias="latitudeColName"
         ),
     ]
+
+    @override
+    def to_ingest_fields(self) -> dict[str, str | int]:
+        return {
+            "is_partitioned": 1,
+            "is_director": 1,
+            "longitude_col_name": self.longitude_col_name,
+            "latitude_col_name": self.latitude_col_name,
+        }
 
 
 class DependentTableUpload(_UploadTableBase):
@@ -375,6 +388,17 @@ class DependentTableUpload(_UploadTableBase):
             validation_alias="refDirectorIdColName",
         ),
     ]
+
+    @override
+    def to_ingest_fields(self) -> dict[str, str | int]:
+        return {
+            "is_partitioned": 1,
+            "is_director": 0,
+            "id_col_name": self.id_col_name,
+            "ref_director_database": self.ref_director_database,
+            "ref_director_table": self.ref_director_table,
+            "ref_director_id_col_name": self.ref_director_id_col_name,
+        }
 
 
 JobTableUpload = Annotated[
