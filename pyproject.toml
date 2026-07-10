@@ -11,13 +11,13 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Natural Language :: English",
     "Operating System :: POSIX",
     "Private :: Do Not Upload",
     "Typing :: Typed",
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
     "aiojobs>=1.3",
     "arq>=0.26",
@@ -139,9 +139,13 @@ warn_untyped_fields = true
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "strict"
 filterwarnings = [
+    # dataclases-avroschema hasn't been fully updated for Python 3.14
+    "ignore:.*'_UnionGenericAlias' is deprecated.*:DeprecationWarning",
     # testcontainers hasn't updated all of the community modules
     "ignore:.*wait_container_is_ready decorator.*:DeprecationWarning",
     "ignore:.*wait_for_logs function.*:DeprecationWarning",
+    # faststream has not been updated for Python 3.14
+    "ignore:.*asyncio.iscoroutinefunction.*:DeprecationWarning",
 ]
 # The python_files setting is not for test detection (pytest will pick up any
 # test files named *_test.py without this setting) but to enable special
