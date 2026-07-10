@@ -75,9 +75,9 @@ lint = [
     "pre-commit-uv",
     "ruff>=0.9",
 ]
-tox = [
-    "tox>=4.24",
-    "tox-uv>=1.25",
+nox = [
+    "nox",
+    "nox-uv",
 ]
 typing = [
     "mypy>=1.19",
@@ -89,7 +89,7 @@ branch = true
 source = ["qservkafka"]
 
 [tool.coverage.paths]
-source = ["src", ".tox/*/site-packages"]
+source = ["src"]
 
 [tool.coverage.report]
 show_missing = true
