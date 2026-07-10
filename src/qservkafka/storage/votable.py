@@ -20,7 +20,7 @@ from structlog.stdlib import BoundLogger
 
 from ..config import config as global_config
 from ..constants import UPLOAD_BUFFER_SIZE
-from ..exceptions import UploadWebError
+from ..exceptions import EncodingError, UploadWebError
 from ..models.kafka import JobResultColumnType, JobResultConfig, JobResultType
 from ..models.votable import EncodedSize, VOTablePrimitive
 
@@ -428,22 +428,30 @@ class Binary2Encoder(VOTableEncoder):
         -------
         bytes
             Encoded results in raw binary format, not base64-encoded.
+
+        Raises
+        ------
+        EncodingError
+            Raised if an error occurred encoding a row of the results.
         """
         nulls = BitArray(length=len(types))
         output = bytearray()
         for i, column in enumerate(types):
-            datatype = column.datatype
-            value = row[i]
-            if value is None:
-                nulls.set(True, i)
-            if datatype == VOTablePrimitive.char:
-                output += await self._encode_char_column(column, value)
-            elif datatype == VOTablePrimitive.unicode_char:
-                output += await self._encode_unicode_char_column(
-                    column=column, value_raw=value
-                )
-            else:
-                output += datatype.pack(value)
+            try:
+                datatype = column.datatype
+                value = row[i]
+                if value is None:
+                    nulls.set(True, i)
+                if datatype == VOTablePrimitive.char:
+                    output += await self._encode_char_column(column, value)
+                elif datatype == VOTablePrimitive.unicode_char:
+                    output += await self._encode_unicode_char_column(
+                        column=column, value_raw=value
+                    )
+                else:
+                    output += datatype.pack(value)
+            except Exception as e:
+                raise EncodingError.from_exception(column, e) from e
 
         return nulls.tobytes() + output
 

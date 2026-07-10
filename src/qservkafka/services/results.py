@@ -27,6 +27,7 @@ from ..events import (
 from ..exceptions import (
     BackendApiError,
     BackendApiTransientError,
+    QueryError,
     UploadWebError,
 )
 from ..models.kafka import JobError, JobErrorCode, JobResultInfo, JobStatus
@@ -293,7 +294,7 @@ class ResultProcessor(ABC):
         # Retrieve and upload the results.
         try:
             stats = await self._upload_results_with_retry(query, logger)
-        except (BackendApiError, UploadWebError, TimeoutError) as e:
+        except (QueryError, TimeoutError) as e:
             return await self._build_exception_status(query, e)
 
         # Delete the results if configured to do so.
@@ -350,7 +351,7 @@ class ResultProcessor(ABC):
     async def _build_exception_status(
         self,
         query: RunningQuery,
-        exc: BackendApiError | UploadWebError | TimeoutError,
+        exc: QueryError | TimeoutError,
     ) -> JobStatus:
         """Construct the job status for an exception.
 
@@ -373,7 +374,7 @@ class ResultProcessor(ABC):
 
         # Analyze the exception.
         match exc:
-            case BackendApiError() | UploadWebError():
+            case QueryError():
                 if isinstance(exc, UploadWebError):
                     msg = "Unable to upload results"
                 else:

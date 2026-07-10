@@ -17,6 +17,8 @@ from rubin.gafaelfawr import (
     MockGafaelfawr,
 )
 from safir.metrics import MockEventPublisher
+from safir.testing.data import Data
+from safir.testing.slack import MockSlackWebhook
 from testcontainers.redis import RedisContainer
 
 from qservkafka.config import config
@@ -415,3 +417,46 @@ async def test_quota(
             kafka_status_consumer, "data-started", execution_id="3"
         )
         assert redis_client.get(f"rate:{job.owner}") == b"2"
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(40)
+async def test_wrong_schema(
+    *,
+    data: Data,
+    app: FastAPI,
+    kafka_broker: KafkaBroker,
+    kafka_status_consumer: AIOKafkaConsumer,
+    mock_slack: MockSlackWebhook,
+    mock_qserv: MockQserv,
+    redis: RedisContainer,
+) -> None:
+    async with LifespanManager(app):
+        factory = context_dependency.create_factory()
+        arq_worker = create_arq_worker(factory._context)
+
+        job = await start_query(kafka_broker, "data-wrong-schema")
+        status = await wait_for_status(kafka_status_consumer, "data-started")
+        assert status.query_info
+        start_time = status.query_info.start_time
+
+        await mock_qserv.store_results(job)
+        qserv_status = read_test_qserv_status(
+            "data-completed",
+            query_begin=start_time,
+            last_update=datetime.now(tz=UTC).replace(microsecond=0),
+        )
+        await mock_qserv.update_status(1, qserv_status)
+
+        await wait_for_dispatch(factory, 1)
+
+        # Run the background task queue.
+        assert await arq_worker.run_check() == 1
+        await wait_for_status(kafka_status_consumer, "data-wrong-schema")
+
+    # Ensure all query state has been deleted.
+    redis_client = redis.get_client()
+    assert set(redis_client.scan_iter("query:*")) == set()
+
+    # Check that a Slack message was posted about the encoding error.
+    data.assert_json_matches(mock_slack.messages, "slack/wrong-schema")

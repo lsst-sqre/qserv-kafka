@@ -20,6 +20,7 @@ from safir.database import create_database_engine
 from safir.kafka import KafkaConnectionSettings, SecurityProtocol
 from safir.logging import configure_logging
 from safir.testing.containers import FullKafkaContainer
+from safir.testing.data import Data
 from safir.testing.slack import MockSlackWebhook, mock_slack_webhook
 from sqlalchemy.ext.asyncio import AsyncEngine
 from structlog.stdlib import BoundLogger, get_logger
@@ -32,6 +33,15 @@ from qservkafka.factory import Factory, ProcessContext
 from qservkafka.main import create_app
 
 from .support.qserv import MockQserv, register_mock_qserv
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--update-test-data",
+        action="store_true",
+        default=False,
+        help="Overwrite expected test output with current results",
+    )
 
 
 @pytest_asyncio.fixture
@@ -61,6 +71,12 @@ async def client(app: FastAPI) -> AsyncGenerator[AsyncClient]:
         base_url="https://example.com/", transport=ASGITransport(app=app)
     ) as client:
         yield client
+
+
+@pytest.fixture
+def data(request: pytest.FixtureRequest) -> Data:
+    update = request.config.getoption("--update-test-data")
+    return Data(Path(__file__).parent / "data", update_test_data=update)
 
 
 @pytest_asyncio.fixture
@@ -239,7 +255,7 @@ async def mock_qserv(
 @pytest.fixture
 def mock_slack(
     monkeypatch: pytest.MonkeyPatch, respx_mock: respx.Router
-) -> MockSlackWebhook | None:
+) -> MockSlackWebhook:
     """Mock a Slack webhook."""
     webhook = SecretStr("https://slack.example.com/webhook")
     monkeypatch.setattr(config.slack, "enabled", True)
