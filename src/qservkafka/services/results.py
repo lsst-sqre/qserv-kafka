@@ -380,7 +380,9 @@ class ResultProcessor(ABC):
                 else:
                     msg = "Unable to retrieve results"
                 await report_exception(exc, slack_client=self._slack_client)
-                logger.exception(msg, error=str(exc), elapsed=elapsed_seconds)
+                logger.exception(
+                    msg, elapsed=elapsed_seconds, **exc.to_logging_context()
+                )
                 error = exc.to_job_error()
             case TimeoutError():
                 await report_exception(exc, slack_client=self._slack_client)
