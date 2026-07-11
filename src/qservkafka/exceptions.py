@@ -44,6 +44,7 @@ __all__ = [
 class QueryError(SlackException):
     """Base class for reportable query errors."""
 
+    description: ClassVar[str] = "Unable to retrieve results"
     error: ClassVar[JobErrorCode] = JobErrorCode.backend_error
 
     def to_job_error(self) -> JobError:
@@ -404,6 +405,7 @@ class QservApiSqlError(QservApiError, BackendApiSqlError):
 class EncodingError(QueryError):
     """An error occurred while encoding the results into a VOTable."""
 
+    description = "Unable to encode results"
     error = JobErrorCode.encoding_error
 
     @classmethod
@@ -476,4 +478,5 @@ class TableUploadWebError(SlackWebException, QueryError):
 class UploadWebError(SlackWebException, QueryError):
     """Upload of the query results failed."""
 
+    description = "Unable to upload results"
     error = JobErrorCode.upload_failed

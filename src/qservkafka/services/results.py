@@ -373,19 +373,16 @@ class ResultProcessor(ABC):
         elapsed_seconds = elapsed.total_seconds()
 
         # Analyze the exception.
+        await report_exception(exc, slack_client=self._slack_client)
         match exc:
             case QueryError():
-                if isinstance(exc, UploadWebError):
-                    msg = "Unable to upload results"
-                else:
-                    msg = "Unable to retrieve results"
-                await report_exception(exc, slack_client=self._slack_client)
                 logger.exception(
-                    msg, elapsed=elapsed_seconds, **exc.to_logging_context()
+                    exc.description,
+                    elapsed=elapsed_seconds,
+                    **exc.to_logging_context(),
                 )
                 error = exc.to_job_error()
             case TimeoutError():
-                await report_exception(exc, slack_client=self._slack_client)
                 logger.exception(
                     "Retrieving and uploading results timed out",
                     elapsed=elapsed_seconds,
