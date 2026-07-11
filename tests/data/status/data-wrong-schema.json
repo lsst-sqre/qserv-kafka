@@ -1,0 +1,14 @@
+{
+  "job_id": "uws123",
+  "execution_id": "1",
+  "timestamp": 1743540791,
+  "status": "ERROR",
+  "error": {
+    "code": "encoding_error",
+    "message": "Error encoding h: error: 'l' format requires -2147483648 <= number <= 2147483647"
+  },
+  "metadata": {
+    "query": "SELECT TOP 10 * FROM table",
+    "database": "dp1"
+  }
+}

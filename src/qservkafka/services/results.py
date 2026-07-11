@@ -27,6 +27,7 @@ from ..events import (
 from ..exceptions import (
     BackendApiError,
     BackendApiTransientError,
+    QueryError,
     UploadWebError,
 )
 from ..models.kafka import JobError, JobErrorCode, JobResultInfo, JobStatus
@@ -293,7 +294,7 @@ class ResultProcessor(ABC):
         # Retrieve and upload the results.
         try:
             stats = await self._upload_results_with_retry(query, logger)
-        except (BackendApiError, UploadWebError, TimeoutError) as e:
+        except (QueryError, TimeoutError) as e:
             return await self._build_exception_status(query, e)
 
         # Delete the results if configured to do so.
@@ -350,7 +351,7 @@ class ResultProcessor(ABC):
     async def _build_exception_status(
         self,
         query: RunningQuery,
-        exc: BackendApiError | UploadWebError | TimeoutError,
+        exc: QueryError | TimeoutError,
     ) -> JobStatus:
         """Construct the job status for an exception.
 
@@ -372,17 +373,16 @@ class ResultProcessor(ABC):
         elapsed_seconds = elapsed.total_seconds()
 
         # Analyze the exception.
+        await report_exception(exc, slack_client=self._slack_client)
         match exc:
-            case BackendApiError() | UploadWebError():
-                if isinstance(exc, UploadWebError):
-                    msg = "Unable to upload results"
-                else:
-                    msg = "Unable to retrieve results"
-                await report_exception(exc, slack_client=self._slack_client)
-                logger.exception(msg, error=str(exc), elapsed=elapsed_seconds)
+            case QueryError():
+                logger.exception(
+                    exc.description,
+                    elapsed=elapsed_seconds,
+                    **exc.to_logging_context(),
+                )
                 error = exc.to_job_error()
             case TimeoutError():
-                await report_exception(exc, slack_client=self._slack_client)
                 logger.exception(
                     "Retrieving and uploading results timed out",
                     elapsed=elapsed_seconds,

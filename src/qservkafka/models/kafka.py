@@ -176,6 +176,14 @@ class JobResultColumnType(BaseModel):
         ),
     ] = False
 
+    @property
+    def type_description(self) -> str:
+        """Data type as a human-readable string."""
+        result = self.datatype.name
+        if self.arraysize:
+            result += "(" + self.arraysize.to_string() + ")"
+        return result
+
     def is_string(self) -> bool:
         """Check whether the underlying data type is a string."""
         return self.datatype.is_string()
@@ -467,6 +475,7 @@ class JobErrorCode(StrEnum):
     backend_request_error = "backend_request_error"
     backend_results_too_large = "backend_results_too_large"
     backend_sql_error = "backend_sql_error"
+    encoding_error = "encoding_error"
     invalid_request = "invalid_request"
     quota_exceeded = "quota_exceeded"
     result_timeout = "result_timeout"

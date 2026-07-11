@@ -7,12 +7,13 @@ from safir.slack.blockkit import (
     SlackException,
     SlackMessage,
     SlackTextBlock,
+    SlackTextField,
     SlackWebException,
 )
 from safir.slack.sentry import SentryEventInfo
 from sqlalchemy.exc import SQLAlchemyError
 
-from .models.kafka import JobError, JobErrorCode
+from .models.kafka import JobError, JobErrorCode, JobResultColumnType
 from .models.qserv import BaseResponse
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "BigQueryApiFailedError",
     "BigQueryApiNetworkError",
     "BigQueryApiProtocolError",
+    "EncodingError",
     "QservApiError",
     "QservApiFailedError",
     "QservApiProtocolError",
@@ -42,6 +44,7 @@ __all__ = [
 class QueryError(SlackException):
     """Base class for reportable query errors."""
 
+    description: ClassVar[str] = "Unable to retrieve results"
     error: ClassVar[JobErrorCode] = JobErrorCode.backend_error
 
     def to_job_error(self) -> JobError:
@@ -54,6 +57,16 @@ class QueryError(SlackException):
         """
         return JobError(code=self.error, message=str(self))
 
+    def to_logging_context(self) -> dict[str, Any]:
+        """Convert exception details to logging context.
+
+        Returns
+        -------
+        dict
+            Dictionary of field names to values.
+        """
+        return {"error": str(self)}
+
 
 class BackendApiError(QueryError):
     """Base class for failures talking to any database backend API.
@@ -62,16 +75,6 @@ class BackendApiError(QueryError):
     Specific backends (Qserv, BigQuery) raise subclasses of this.
     """
 
-    def to_logging_context(self) -> dict[str, Any]:
-        """Convert exception details to logging context.
-
-        Returns
-        -------
-        dict
-            Dictionary of field names to values.
-        """
-        return {"error": str(self)}
-
 
 class BackendApiFailedError(BackendApiError):
     """A backend API request returned a failure status.
@@ -79,17 +82,6 @@ class BackendApiFailedError(BackendApiError):
     This is a generic base class, backend-specific subclasses should provide
     additional context.
     """
-
-    @override
-    def to_logging_context(self) -> dict[str, Any]:
-        """Convert exception details to logging context.
-
-        Returns
-        -------
-        dict
-            Dictionary of field names to values.
-        """
-        return {"error": str(self)}
 
 
 class BackendApiProtocolError(BackendApiError):
@@ -410,6 +402,67 @@ class QservApiSqlError(QservApiError, BackendApiSqlError):
         return cls(f"SQL query error: {msg}")
 
 
+class EncodingError(QueryError):
+    """An error occurred while encoding the results into a VOTable."""
+
+    description = "Unable to encode results"
+    error = JobErrorCode.encoding_error
+
+    @classmethod
+    def from_exception(
+        cls, column: JobResultColumnType, exc: Exception
+    ) -> Self:
+        """Create the exception from column information and an exception.
+
+        Parameters
+        ----------
+        column
+            Specification for the column where the encoding failed.
+        exc
+            Underlying triggering exception.
+
+        Returns
+        -------
+        EncodingError
+            Newly-created exception.
+        """
+        if str(exc):
+            error = f"{type(exc).__name__}: {exc!s}"
+        else:
+            error = type(exc).__name__
+        return cls(column, f"Error encoding {column.name}: {error}")
+
+    def __init__(self, column: JobResultColumnType, message: str) -> None:
+        super().__init__(message)
+        self._column = column
+
+    @override
+    def to_logging_context(self) -> dict[str, Any]:
+        result = super().to_logging_context()
+        result["column"] = self._column.name
+        result["column_type"] = self._column.type_description
+        return result
+
+    @override
+    def to_slack(self) -> SlackMessage:
+        result = super().to_slack()
+        fields = [
+            SlackTextField(heading="Column", text=self._column.name),
+            SlackTextField(
+                heading="Column type", text=self._column.type_description
+            ),
+        ]
+        result.fields.extend(fields)
+        return result
+
+    @override
+    def to_sentry(self) -> SentryEventInfo:
+        info = super().to_sentry()
+        info.tags["column"] = self._column.name
+        info.tags["column_type"] = self._column.type_description
+        return info
+
+
 class QservApiWebError(QservApiError, BackendApiWebError):
     """A web request to Qserv failed at the HTTP protocol level."""
 
@@ -425,4 +478,5 @@ class TableUploadWebError(SlackWebException, QueryError):
 class UploadWebError(SlackWebException, QueryError):
     """Upload of the query results failed."""
 
+    description = "Unable to upload results"
     error = JobErrorCode.upload_failed
