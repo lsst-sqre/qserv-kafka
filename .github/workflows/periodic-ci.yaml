@@ -24,11 +24,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: ".python-version"
-
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -38,7 +33,7 @@ jobs:
         run: make update-deps
 
       - name: Run nox
-        run: uv run --only-group=nox nox run -s lint typing test
+        run: uv run --only-group=nox nox -s lint typing test
 
       - name: Report status
         if: failure()
