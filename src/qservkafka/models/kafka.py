@@ -1,5 +1,6 @@
 """Models for Kafka messages."""
 
+from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, override
@@ -52,6 +53,7 @@ __all__ = [
     "JobStatus",
     "JobTableUpload",
     "ReplicatedTableUpload",
+    "UploadTableBase",
     "UploadTablePartitionType",
 ]
 
@@ -261,7 +263,7 @@ def _partition_type_discriminator(v: Any) -> str:
     return str(val)
 
 
-class _UploadTableBase(BaseModel):
+class UploadTableBase(BaseModel, ABC):
     """Common fields for all upload table classes."""
 
     model_config = ConfigDict(validate_by_name=True)
@@ -309,12 +311,12 @@ class _UploadTableBase(BaseModel):
         """Name of the table."""
         return self.table_name.split(".", 1)[1]
 
+    @abstractmethod
     def to_ingest_fields(self) -> dict[str, str | int]:
         """Qserv ingest API fields specific to this partition strategy."""
-        return {}
 
 
-class ReplicatedTableUpload(_UploadTableBase):
+class ReplicatedTableUpload(UploadTableBase):
     """Upload table fully replicated across all Qserv nodes."""
 
     partition_type: Annotated[
@@ -322,8 +324,12 @@ class ReplicatedTableUpload(_UploadTableBase):
         Field(validation_alias="partitionType"),
     ] = None
 
+    @override
+    def to_ingest_fields(self) -> dict[str, str | int]:
+        return {}
 
-class DirectorTableUpload(_UploadTableBase):
+
+class DirectorTableUpload(UploadTableBase):
     """Upload table spatially partitioned by RA/Dec (Qserv director table)."""
 
     partition_type: Annotated[
@@ -355,7 +361,7 @@ class DirectorTableUpload(_UploadTableBase):
         }
 
 
-class DependentTableUpload(_UploadTableBase):
+class DependentTableUpload(UploadTableBase):
     """Upload table partitioned by FK reference to a director table."""
 
     partition_type: Annotated[
