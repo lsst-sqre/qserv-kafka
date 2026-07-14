@@ -75,7 +75,7 @@
       "tableName": "user_username.table",
       "sourceUrl": "https://gcs.example.com/table.csv",
       "schemaUrl": "https://gcs.example.com/table.json",
-      "partitionType": "DEPENDENT",
+      "partitionType": "dependent",
       "idColName": "objectId",
       "refDirectorDatabase": "dp1",
       "refDirectorTable": "Object",

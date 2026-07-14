@@ -163,7 +163,7 @@ def test_upload_table_dependent() -> None:
                     "tableName": "user_me.mysources",
                     "sourceUrl": "https://gcs.example.com/data.csv",
                     "schemaUrl": "https://gcs.example.com/schema.json",
-                    "partitionType": "DEPENDENT",
+                    "partitionType": "dependent",
                     "idColName": "objectId",
                     "refDirectorDatabase": "dp1",
                     "refDirectorTable": "Object",

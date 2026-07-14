@@ -246,8 +246,9 @@ class JobResultConfig(BaseModel):
 class UploadTablePartitionType(StrEnum):
     """Partition strategy for a TAP_UPLOAD table in Qserv."""
 
-    DIRECTOR = "DIRECTOR"
-    DEPENDENT = "DEPENDENT"
+    REPLICATED = "replicated"
+    DIRECTOR = "director"
+    DEPENDENT = "dependent"
 
 
 def _partition_type_discriminator(v: Any) -> str:
@@ -255,7 +256,9 @@ def _partition_type_discriminator(v: Any) -> str:
         val = v.get("partitionType", v.get("partition_type"))
     else:
         val = getattr(v, "partition_type", None)
-    return str(val) if val is not None else "replicated"
+    if val is None:
+        return UploadTablePartitionType.REPLICATED
+    return str(val)
 
 
 class _UploadTableBase(BaseModel):
@@ -315,7 +318,7 @@ class ReplicatedTableUpload(_UploadTableBase):
     """Upload table fully replicated across all Qserv nodes."""
 
     partition_type: Annotated[
-        Literal["replicated"] | None,
+        Literal[UploadTablePartitionType.REPLICATED] | None,
         Field(validation_alias="partitionType"),
     ] = None
 
@@ -402,9 +405,9 @@ class DependentTableUpload(_UploadTableBase):
 
 
 JobTableUpload = Annotated[
-    Annotated[ReplicatedTableUpload, Tag("replicated")]
-    | Annotated[DirectorTableUpload, Tag("DIRECTOR")]
-    | Annotated[DependentTableUpload, Tag("DEPENDENT")],
+    Annotated[ReplicatedTableUpload, Tag(UploadTablePartitionType.REPLICATED)]
+    | Annotated[DirectorTableUpload, Tag(UploadTablePartitionType.DIRECTOR)]
+    | Annotated[DependentTableUpload, Tag(UploadTablePartitionType.DEPENDENT)],
     Discriminator(_partition_type_discriminator),
 ]
 

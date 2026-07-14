@@ -75,7 +75,7 @@
       "tableName": "user_username.table",
       "sourceUrl": "https://gcs.example.com/table.csv",
       "schemaUrl": "https://gcs.example.com/table.json",
-      "partitionType": "DIRECTOR",
+      "partitionType": "director",
       "longitudeColName": "ra",
       "latitudeColName": "dec"
     }
