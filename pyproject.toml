@@ -69,11 +69,11 @@ dev = [
     "safir[testcontainers]>=11",
     "scriv[toml]",
     "testcontainers[mysql,redis]",
+    "uv",
 ]
 lint = [
     "prek",
     "ruff>=0.9",
-    "uv",
 ]
 nox = [
     "nox",
