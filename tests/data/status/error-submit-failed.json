@@ -1,0 +1,13 @@
+{
+  "errorInfo": {
+    "errorCode": "backend_error",
+    "errorMessage": "Qserv request failed: Some error"
+  },
+  "jobID": "uws123",
+  "metadata": {
+    "database": "dp1",
+    "query": "SELECT TOP 10 * FROM table"
+  },
+  "status": "ERROR",
+  "timestamp": "<ANY>"
+}

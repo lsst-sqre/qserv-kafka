@@ -1,0 +1,22 @@
+{
+  "errorInfo": {
+    "errorCode": "backend_error",
+    "errorMessage": "Query failed in backend"
+  },
+  "executionID": "1",
+  "jobID": "uws123",
+  "metadata": {
+    "database": "dp1",
+    "query": "SELECT TOP 10 * FROM table"
+  },
+  "queryInfo": {
+    "endTime": "<ANY>",
+    "progress": {
+      "completedChunks": 4,
+      "totalChunks": 10
+    },
+    "startTime": "<ANY>"
+  },
+  "status": "ERROR",
+  "timestamp": "<ANY>"
+}

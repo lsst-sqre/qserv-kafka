@@ -1,0 +1,17 @@
+{
+  "status": {
+    "collected_bytes": 150,
+    "completed_chunks": 4,
+    "czar_id": null,
+    "czar_type": null,
+    "error": null,
+    "final_rows": null,
+    "last_update": "2026-07-15T23:09:42Z",
+    "query": "SELECT TOP 10 * FROM table",
+    "query_begin": "2026-07-15T23:09:40Z",
+    "query_id": 4,
+    "status": "FAILED",
+    "total_chunks": 10
+  },
+  "success": 1
+}

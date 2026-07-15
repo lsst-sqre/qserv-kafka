@@ -35,8 +35,12 @@ class QservKafkaData(Data):
         AssertionError
             Raised if the data doesn't match.
         """
-        if self._update and execution_id is None:
+        if self._update:
+            old_execution_id = seen.execution_id
+            if execution_id is not None:
+                seen.execution_id = execution_id
             self.write_pydantic(seen, path, exclude_defaults=True)
+            seen.execution_id = old_execution_id
         seen_json = seen.model_dump(mode="json", exclude_defaults=True)
         expected_json = self.read_json(path)
         if execution_id is not None:

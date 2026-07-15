@@ -1,0 +1,7 @@
+{
+  "error": "Some error",
+  "error_ext": {
+    "foo": "bar"
+  },
+  "success": 0
+}

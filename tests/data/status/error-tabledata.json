@@ -1,0 +1,13 @@
+{
+  "errorInfo": {
+    "errorCode": "invalid_request",
+    "errorMessage": "TABLEDATA serialization not supported"
+  },
+  "jobID": "uws123",
+  "metadata": {
+    "database": "dp1",
+    "query": "SELECT TOP 10 * FROM table"
+  },
+  "status": "ERROR",
+  "timestamp": "<ANY>"
+}

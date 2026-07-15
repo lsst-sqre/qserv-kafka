@@ -1,0 +1,13 @@
+{
+  "errorInfo": {
+    "errorCode": "invalid_request",
+    "errorMessage": "arraysize only supported for char and unicodeChar fields"
+  },
+  "jobID": "uws123",
+  "metadata": {
+    "database": "dp1",
+    "query": "SELECT TOP 10 * FROM table"
+  },
+  "status": "ERROR",
+  "timestamp": "<ANY>"
+}

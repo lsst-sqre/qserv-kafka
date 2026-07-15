@@ -1,0 +1,13 @@
+{
+  "errorInfo": {
+    "errorCode": "backend_request_error",
+    "errorMessage": "Status 500 from POST https://qserv.example.com/query-async?version=51"
+  },
+  "jobID": "uws123",
+  "metadata": {
+    "database": "dp1",
+    "query": "SELECT TOP 10 * FROM table"
+  },
+  "status": "ERROR",
+  "timestamp": "<ANY>"
+}
