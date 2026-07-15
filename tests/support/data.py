@@ -1,197 +1,82 @@
 """Utilities for reading test data."""
 
-import json
 from datetime import datetime
-from pathlib import Path
-from typing import Any
 
-from qservkafka.models.kafka import JobCancel, JobRun, JobStatus
+from safir.testing.data import Data
+
+from qservkafka.models.kafka import JobStatus
 from qservkafka.models.qserv import QservAsyncStatusData
 
-from ..support.constants import ANY_DATETIME, ANY_OPTIONAL_DATETIME
-
-__all__ = [
-    "read_test_data",
-    "read_test_job_run",
-    "read_test_job_status",
-    "read_test_job_status_json",
-    "read_test_json",
-    "read_test_qserv_status",
-]
+__all__ = ["QservKafkaData"]
 
 
-def read_test_data(filename: str) -> str:
-    """Read an input data file and return its contents.
+class QservKafkaData(Data):
+    """Manage test data for the qserv-kafka bridge."""
 
-    Parameters
-    ----------
-    config
-        Configuration from which to read data (the name of one of the
-        directories under :file:`tests/data`).
-    filename
-        File to read.
+    def assert_job_status_matches(
+        self, seen: JobStatus, path: str, *, execution_id: str | None = None
+    ) -> None:
+        """Raise an assertion if the job status model doesn't match.
 
-    Returns
-    -------
-    str
-        Contents of the file.
-    """
-    return (Path(__file__).parent.parent / "data" / filename).read_text()
+        Parameters
+        ----------
+        seen
+            Expected job status.
+        path
+            Path relative to :file:`tests/data` of the expected output. A
+            ``.json`` extension will be added automatically.
+        execution_id
+            If provided, override the expected execution ID with the given
+            value. If this is specified, do not overwrite the expected data
+            even if data updating is enabled.
 
+        Raises
+        ------
+        AssertionError
+            Raised if the data doesn't match.
+        """
+        if self._update and execution_id is None:
+            self.write_pydantic(seen, path, exclude_defaults=True)
+        seen_json = seen.model_dump(mode="json", exclude_defaults=True)
+        expected_json = self.read_json(path)
+        if execution_id is not None:
+            expected_json["executionID"] = execution_id
+        assert seen_json == expected_json
 
-def read_test_json(filename: str) -> Any:
-    """Read test data as JSON and return its decoded form.
+    def read_qserv_status(
+        self,
+        path: str,
+        *,
+        query_id: int | None = None,
+        query_begin: datetime | None = None,
+        last_update: datetime | None = None,
+    ) -> QservAsyncStatusData:
+        """Read the result of q Qserv query status API call.
 
-    Any ``<ANY>`` strings in the JSON are converted to `unittest.mock.ANY`
-    after being read in.
+        Parameters
+        ----------
+        path
+            Path relative to :file:`tests/data` of the expected output. A
+            ``.json`` extension will be added automatically.
+        query_id
+            Override the ``execution_id`` field.
+        query_begin
+            Override the ``query_begin`` timestamp. Any microsecond value
+            will be dropped since Qserv doesn't include microseconds.
+        last_update
+            Override the ``last_update`` timestamp. Any microsecond value
+            will be dropped since Qserv doesn't include microseconds.
 
-    Parameters
-    ----------
-    filename
-        File to read relative to the test data directory, without any
-        ``.json`` suffix. Must be in JSON format.
-    mock
-
-    Returns
-    -------
-    typing.Any
-        Parsed contents of the file.
-    """
-    path = Path(__file__).parent.parent / "data" / (filename + ".json")
-    with path.open("r") as f:
-        return json.load(f)
-
-
-def read_test_job_cancel(filename: str) -> JobCancel:
-    """Read test data parsed as a Kafka message to cancel a query.
-
-    Parameters
-    ----------
-    filename
-        File to read relative to the test cancel directory, without the
-        ``.json`` suffix.
-
-    Returns
-    -------
-    JobCancel
-        Parsed contents of the file.
-    """
-    return JobCancel.model_validate(read_test_json(f"cancel/{filename}"))
-
-
-def read_test_job_run(filename: str) -> JobRun:
-    """Read test data parsed as a Kafka message to run a query.
-
-    Parameters
-    ----------
-    filename
-        File to read relative to the test jobs directory, without the
-        ``.json`` suffix.
-
-    Returns
-    -------
-    JobRun
-        Parsed contents of the file.
-    """
-    return JobRun.model_validate(read_test_json(f"jobs/{filename}"))
-
-
-def read_test_job_run_json(filename: str) -> JobRun:
-    """Read test data parsed as JSON to run a query.
-
-    Parameters
-    ----------
-    filename
-        File to read relative to the test jobs directory, without the
-        ``.json`` suffix.
-
-    Returns
-    -------
-    JobRun
-        Parsed contents of the file.
-    """
-    return read_test_json(f"jobs/{filename}")
-
-
-def read_test_job_status(filename: str) -> JobStatus:
-    """Read test data parsed as a Kafka job status message.
-
-    Parameters
-    ----------
-    filename
-        File to read relative to the test status directory, without the
-        ``.json`` suffix.
-
-    Returns
-    -------
-    JobStatus
-        Parsed contents of the file.
-    """
-    result = JobStatus.model_validate(read_test_json(f"status/{filename}"))
-    result.timestamp = ANY_DATETIME
-    if result.query_info:
-        result.query_info.start_time = ANY_DATETIME
-        if result.query_info.end_time:
-            result.query_info.end_time = ANY_OPTIONAL_DATETIME
-    return result
-
-
-def read_test_job_status_json(filename: str) -> dict[str, Any]:
-    """Read JSON for a Kafka job status message.
-
-    Parameters
-    ----------
-    filename
-        File to read relative to the test status directory, without the
-        ``.json`` suffix.
-
-    Returns
-    -------
-    JobStatus
-        Parsed contents of the file.
-    """
-    model = JobStatus.model_validate(read_test_json(f"status/{filename}"))
-    result = model.model_dump(mode="json")
-    result["timestamp"] = ANY_DATETIME
-    if result.get("queryInfo"):
-        result["queryInfo"]["startTime"] = ANY_DATETIME
-        if result["queryInfo"].get("endTime"):
-            result["queryInfo"]["endTime"] = ANY_DATETIME
-    return result
-
-
-def read_test_qserv_status(
-    filename: str,
-    *,
-    query_id: int | None = None,
-    query_begin: datetime | None = None,
-    last_update: datetime | None = None,
-) -> QservAsyncStatusData:
-    """Read the result of q Qserv query status API call.
-
-    Parameters
-    ----------
-    filename
-        File to read relative to the test :file:`qserv` directory, without the
-        ``.json`` suffix.
-    query_id
-        Override the ``execution_id`` number.
-    query_begin
-        Override the ``query_begin`` timestamp.
-    last_update
-        Override the ``last_update`` timestamp.
-
-    Returns
-    -------
-    QservAsyncStatusData
-        Parsed contents of the file.
-    """
-    model_data = read_test_json(f"qserv/{filename}")
-    model = QservAsyncStatusData.model_validate(model_data)
-    if query_id:
-        model.query_id = query_id
-    if query_begin:
-        model.query_begin = query_begin.replace(microsecond=0)
-    if last_update:
-        model.last_update = last_update.replace(microsecond=0)
-    return model
+        Returns
+        -------
+        QservAsyncStatusData
+            Parsed contents of the file.
+        """
+        model = self.read_pydantic(QservAsyncStatusData, path)
+        if query_id is not None:
+            model.query_id = query_id
+        if query_begin:
+            model.query_begin = query_begin.replace(microsecond=0)
+        if last_update:
+            model.last_update = last_update.replace(microsecond=0)
+        return model

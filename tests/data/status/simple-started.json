@@ -1,17 +1,17 @@
 {
-  "job_id": "uws123",
-  "execution_id": "1",
-  "timestamp": 1743540791,
-  "status": "EXECUTING",
-  "query_info": {
-    "start_time": 1743540791,
-    "progress": {
-      "total_chunks": 10,
-      "completed_chunks": 0
-    }
-  },
+  "executionID": "1",
+  "jobID": "uws123",
   "metadata": {
-    "query": "SELECT TOP 10 * FROM table",
-    "database": "dp1"
-  }
+    "database": "dp1",
+    "query": "SELECT TOP 10 * FROM table"
+  },
+  "queryInfo": {
+    "progress": {
+      "completedChunks": 0,
+      "totalChunks": 10
+    },
+    "startTime": "<ANY>"
+  },
+  "status": "EXECUTING",
+  "timestamp": "<ANY>"
 }

@@ -16,8 +16,9 @@ from safir.metrics import metrics_configuration_factory
 
 from qservkafka.config import config
 from qservkafka.factory import Factory
+from qservkafka.models.kafka import JobRun
 
-from ..support.data import read_test_job_run, read_test_job_status
+from ..support.data import QservKafkaData
 from ..support.qserv import MockQserv
 
 
@@ -47,6 +48,7 @@ def set_log_level(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_success(
     *,
+    data: QservKafkaData,
     factory: Factory,
     mock_qserv: MockQserv,
     respx_mock: respx.Router,
@@ -55,14 +57,12 @@ async def test_success(
     """Test for memory leaks in the immediate job processing flow."""
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    job = read_test_job_run("data")
-    expected_status = read_test_job_status("data-completed")
+    job = data.read_pydantic(JobRun, "jobs/data")
     mock_qserv.set_immediate_success(job)
 
     # Run one query first to set up the various internal Python caches.
     status = await query_service.start_query(job)
-    expected_status.execution_id = "1"
-    assert status == expected_status
+    data.assert_job_status_matches(status, "status/data-completed")
 
     # Start tracing memory.
     gc.collect()
@@ -72,8 +72,9 @@ async def test_success(
     # Run 100 more tasks with memory tracing.
     for i in range(2, 102):
         status = await query_service.start_query(job)
-        expected_status.execution_id = str(i)
-        assert status == expected_status
+        data.assert_job_status_matches(
+            status, "status/data-completed", execution_id=str(i)
+        )
 
     # Ensure all the queries have been processed.
     assert await state_store.get_active_queries() == set()

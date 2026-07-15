@@ -8,12 +8,9 @@ from safir.arq import RedisArqQueue
 from testcontainers.redis import RedisContainer
 
 from qservkafka.factory import Factory
+from qservkafka.models.kafka import JobRun
 
-from ..support.data import (
-    read_test_job_run,
-    read_test_job_status,
-    read_test_qserv_status,
-)
+from ..support.data import QservKafkaData
 from ..support.qserv import MockQserv
 
 
@@ -21,20 +18,21 @@ from ..support.qserv import MockQserv
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
-async def test_dispatch(factory: Factory, mock_qserv: MockQserv) -> None:
+async def test_dispatch(
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
+) -> None:
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
     monitor = await factory.create_query_monitor()
-    job = read_test_job_run("simple")
-    expected_status = read_test_job_status("simple-started")
+    job = data.read_pydantic(JobRun, "jobs/simple")
 
     status = await query_service.start_query(job)
-    assert status == expected_status
+    data.assert_job_status_matches(status, "status/simple-started")
 
     qserv_status = mock_qserv.get_status(1)
     now = datetime.now(tz=UTC).replace(microsecond=0)
-    qserv_status = read_test_qserv_status(
-        "simple-completed",
+    qserv_status = data.read_qserv_status(
+        "qserv/simple-completed",
         query_begin=qserv_status.query_begin,
         last_update=now,
     )
@@ -44,8 +42,7 @@ async def test_dispatch(factory: Factory, mock_qserv: MockQserv) -> None:
     assert query
     qserv_status = mock_qserv.get_status(1)
     with patch.object(RedisArqQueue, "enqueue") as mock:
-        # Pass None to let monitor fetch status from backend
-        assert await monitor.check_query(query, None) is None
+        assert await monitor.check_query(query, status=None) is None
         assert mock.call_args_list == [call("handle_finished_query", "1")]
         mock.reset_mock()
 
@@ -54,28 +51,31 @@ async def test_dispatch(factory: Factory, mock_qserv: MockQserv) -> None:
         # should not dispatch it again.
         query = await state_store.get_query(str(1))
         assert query
-        # Pass None to let monitor fetch status from backend
-        assert await monitor.check_query(query, None) is None
+        assert await monitor.check_query(query, status=None) is None
         assert mock.call_args_list == []
 
 
 @pytest.mark.asyncio
 async def test_quota(
-    factory: Factory, mock_qserv: MockQserv, redis: RedisContainer
+    *,
+    data: QservKafkaData,
+    factory: Factory,
+    mock_qserv: MockQserv,
+    redis: RedisContainer,
 ) -> None:
     redis_client = redis.get_client()
     query_service = factory.create_query_service()
     monitor = await factory.create_query_monitor()
-    job = read_test_job_run("simple")
-    expected_status = read_test_job_status("simple-started")
+    job = data.read_pydantic(JobRun, "jobs/simple")
     redis_key = f"rate:{job.owner}"
 
     # Start a couple of jobs.
     status = await query_service.start_query(job)
-    assert status == expected_status
+    data.assert_job_status_matches(status, "status/simple-started")
     status = await query_service.start_query(job)
-    expected_status.execution_id = "2"
-    assert status == expected_status
+    data.assert_job_status_matches(
+        status, "status/simple-started", execution_id="2"
+    )
 
     # Check that the rate limit information is correct in Redis.
     assert redis_client.get(redis_key) == b"2"

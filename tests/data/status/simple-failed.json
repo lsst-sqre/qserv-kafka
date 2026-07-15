@@ -1,22 +1,22 @@
 {
-  "job_id": "uws123",
-  "execution_id": "1",
-  "timestamp": 1743540791,
-  "status": "ERROR",
-  "error": {
-    "code": "backend_error",
-    "message": "Query failed in backend: Some Qserv error"
+  "errorInfo": {
+    "errorCode": "backend_error",
+    "errorMessage": "Query failed in backend: Some Qserv error"
   },
-  "query_info": {
-    "start_time": 1743540791,
-    "end_time": 1743540819,
-    "progress": {
-      "total_chunks": 10,
-      "completed_chunks": 8
-    }
-  },
+  "executionID": "1",
+  "jobID": "uws123",
   "metadata": {
-    "query": "SELECT TOP 10 * FROM table",
-    "database": "dp1"
-  }
+    "database": "dp1",
+    "query": "SELECT TOP 10 * FROM table"
+  },
+  "queryInfo": {
+    "endTime": "<ANY>",
+    "progress": {
+      "completedChunks": 8,
+      "totalChunks": 10
+    },
+    "startTime": "<ANY>"
+  },
+  "status": "ERROR",
+  "timestamp": "<ANY>"
 }

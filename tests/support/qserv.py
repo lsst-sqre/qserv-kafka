@@ -34,12 +34,7 @@ from qservkafka.models.qserv import (
 from qservkafka.storage import qserv
 from qservkafka.storage.qserv import API_VERSION
 
-from .data import (
-    read_test_data,
-    read_test_job_run,
-    read_test_json,
-    read_test_qserv_status,
-)
+from .data import QservKafkaData
 
 __all__ = ["MockQserv", "register_mock_qserv"]
 
@@ -98,6 +93,8 @@ class MockQserv:
 
     Parameters
     ----------
+    data
+        Test data management class.
     sessionmaker
         Factory for database sessions.
     respx_mock
@@ -119,6 +116,7 @@ class MockQserv:
 
     def __init__(
         self,
+        data: QservKafkaData,
         sessionmaker: async_sessionmaker,
         respx_mock: respx.Router,
         *,
@@ -126,6 +124,7 @@ class MockQserv:
     ) -> None:
         self.flaky = flaky
 
+        self._data = data
         self._sessionmaker = sessionmaker
         self._respx_mock = respx_mock
 
@@ -455,7 +454,7 @@ class MockQserv:
         url = str(job.result_url)
         self._respx_mock.put(url).mock(side_effect=self.upload)
         assert not self._results_stored
-        data = read_test_json("results/data")
+        data = self._data.read_json("results/data")
         async with self._sessionmaker() as session:
             async with session.begin():
                 for row in data:
@@ -491,16 +490,16 @@ class MockQserv:
         self._next_query_id += 1
         now = datetime.now(tz=UTC).replace(microsecond=0)
         if self._immediate_success:
-            self._queries[query_id] = read_test_qserv_status(
-                "data-completed",
+            self._queries[query_id] = self._data.read_qserv_status(
+                "qserv/data-completed",
                 query_id=query_id,
                 query_begin=now,
                 last_update=now,
             )
             await self.store_results(self._immediate_success)
         else:
-            status = read_test_qserv_status(
-                "data-executing",
+            status = self._data.read_qserv_status(
+                "qserv/data-executing",
                 query_id=query_id,
                 query_begin=now,
                 last_update=now,
@@ -563,13 +562,13 @@ class MockQserv:
         assert self._expected_job
         header = self._expected_job.result_format.envelope.header
         if self._expected_job.maxrec == 1:
-            expected = read_test_data("results/data-maxrec.binary2")
+            expected = self._data.read_text("results/data-maxrec.binary2")
             footer = self._expected_job.result_format.envelope.footer_overflow
         elif self._expected_job.maxrec == 0:
             expected = "\n"
             footer = self._expected_job.result_format.envelope.footer_overflow
         else:
-            expected = read_test_data("results/data.binary2")
+            expected = self._data.read_text("results/data.binary2")
             footer = self._expected_job.result_format.envelope.footer
         assert request.content.decode() == header + expected + footer
         if self._upload_delay:
@@ -611,9 +610,12 @@ class MockQserv:
         body.close()
 
         # Check the request is correct.
-        job = self._immediate_success or read_test_job_run("upload")
-        upload_table = job.upload_tables[0]
-        expected: dict[str, str] = {
+        if self._immediate_success:
+            expected_job = self._immediate_success
+        else:
+            expected_job = self._data.read_pydantic(JobRun, "jobs/upload")
+        upload_table = expected_job.upload_tables[0]
+        expected = {
             "database": upload_table.database,
             "table": upload_table.table,
             "fields_terminated_by": ",",
@@ -675,22 +677,25 @@ class MockQserv:
 
 @asynccontextmanager
 async def register_mock_qserv(
+    data: QservKafkaData,
     respx_mock: respx.Router,
-    base_url: str,
     engine: AsyncEngine,
     *,
+    base_url: str,
     flaky: bool = False,
 ) -> AsyncGenerator[MockQserv]:
     """Mock out the Qserv REST API.
 
     Parameters
     ----------
+    data
+        Test data management class.
     respx_mock
         Mock router.
-    base_url
-        Base URL on which the mock API should appear to listen.
     engine
         Database engine.
+    base_url
+        Base URL on which the mock API should appear to listen.
     flaky
         Whether to simulate a flaky Qserv by returning SQL or HTTP errors
         every other request.
@@ -701,7 +706,7 @@ async def register_mock_qserv(
         Mock Qserv API object.
     """
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
-    mock = MockQserv(sessionmaker, respx_mock, flaky=flaky)
+    mock = MockQserv(data, sessionmaker, respx_mock, flaky=flaky)
     base = re.escape(str(base_url).rstrip("/"))
     regex = rf"{base}/query-async"
     respx_mock.post(url__regex=regex).mock(side_effect=mock.submit)
@@ -716,7 +721,7 @@ async def register_mock_qserv(
     regex = rf"{base}/query-async/status/(?P<query_id>[0-9]+)"
     respx_mock.get(url__regex=regex).mock(side_effect=mock.status)
 
-    upload_job = read_test_job_run("upload")
+    upload_job = data.read_pydantic(JobRun, "jobs/upload")
     for upload_table in upload_job.upload_tables:
         url = upload_table.source_url
         respx_mock.get(url).mock(side_effect=mock.get_upload_source)
