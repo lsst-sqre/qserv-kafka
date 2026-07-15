@@ -1,7 +1,6 @@
 """Tests for creating new queries."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import ANY
 
 import pytest
 from httpx import Response
@@ -105,31 +104,7 @@ async def test_immediate(
     events = factory.events.qserv_success.published
     assert len(events) == 1
     event = events[0]
-    assert event.model_dump(mode="json") == {
-        "job_id": job.job_id,
-        "username": job.owner,
-        "elapsed": ANY,
-        "kafka_elapsed": ANY,
-        "qserv_elapsed": ANY,
-        "result_elapsed": ANY,
-        "submit_elapsed": ANY,
-        "delete_elapsed": ANY,
-        "rows": 2,
-        "qserv_size": 250,
-        "qserv_rate": None,
-        "encoded_size": len(data.read_text("results/data.binary2")),
-        "result_size": (
-            len(data.read_text("results/data.binary2"))
-            + len(job.result_format.envelope.header)
-            + len(job.result_format.envelope.footer)
-        ),
-        "rate": event.encoded_size / event.elapsed.total_seconds(),
-        "result_rate": (
-            event.encoded_size / event.result_elapsed.total_seconds()
-        ),
-        "upload_tables": 0,
-        "immediate": True,
-    }
+    data.assert_pydantic_matches(event, "events/success")
 
     # These time fields should include the fake Kafka delay of 10s.
     for field in ("elapsed", "kafka_elapsed"):
@@ -145,6 +120,12 @@ async def test_immediate(
         "delete_elapsed",
     ):
         assert timedelta(seconds=0) <= getattr(event, field) <= elapsed
+
+    # Check the calculated rates.
+    assert event.rate == event.encoded_size / event.elapsed.total_seconds()
+    assert event.result_rate == (
+        event.encoded_size / event.result_elapsed.total_seconds()
+    )
 
     # It should be possible to immediately run the same query again. This
     # tests that the results were deleted from the database, and thus can be
@@ -201,25 +182,7 @@ async def test_no_delete(
     assert isinstance(factory.events.qserv_success, MockEventPublisher)
     events = factory.events.qserv_success.published
     assert len(events) == 1
-    assert events[0].model_dump(mode="json") == {
-        "job_id": job.job_id,
-        "username": job.owner,
-        "elapsed": ANY,
-        "kafka_elapsed": ANY,
-        "qserv_elapsed": ANY,
-        "result_elapsed": ANY,
-        "submit_elapsed": ANY,
-        "delete_elapsed": None,
-        "rows": 2,
-        "qserv_size": 250,
-        "qserv_rate": ANY,
-        "encoded_size": len(data.read_text("results/data.binary2")),
-        "result_size": ANY,
-        "rate": ANY,
-        "result_rate": ANY,
-        "upload_tables": 0,
-        "immediate": True,
-    }
+    data.assert_pydantic_matches(events[0], "events/success-no-delete")
 
 
 @pytest.mark.asyncio
@@ -256,11 +219,7 @@ async def test_cancel(data: QservKafkaData, factory: Factory) -> None:
     assert isinstance(factory.events.query_abort, MockEventPublisher)
     events = factory.events.query_abort.published
     assert len(events) == 1
-    assert events[0].model_dump(mode="json") == {
-        "job_id": job.job_id,
-        "username": job.owner,
-        "elapsed": ANY,
-    }
+    data.assert_pydantic_matches(events[0], "events/abort")
     assert timedelta(seconds=0) < events[0].elapsed <= (finish - start_time)
 
 
@@ -449,36 +408,12 @@ async def test_upload(
     assert isinstance(factory.events.qserv_success, MockEventPublisher)
     events = factory.events.qserv_success.published
     assert len(events) == 1
-    assert events[0].model_dump(mode="json") == {
-        "job_id": job.job_id,
-        "username": job.owner,
-        "elapsed": ANY,
-        "kafka_elapsed": ANY,
-        "qserv_elapsed": ANY,
-        "result_elapsed": ANY,
-        "submit_elapsed": ANY,
-        "delete_elapsed": ANY,
-        "rows": 2,
-        "qserv_size": 250,
-        "qserv_rate": ANY,
-        "encoded_size": len(data.read_text("results/data.binary2")),
-        "result_size": ANY,
-        "rate": ANY,
-        "result_rate": ANY,
-        "upload_tables": 1,
-        "immediate": True,
-    }
+    data.assert_pydantic_matches(events[0], "events/success-upload")
     assert isinstance(factory.events.temporary_table, MockEventPublisher)
     events = factory.events.temporary_table.published
     assert len(events) == 1
-    upload_event = events[0]
-    assert upload_event.model_dump(mode="json") == {
-        "job_id": job.job_id,
-        "username": job.owner,
-        "size": len(mock_qserv._UPLOAD_CSV),
-        "elapsed": ANY,
-    }
-    assert timedelta(seconds=0) < upload_event.elapsed <= (finish - start)
+    data.assert_pydantic_matches(events[0], "events/upload")
+    assert timedelta(seconds=0) < events[0].elapsed <= (finish - start)
 
     # Start another upload query, but this time don't let it complete
     # immediately. In this case, the uploaded table should still be present

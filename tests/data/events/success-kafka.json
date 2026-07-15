@@ -1,0 +1,19 @@
+{
+  "delete_elapsed": "<ANY>",
+  "elapsed": "<ANY>",
+  "encoded_size": 244,
+  "immediate": false,
+  "job_id": "uws123",
+  "kafka_elapsed": "<ANY>",
+  "qserv_elapsed": "PT0S",
+  "qserv_rate": null,
+  "qserv_size": 250,
+  "rate": "<ANY>",
+  "result_elapsed": "<ANY>",
+  "result_rate": "<ANY>",
+  "result_size": 436,
+  "rows": 2,
+  "submit_elapsed": "<ANY>",
+  "upload_tables": 0,
+  "username": "username"
+}

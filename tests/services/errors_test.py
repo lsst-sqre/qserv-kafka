@@ -1,7 +1,7 @@
 """Tests for errors during query creation or completion."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import ANY, patch
+from unittest.mock import patch
 
 import pytest
 from httpx import Response
@@ -168,14 +168,8 @@ async def test_status_errors(
     assert isinstance(factory.events.query_failure, MockEventPublisher)
     events = factory.events.query_failure.published
     assert len(events) == 1
-    failure_event = events[0]
-    assert failure_event.model_dump(mode="json") == {
-        "job_id": job.job_id,
-        "username": job.owner,
-        "error": "backend_error",
-        "elapsed": ANY,
-    }
-    assert timedelta(seconds=0) < failure_event.elapsed <= (now - start)
+    data.assert_pydantic_matches(events[0], "events/error")
+    assert timedelta(seconds=0) < events[0].elapsed <= (now - start)
 
     assert await state_store.get_active_queries() == set()
 
