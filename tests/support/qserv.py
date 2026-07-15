@@ -611,9 +611,9 @@ class MockQserv:
         body.close()
 
         # Check the request is correct.
-        expected_job = read_test_job_run("upload")
-        upload_table = expected_job.upload_tables[0]
-        expected = {
+        job = self._immediate_success or read_test_job_run("upload")
+        upload_table = job.upload_tables[0]
+        expected: dict[str, str] = {
             "database": upload_table.database,
             "table": upload_table.table,
             "fields_terminated_by": ",",
@@ -621,6 +621,8 @@ class MockQserv:
             "collation_name": "utf8mb4_uca1400_ai_ci",
             "timeout": str(int(config.qserv_upload_timeout.total_seconds())),
         }
+        for key, value in upload_table.to_ingest_fields().items():
+            expected[key] = str(value)
         assert data == expected
         assert files == [
             (

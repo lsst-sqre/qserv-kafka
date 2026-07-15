@@ -30,7 +30,13 @@ from ..exceptions import (
     QueryError,
     UploadWebError,
 )
-from ..models.kafka import JobError, JobErrorCode, JobResultInfo, JobStatus
+from ..models.kafka import (
+    JobError,
+    JobErrorCode,
+    JobResultInfo,
+    JobRun,
+    JobStatus,
+)
 from ..models.query import AsyncQueryPhase
 from ..models.state import Query, RunningQuery
 from ..models.votable import UploadStats
@@ -465,6 +471,30 @@ class ResultProcessor(ABC):
             metadata=metadata,
         )
 
+    async def delete_upload_databases(
+        self, job: JobRun, logger: BoundLogger
+    ) -> None:
+        """Delete any temporary databases created for uploaded tables.
+
+        Parameters
+        ----------
+        job
+            Job metadata.
+        logger
+            Logger to use.
+        """
+        databases_to_delete = {t.database for t in job.upload_tables}
+        for database in databases_to_delete:
+            try:
+                await self._backend.delete_database(database)
+            except BackendApiError as e:
+                await report_exception(e, slack_client=self._slack_client)
+                logger.exception(
+                    "Unable to delete temporary database, orphaning it",
+                    error=str(e),
+                    database_name=database,
+                )
+
     async def _delete_query_data(
         self, query: Query, logger: BoundLogger
     ) -> None:
@@ -482,19 +512,7 @@ class ResultProcessor(ABC):
         """
         await self._state.delete_query(query.query_id)
         await self._rate_store.end_query(query.job.owner)
-
-        # Delete any temporary databases.
-        databases_to_delete = {t.database for t in query.job.upload_tables}
-        for database in databases_to_delete:
-            try:
-                await self._backend.delete_database(database)
-            except BackendApiError as e:
-                await report_exception(e, slack_client=self._slack_client)
-                logger.exception(
-                    "Unable to delete temporary database, orphaning it",
-                    error=str(e),
-                    database_name=database,
-                )
+        await self.delete_upload_databases(query.job, logger)
 
     async def _upload_results(self, query: RunningQuery) -> UploadStats:
         """Retrieve and upload the results.

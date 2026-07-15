@@ -334,16 +334,18 @@ class QservClient(DatabaseBackend):
         schema = await self._get_table(upload.schema_url)
         source = await self._get_table(upload.source_url)
         start = datetime.now(tz=UTC)
+        data: dict[str, str | int] = {
+            "database": upload.database,
+            "table": upload.table,
+            "fields_terminated_by": ",",
+            "charset_name": "utf8mb4",
+            "collation_name": "utf8mb4_uca1400_ai_ci",
+            "timeout": int(config.qserv_upload_timeout.total_seconds()),
+        }
+        data.update(upload.to_ingest_fields())
         await self._post_multipart(
             "/ingest/csv",
-            data={
-                "database": upload.database,
-                "table": upload.table,
-                "fields_terminated_by": ",",
-                "charset_name": "utf8mb4",
-                "collation_name": "utf8mb4_uca1400_ai_ci",
-                "timeout": int(config.qserv_upload_timeout.total_seconds()),
-            },
+            data=data,
             files=(
                 ("schema", ("schema.json", schema, "application/json")),
                 ("rows", ("table.csv", source, "text/csv")),

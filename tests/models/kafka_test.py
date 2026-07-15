@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.models.kafka import (
+    DependentTableUpload,
     JobError,
     JobErrorCode,
     JobMetadata,
@@ -139,3 +140,42 @@ def test_job_status() -> None:
             "database": "dp1",
         },
     }
+
+
+def test_upload_table_dependent() -> None:
+    job = JobRun.model_validate(
+        {
+            "query": "SELECT TOP 10 * FROM table",
+            "jobID": "uws123",
+            "ownerID": "me",
+            "resultDestination": "https://bucket/result.xml",
+            "resultFormat": {
+                "format": {"type": "VOTable", "serialization": "BINARY2"},
+                "envelope": {
+                    "header": "<VOTable>",
+                    "footer": "</VOTable>",
+                    "footerOverflow": "</VOTable>",
+                },
+                "columnTypes": [],
+            },
+            "uploadTables": [
+                {
+                    "tableName": "user_me.mysources",
+                    "sourceUrl": "https://gcs.example.com/data.csv",
+                    "schemaUrl": "https://gcs.example.com/schema.json",
+                    "partitionType": "dependent",
+                    "idColName": "objectId",
+                    "refDirectorDatabase": "dp1",
+                    "refDirectorTable": "Object",
+                    "refDirectorIdColName": "objectId",
+                }
+            ],
+        }
+    )
+    assert len(job.upload_tables) == 1
+    upload = job.upload_tables[0]
+    assert isinstance(upload, DependentTableUpload)
+    assert upload.id_col_name == "objectId"
+    assert upload.ref_director_database == "dp1"
+    assert upload.ref_director_table == "Object"
+    assert upload.ref_director_id_col_name == "objectId"

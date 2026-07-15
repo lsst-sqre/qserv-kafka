@@ -4,13 +4,15 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY
 
 import pytest
+from httpx import Response
 from pydantic import SecretStr
 from safir.metrics import MockEventPublisher
 from safir.testing.slack import MockSlackWebhook
+from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.config import config
 from qservkafka.factory import Factory
-from qservkafka.models.kafka import JobRun, JobStatus
+from qservkafka.models.kafka import JobErrorCode, JobRun, JobStatus
 from qservkafka.services.query import QueryService
 
 from ..support.data import (
@@ -472,3 +474,64 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
 
     # Only the second query should be active.
     assert await state_store.get_active_queries() == {"2"}
+
+
+@pytest.mark.asyncio
+async def test_upload_director(
+    factory: Factory, mock_qserv: MockQserv
+) -> None:
+    """Test upload of a spatially-partitioned (director) table."""
+    query_service = factory.create_query_service()
+    job = read_test_job_run("upload-director")
+    completed_status = read_test_job_status("upload-completed")
+
+    await assert_query_successful(
+        query_service=query_service,
+        mock_qserv=mock_qserv,
+        job=job,
+        expected_status=completed_status,
+    )
+    assert mock_qserv.get_uploaded_table() is None
+    assert mock_qserv.get_uploaded_database() is None
+
+
+@pytest.mark.asyncio
+async def test_upload_dependent(
+    factory: Factory, mock_qserv: MockQserv
+) -> None:
+    """Test upload of a dependent (FK-partitioned) table."""
+    query_service = factory.create_query_service()
+    job = read_test_job_run("upload-dependent")
+    completed_status = read_test_job_status("upload-completed")
+
+    await assert_query_successful(
+        query_service=query_service,
+        mock_qserv=mock_qserv,
+        job=job,
+        expected_status=completed_status,
+    )
+    assert mock_qserv.get_uploaded_table() is None
+    assert mock_qserv.get_uploaded_database() is None
+
+
+@pytest.mark.asyncio
+async def test_upload_submit_failure(
+    factory: Factory, mock_qserv: MockQserv
+) -> None:
+    """Test that a rejected submission cleans up any uploaded tables."""
+    query_service = factory.create_query_service()
+    state_store = factory.create_query_state_store()
+    job = read_test_job_run("upload")
+
+    mock_qserv.set_submit_response(
+        Response(200, json={"success": 0, "error": "Some error"})
+    )
+    status = await query_service.start_query(job)
+
+    assert status.status == ExecutionPhase.ERROR
+    assert status.error
+    assert status.error.code == JobErrorCode.backend_error
+    assert mock_qserv.get_uploaded_table() is None
+    assert mock_qserv.get_uploaded_database() is None
+
+    assert await state_store.get_active_queries() == set()

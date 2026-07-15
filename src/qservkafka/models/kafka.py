@@ -1,16 +1,19 @@
 """Models for Kafka messages."""
 
+from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any, Literal, override
 
 from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Discriminator,
     Field,
     HttpUrl,
     PlainSerializer,
+    Tag,
 )
 from safir.pydantic import SecondsTimedelta
 from vo_models.uws.types import ExecutionPhase
@@ -32,6 +35,8 @@ type DatetimeMillis = Annotated[
 """Type for timestamps, which are represented in Kafka in milliseconds."""
 
 __all__ = [
+    "DependentTableUpload",
+    "DirectorTableUpload",
     "JobCancel",
     "JobError",
     "JobErrorCode",
@@ -46,6 +51,10 @@ __all__ = [
     "JobResultType",
     "JobRun",
     "JobStatus",
+    "JobTableUpload",
+    "ReplicatedTableUpload",
+    "UploadTableBase",
+    "UploadTablePartitionType",
 ]
 
 
@@ -236,8 +245,26 @@ class JobResultConfig(BaseModel):
     ] = None
 
 
-class JobTableUpload(BaseModel):
-    """Table to upload for a query."""
+class UploadTablePartitionType(StrEnum):
+    """Partition strategy for a TAP_UPLOAD table in Qserv."""
+
+    REPLICATED = "replicated"
+    DIRECTOR = "director"
+    DEPENDENT = "dependent"
+
+
+def _partition_type_discriminator(v: Any) -> str:
+    if isinstance(v, dict):
+        val = v.get("partitionType", v.get("partition_type"))
+    else:
+        val = getattr(v, "partition_type", None)
+    if val is None:
+        return UploadTablePartitionType.REPLICATED
+    return str(val)
+
+
+class UploadTableBase(BaseModel, ABC):
+    """Common fields for all upload table classes."""
 
     model_config = ConfigDict(validate_by_name=True)
 
@@ -283,6 +310,112 @@ class JobTableUpload(BaseModel):
     def table(self) -> str:
         """Name of the table."""
         return self.table_name.split(".", 1)[1]
+
+    @abstractmethod
+    def to_ingest_fields(self) -> dict[str, str | int]:
+        """Qserv ingest API fields specific to this partition strategy."""
+
+
+class ReplicatedTableUpload(UploadTableBase):
+    """Upload table fully replicated across all Qserv nodes."""
+
+    partition_type: Annotated[
+        Literal[UploadTablePartitionType.REPLICATED] | None,
+        Field(validation_alias="partitionType"),
+    ] = None
+
+    @override
+    def to_ingest_fields(self) -> dict[str, str | int]:
+        return {}
+
+
+class DirectorTableUpload(UploadTableBase):
+    """Upload table spatially partitioned by RA/Dec (Qserv director table)."""
+
+    partition_type: Annotated[
+        Literal[UploadTablePartitionType.DIRECTOR],
+        Field(validation_alias="partitionType"),
+    ]
+
+    longitude_col_name: Annotated[
+        str,
+        Field(
+            title="Longitude column name", validation_alias="longitudeColName"
+        ),
+    ]
+
+    latitude_col_name: Annotated[
+        str,
+        Field(
+            title="Latitude column name", validation_alias="latitudeColName"
+        ),
+    ]
+
+    @override
+    def to_ingest_fields(self) -> dict[str, str | int]:
+        return {
+            "is_partitioned": 1,
+            "is_director": 1,
+            "longitude_col_name": self.longitude_col_name,
+            "latitude_col_name": self.latitude_col_name,
+        }
+
+
+class DependentTableUpload(UploadTableBase):
+    """Upload table partitioned by FK reference to a director table."""
+
+    partition_type: Annotated[
+        Literal[UploadTablePartitionType.DEPENDENT],
+        Field(validation_alias="partitionType"),
+    ]
+
+    id_col_name: Annotated[
+        str,
+        Field(title="ID column name", validation_alias="idColName"),
+    ]
+
+    ref_director_database: Annotated[
+        str,
+        Field(
+            title="Reference director database",
+            validation_alias="refDirectorDatabase",
+        ),
+    ]
+
+    ref_director_table: Annotated[
+        str,
+        Field(
+            title="Reference director table",
+            validation_alias="refDirectorTable",
+        ),
+    ]
+
+    ref_director_id_col_name: Annotated[
+        str,
+        Field(
+            title="Reference director ID column name",
+            validation_alias="refDirectorIdColName",
+        ),
+    ]
+
+    @override
+    def to_ingest_fields(self) -> dict[str, str | int]:
+        return {
+            "is_partitioned": 1,
+            "is_director": 0,
+            "id_col_name": self.id_col_name,
+            "ref_director_database": self.ref_director_database,
+            "ref_director_table": self.ref_director_table,
+            "ref_director_id_col_name": self.ref_director_id_col_name,
+        }
+
+
+JobTableUpload = Annotated[
+    Annotated[ReplicatedTableUpload, Tag(UploadTablePartitionType.REPLICATED)]
+    | Annotated[DirectorTableUpload, Tag(UploadTablePartitionType.DIRECTOR)]
+    | Annotated[DependentTableUpload, Tag(UploadTablePartitionType.DEPENDENT)],
+    Discriminator(_partition_type_discriminator),
+]
 
 
 class JobMetadata(BaseModel):

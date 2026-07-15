@@ -332,6 +332,7 @@ class QueryService:
                 msg = "Unable to upload table"
             await report_exception(e, self._slack_client)
             logger.exception(msg, error=str(e))
+            await self._results.delete_upload_databases(job, logger)
             return JobStatus(
                 job_id=job.job_id,
                 execution_id=None,
@@ -354,6 +355,7 @@ class QueryService:
             else:
                 await report_exception(e, self._slack_client)
                 logger.exception("Unable to start query", error=str(e))
+            await self._results.delete_upload_databases(job, logger)
             return JobStatus(
                 job_id=job.job_id,
                 execution_id=str(query_id) if query_id else None,
