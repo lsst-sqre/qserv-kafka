@@ -421,8 +421,6 @@ JobTableUpload = Annotated[
 class JobMetadata(BaseModel):
     """Metadata about a query."""
 
-    model_config = ConfigDict(serialize_by_alias=True)
-
     query: Annotated[
         str,
         Field(
@@ -545,7 +543,7 @@ class JobRun(BaseModel):
 class JobQueryInfo(BaseModel):
     """Information about the status of an executing query."""
 
-    model_config = ConfigDict(serialize_by_alias=True)
+    model_config = ConfigDict(serialize_by_alias=True, validate_by_name=True)
 
     start_time: Annotated[
         DatetimeMillis,
@@ -553,6 +551,7 @@ class JobQueryInfo(BaseModel):
             title="Start time",
             description="When the job started executing",
             serialization_alias="startTime",
+            validation_alias="startTime",
         ),
     ]
 
@@ -562,6 +561,7 @@ class JobQueryInfo(BaseModel):
             title="Completion time",
             description="When the job completed",
             serialization_alias="endTime",
+            validation_alias="endTime",
         ),
     ] = None
 
@@ -577,7 +577,7 @@ class JobQueryInfo(BaseModel):
 class JobResultInfo(BaseModel):
     """Result of a query."""
 
-    model_config = ConfigDict(serialize_by_alias=True)
+    model_config = ConfigDict(serialize_by_alias=True, validate_by_name=True)
 
     total_rows: Annotated[
         int,
@@ -585,6 +585,7 @@ class JobResultInfo(BaseModel):
             title="Output rows",
             description="Total number of rows in the result",
             serialization_alias="totalRows",
+            validation_alias="totalRows",
         ),
     ]
 
@@ -594,6 +595,7 @@ class JobResultInfo(BaseModel):
             title="User-facing URL of results",
             description="Copied from the job request, not used by the bridge",
             serialization_alias="resultLocation",
+            validation_alias="resultLocation",
         ),
     ] = None
 
@@ -619,11 +621,15 @@ class JobErrorCode(StrEnum):
 class JobError(BaseModel):
     """Error from a query."""
 
-    model_config = ConfigDict(serialize_by_alias=True)
+    model_config = ConfigDict(serialize_by_alias=True, validate_by_name=True)
 
     code: Annotated[
         JobErrorCode,
-        Field(title="Error code", serialization_alias="errorCode"),
+        Field(
+            title="Error code",
+            serialization_alias="errorCode",
+            validation_alias="errorCode",
+        ),
     ]
 
     message: Annotated[
@@ -632,6 +638,7 @@ class JobError(BaseModel):
             title="Error message",
             description="Human-readable error message",
             serialization_alias="errorMessage",
+            validation_alias="errorMessage",
         ),
     ]
 
@@ -639,7 +646,7 @@ class JobError(BaseModel):
 class JobStatus(BaseModel):
     """Status of a TAP query."""
 
-    model_config = ConfigDict(serialize_by_alias=True)
+    model_config = ConfigDict(serialize_by_alias=True, validate_by_name=True)
 
     job_id: Annotated[
         str,
@@ -647,6 +654,7 @@ class JobStatus(BaseModel):
             title="UWS job ID",
             description="Identifier of job in the TAP server's UWS database",
             serialization_alias="jobID",
+            validation_alias="jobID",
         ),
     ]
 
@@ -656,6 +664,7 @@ class JobStatus(BaseModel):
             title="Backend execution ID",
             description="Identifier of the running query in the backend",
             serialization_alias="executionID",
+            validation_alias="executionID",
         ),
     ] = None
 
@@ -677,7 +686,11 @@ class JobStatus(BaseModel):
 
     query_info: Annotated[
         JobQueryInfo | None,
-        Field(title="Query information", serialization_alias="queryInfo"),
+        Field(
+            title="Query information",
+            serialization_alias="queryInfo",
+            validation_alias="queryInfo",
+        ),
     ] = None
 
     result_info: Annotated[
@@ -686,6 +699,7 @@ class JobStatus(BaseModel):
             title="Job result",
             description="Result of the job if it has completed",
             serialization_alias="resultInfo",
+            validation_alias="resultInfo",
         ),
     ] = None
 
@@ -695,6 +709,7 @@ class JobStatus(BaseModel):
             title="Job error",
             description="Error for the job if the job failed",
             serialization_alias="errorInfo",
+            validation_alias="errorInfo",
         ),
     ] = None
 

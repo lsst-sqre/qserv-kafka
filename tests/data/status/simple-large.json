@@ -1,22 +1,22 @@
 {
-  "job_id": "uws123",
-  "execution_id": "1",
-  "timestamp": 1743540791,
-  "status": "ERROR",
-  "error": {
-    "code": "backend_results_too_large",
-    "message": "Query results are too large to return; please narrow your query and try again: MERGE_ERROR 1470 (QI=404591:81; cancelling the query, queryResult table result_404591 is too large at 571829258 bytes, max allowed size is 536870912 bytes) 2025-07-21T05:36:23+0000"
+  "errorInfo": {
+    "errorCode": "backend_results_too_large",
+    "errorMessage": "Query results are too large to return; please narrow your query and try again: MERGE_ERROR 1470 (QI=404591:81; cancelling the query, queryResult table result_404591 is too large at 571829258 bytes, max allowed size is 536870912 bytes) 2025-07-21T05:36:23+0000"
   },
-  "query_info": {
-    "start_time": 1743540791,
-    "end_time": 1743540819,
-    "progress": {
-      "total_chunks": 10,
-      "completed_chunks": 8
-    }
-  },
+  "executionID": "1",
+  "jobID": "uws123",
   "metadata": {
-    "query": "SELECT TOP 10 * FROM table",
-    "database": "dp1"
-  }
+    "database": "dp1",
+    "query": "SELECT TOP 10 * FROM table"
+  },
+  "queryInfo": {
+    "endTime": "<ANY>",
+    "progress": {
+      "completedChunks": 8,
+      "totalChunks": 10
+    },
+    "startTime": "<ANY>"
+  },
+  "status": "ERROR",
+  "timestamp": "<ANY>"
 }

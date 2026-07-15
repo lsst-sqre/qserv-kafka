@@ -24,7 +24,7 @@ from qservkafka.dependencies.context import context_dependency
 from qservkafka.factory import Factory
 
 from ..support.arq import create_arq_worker
-from ..support.data import read_test_qserv_status
+from ..support.data import QservKafkaData
 from ..support.kafka import start_query, wait_for_dispatch, wait_for_status
 from ..support.qserv import MockQserv
 
@@ -54,6 +54,7 @@ def set_log_level(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def run_job(
     *,
+    data: QservKafkaData,
     factory: Factory,
     kafka_broker: KafkaBroker,
     kafka_status_consumer: AIOKafkaConsumer,
@@ -62,15 +63,18 @@ async def run_job(
     execution_id: int,
 ) -> None:
     """Run a single job end-to-end."""
-    job = await start_query(kafka_broker, "data")
+    job = await start_query(data, kafka_broker, "data")
     status = await wait_for_status(
-        kafka_status_consumer, "data-started", execution_id=str(execution_id)
+        data,
+        kafka_status_consumer,
+        "data-started",
+        execution_id=str(execution_id),
     )
     assert status.query_info
     start_time = status.query_info.start_time
     await mock_qserv.store_results(job)
-    qserv_status = read_test_qserv_status(
-        "data-completed",
+    qserv_status = data.read_qserv_status(
+        "qserv/data-completed",
         query_id=execution_id,
         query_begin=start_time,
         last_update=datetime.now(tz=UTC),
@@ -79,7 +83,10 @@ async def run_job(
     await wait_for_dispatch(factory, execution_id)
     assert await arq_worker.run_check() == execution_id
     await wait_for_status(
-        kafka_status_consumer, "data-completed", execution_id=str(execution_id)
+        data,
+        kafka_status_consumer,
+        "data-completed",
+        execution_id=str(execution_id),
     )
 
 
@@ -87,6 +94,7 @@ async def run_job(
 @pytest.mark.timeout(120)
 async def test_leak(
     *,
+    data: QservKafkaData,
     app: FastAPI,
     kafka_broker: KafkaBroker,
     kafka_status_consumer: AIOKafkaConsumer,
@@ -102,6 +110,7 @@ async def test_leak(
         # Run a single job to force any memory allocations that only happen
         # once, during the first job.
         await run_job(
+            data=data,
             factory=factory,
             kafka_broker=kafka_broker,
             kafka_status_consumer=kafka_status_consumer,
@@ -118,6 +127,7 @@ async def test_leak(
         # Run 100 jobs through the system end to end.
         for i in range(2, 102):
             await run_job(
+                data=data,
                 factory=factory,
                 kafka_broker=kafka_broker,
                 kafka_status_consumer=kafka_status_consumer,

@@ -84,8 +84,9 @@ class QueryMonitor:
         query
             Running query information.
         status
-            Backend status from the running process list, if the query appeared
-            there, or `None` otherwise.
+            Backend status from the running process list, if the query
+            appeared there, or `None` otherwise. If `None`, the job will be
+            assumed to be complete.
 
         Returns
         -------

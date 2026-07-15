@@ -3,10 +3,11 @@
 import pytest
 
 from qservkafka.factory import Factory
+from qservkafka.models.kafka import JobRun
 from qservkafka.models.progress import ChunkProgress
 from qservkafka.models.query import AsyncQueryPhase, ProcessStatus
 
-from ..support.data import read_test_job_run, read_test_job_status
+from ..support.data import QservKafkaData
 from ..support.qserv import MockQserv
 
 
@@ -15,18 +16,17 @@ from ..support.qserv import MockQserv
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
 async def test_list_running_queries(
-    factory: Factory, mock_qserv: MockQserv
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
 ) -> None:
     qserv = factory.create_backend_client()
     query_service = factory.create_query_service()
-    job = read_test_job_run("simple")
-    expected_status = read_test_job_status("simple-started")
+    job = data.read_pydantic(JobRun, "jobs/simple")
 
     processes = await qserv.list_running_queries()
     assert processes == {}
 
     status = await query_service.start_query(job)
-    assert status == expected_status
+    data.assert_job_status_matches(status, "status/simple-started")
     processes = await qserv.list_running_queries()
     qserv_status = mock_qserv.get_status(1)
     expected_process_status = ProcessStatus(

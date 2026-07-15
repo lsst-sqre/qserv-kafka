@@ -1,25 +1,25 @@
 {
-  "job_id": "uws123",
-  "execution_id": "1",
-  "timestamp": 1743540791,
-  "status": "COMPLETED",
-  "query_info": {
-    "start_time": 1743540791,
-    "end_time": 1743540791,
-    "progress": {
-      "total_chunks": 10,
-      "completed_chunks": 10
-    }
-  },
-  "result_info": {
-    "total_rows": 2,
-    "result_location": "https://gcs.example.com/upload",
-    "format": {
-      "type": "VOTable",
-      "serialization": "BINARY2"
-    }
-  },
+  "executionID": "1",
+  "jobID": "uws123",
   "metadata": {
     "query": "SELECT TOP 10 * FROM user_username.table"
-  }
+  },
+  "queryInfo": {
+    "endTime": "<ANY>",
+    "progress": {
+      "completedChunks": 10,
+      "totalChunks": 10
+    },
+    "startTime": "<ANY>"
+  },
+  "resultInfo": {
+    "format": {
+      "serialization": "BINARY2",
+      "type": "VOTable"
+    },
+    "resultLocation": "https://gcs.example.com/upload",
+    "totalRows": 2
+  },
+  "status": "COMPLETED",
+  "timestamp": "<ANY>"
 }

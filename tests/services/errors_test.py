@@ -11,9 +11,11 @@ from vo_models.uws.types import ExecutionPhase
 from qservkafka.config import config
 from qservkafka.factory import Factory
 from qservkafka.models.kafka import (
+    JobCancel,
     JobError,
     JobErrorCode,
     JobQueryInfo,
+    JobRun,
     JobStatus,
 )
 from qservkafka.models.progress import ChunkProgress
@@ -21,7 +23,7 @@ from qservkafka.models.qserv import QservAsyncStatusData, QservQueryPhase
 from qservkafka.storage import qserv
 
 from ..support.constants import ANY_DATETIME, ANY_STRING
-from ..support.data import read_test_job_cancel, read_test_job_run
+from ..support.data import QservKafkaData
 from ..support.datetime import assert_approximately_now
 from ..support.qserv import MockQserv
 
@@ -30,8 +32,10 @@ from ..support.qserv import MockQserv
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
-async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
-    job = read_test_job_run("simple")
+async def test_start_errors(
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
+) -> None:
+    job = data.read_pydantic(JobRun, "jobs/simple")
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
 
@@ -78,8 +82,10 @@ async def test_start_errors(factory: Factory, mock_qserv: MockQserv) -> None:
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
-async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
-    job = read_test_job_run("simple")
+async def test_status_errors(
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
+) -> None:
+    job = data.read_pydantic(JobRun, "jobs/simple")
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
     now = datetime.now(tz=UTC).replace(microsecond=0)
@@ -175,12 +181,14 @@ async def test_status_errors(factory: Factory, mock_qserv: MockQserv) -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
+async def test_start_invalid(
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
+) -> None:
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
     now = datetime.now(tz=UTC).replace(microsecond=0)
 
-    job = read_test_job_run("tabledata")
+    job = data.read_pydantic(JobRun, "jobs/tabledata")
     status = await query_service.start_query(job)
     expected = JobStatus(
         job_id=job.job_id,
@@ -197,7 +205,7 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
     assert expected.error
     assert status == expected
 
-    job = read_test_job_run("arraysize")
+    job = data.read_pydantic(JobRun, "jobs/arraysize")
     status = await query_service.start_query(job)
     expected = JobStatus(
         job_id=job.job_id,
@@ -220,10 +228,12 @@ async def test_start_invalid(factory: Factory, mock_qserv: MockQserv) -> None:
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
-async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
+async def test_sql_failure(
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
+) -> None:
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    job = read_test_job_run("data")
+    job = data.read_pydantic(JobRun, "jobs/data")
     now = datetime.now(tz=UTC).replace(microsecond=0)
 
     mock_qserv.set_immediate_success(job)
@@ -250,7 +260,11 @@ async def test_sql_failure(factory: Factory, mock_qserv: MockQserv) -> None:
 
 @pytest.mark.asyncio
 async def test_upload_timeout(
-    factory: Factory, mock_qserv: MockQserv, monkeypatch: pytest.MonkeyPatch
+    *,
+    data: QservKafkaData,
+    factory: Factory,
+    mock_qserv: MockQserv,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test handling of a timeout during results uploading.
 
@@ -258,7 +272,7 @@ async def test_upload_timeout(
     """
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    job = read_test_job_run("data")
+    job = data.read_pydantic(JobRun, "jobs/data")
 
     mock_qserv.set_immediate_success(job)
     mock_qserv.set_upload_delay(timedelta(seconds=2))
@@ -284,9 +298,9 @@ async def test_upload_timeout(
 
 
 @pytest.mark.asyncio
-async def test_cancel_unknown(factory: Factory) -> None:
+async def test_cancel_unknown(data: QservKafkaData, factory: Factory) -> None:
     """Test canceling an unknown job."""
     query_service = factory.create_query_service()
-    cancel = read_test_job_cancel("simple")
+    cancel = data.read_pydantic(JobCancel, "cancel/simple")
 
     assert await query_service.cancel_query(cancel) is None

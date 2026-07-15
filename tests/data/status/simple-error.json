@@ -1,14 +1,14 @@
 {
-  "job_id": "uws123",
-  "execution_id": "1",
-  "timestamp": 1743540791,
-  "status": "ERROR",
-  "error": {
-    "code": "backend_error",
-    "message": "Qserv request failed: Some error"
+  "errorInfo": {
+    "errorCode": "backend_error",
+    "errorMessage": "Qserv request failed: Some error"
   },
+  "executionID": "1",
+  "jobID": "uws123",
   "metadata": {
-    "query": "SELECT TOP 10 * FROM table",
-    "database": "dp1"
-  }
+    "database": "dp1",
+    "query": "SELECT TOP 10 * FROM table"
+  },
+  "status": "ERROR",
+  "timestamp": "<ANY>"
 }

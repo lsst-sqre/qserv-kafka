@@ -20,7 +20,6 @@ from safir.database import create_database_engine
 from safir.kafka import KafkaConnectionSettings, SecurityProtocol
 from safir.logging import configure_logging
 from safir.testing.containers import FullKafkaContainer
-from safir.testing.data import Data
 from safir.testing.slack import MockSlackWebhook, mock_slack_webhook
 from sqlalchemy.ext.asyncio import AsyncEngine
 from structlog.stdlib import BoundLogger, get_logger
@@ -32,6 +31,7 @@ from qservkafka.config import config
 from qservkafka.factory import Factory, ProcessContext
 from qservkafka.main import create_app
 
+from .support.data import QservKafkaData
 from .support.qserv import MockQserv, register_mock_qserv
 
 
@@ -74,9 +74,11 @@ async def client(app: FastAPI) -> AsyncGenerator[AsyncClient]:
 
 
 @pytest.fixture
-def data(request: pytest.FixtureRequest) -> Data:
+def data(request: pytest.FixtureRequest) -> QservKafkaData:
     update = request.config.getoption("--update-test-data")
-    return Data(Path(__file__).parent / "data", update_test_data=update)
+    return QservKafkaData(
+        Path(__file__).parent / "data", update_test_data=update
+    )
 
 
 @pytest_asyncio.fixture
@@ -220,6 +222,7 @@ async def mock_gafaelfawr(
 @pytest_asyncio.fixture(ids=["good"], params=[False])
 async def mock_qserv(
     *,
+    data: QservKafkaData,
     respx_mock: respx.Router,
     engine: AsyncEngine,
     request: pytest.FixtureRequest,
@@ -245,9 +248,12 @@ async def mock_qserv(
     if request.param:
         delay = timedelta(milliseconds=10)
         monkeypatch.setattr(config, "backend_retry_delay", delay)
-    url = str(config.qserv_rest_url)
     async with register_mock_qserv(
-        respx_mock, url, engine, flaky=request.param
+        data,
+        respx_mock,
+        engine,
+        base_url=str(config.qserv_rest_url),
+        flaky=request.param,
     ) as mock_qserv:
         yield mock_qserv
 

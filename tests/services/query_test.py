@@ -12,62 +12,61 @@ from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.config import config
 from qservkafka.factory import Factory
-from qservkafka.models.kafka import JobErrorCode, JobRun, JobStatus
+from qservkafka.models.kafka import JobCancel, JobErrorCode, JobRun
 from qservkafka.services.query import QueryService
 
-from ..support.data import (
-    read_test_data,
-    read_test_job_cancel,
-    read_test_job_run,
-    read_test_job_status,
-    read_test_qserv_status,
-)
+from ..support.data import QservKafkaData
 from ..support.datetime import assert_approximately_now
 from ..support.qserv import MockQserv
 
 
 async def assert_query_successful(
     *,
+    data: QservKafkaData,
     query_service: QueryService,
     mock_qserv: MockQserv,
     job: JobRun,
-    expected_status: JobStatus,
+    status: str,
+    execution_id: str | None = None,
 ) -> None:
     """Run a query to completion with immediate results.
 
     Parameters
     ----------
+    data
+        Test data management.
     query_service
         Query service to test.
     mock_qserv
         Qserv mock.
     job
         Model of job to run.
-    expected_status
-        Model of status to expect.
+    status
+        Path to status to expect.
+    execution_id
+        Expected execution ID for the job status.
     """
     mock_qserv.set_immediate_success(job)
     kafka_timestamp = datetime.now(tz=UTC) - timedelta(seconds=10)
-    status = await query_service.start_query(job, kafka_timestamp)
-    assert status == expected_status
-    assert_approximately_now(status.timestamp)
-    assert status.query_info
-    assert_approximately_now(status.query_info.start_time)
-    assert_approximately_now(status.query_info.end_time)
+    result = await query_service.start_query(job, kafka_timestamp)
+    data.assert_job_status_matches(result, status, execution_id=execution_id)
+    assert_approximately_now(result.timestamp)
+    assert result.query_info
+    assert_approximately_now(result.query_info.start_time)
+    assert_approximately_now(result.query_info.end_time)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
-async def test_start(factory: Factory) -> None:
-    job = read_test_job_run("simple")
-    expected_status = read_test_job_status("simple-started")
+async def test_start(data: QservKafkaData, factory: Factory) -> None:
+    job = data.read_pydantic(JobRun, "jobs/simple")
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
 
     status = await query_service.start_query(job)
-    assert status == expected_status
+    data.assert_job_status_matches(status, "status/simple-started")
     assert_approximately_now(status.timestamp)
     assert status.query_info
     assert_approximately_now(status.query_info.start_time)
@@ -79,19 +78,21 @@ async def test_start(factory: Factory) -> None:
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
-async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
+async def test_immediate(
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
+) -> None:
     """Test a job that completes immediately."""
     query_service = factory.create_query_service()
-    job = read_test_job_run("data")
-    expected_status = read_test_job_status("data-completed")
+    job = data.read_pydantic(JobRun, "jobs/data")
     state_store = factory.create_query_state_store()
 
     start = datetime.now(tz=UTC)
     await assert_query_successful(
+        data=data,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
-        expected_status=expected_status,
+        status="status/data-completed",
     )
     finish = datetime.now(tz=UTC)
     elapsed = finish - start
@@ -103,8 +104,8 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     assert isinstance(factory.events.qserv_success, MockEventPublisher)
     events = factory.events.qserv_success.published
     assert len(events) == 1
-    success_event = events[0]
-    assert success_event.model_dump(mode="json") == {
+    event = events[0]
+    assert event.model_dump(mode="json") == {
         "job_id": job.job_id,
         "username": job.owner,
         "elapsed": ANY,
@@ -116,18 +117,15 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
         "rows": 2,
         "qserv_size": 250,
         "qserv_rate": None,
-        "encoded_size": len(read_test_data("results/data.binary2")),
+        "encoded_size": len(data.read_text("results/data.binary2")),
         "result_size": (
-            len(read_test_data("results/data.binary2"))
+            len(data.read_text("results/data.binary2"))
             + len(job.result_format.envelope.header)
             + len(job.result_format.envelope.footer)
         ),
-        "rate": (
-            success_event.encoded_size / success_event.elapsed.total_seconds()
-        ),
+        "rate": event.encoded_size / event.elapsed.total_seconds(),
         "result_rate": (
-            success_event.encoded_size
-            / success_event.result_elapsed.total_seconds()
+            event.encoded_size / event.result_elapsed.total_seconds()
         ),
         "upload_tables": 0,
         "immediate": True,
@@ -135,7 +133,7 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
 
     # These time fields should include the fake Kafka delay of 10s.
     for field in ("elapsed", "kafka_elapsed"):
-        timestamp = getattr(success_event, field)
+        timestamp = getattr(event, field)
         assert timedelta(seconds=10) <= timestamp
         assert timestamp <= elapsed + timedelta(seconds=10)
 
@@ -146,20 +144,21 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
         "submit_elapsed",
         "delete_elapsed",
     ):
-        assert timedelta(seconds=0) <= getattr(success_event, field) <= elapsed
+        assert timedelta(seconds=0) <= getattr(event, field) <= elapsed
 
     # It should be possible to immediately run the same query again. This
     # tests that the results were deleted from the database, and thus can be
     # re-added.
-    assert expected_status.execution_id
-    expected_status.execution_id = str(int(expected_status.execution_id) + 1)
     await assert_query_successful(
+        data=data,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
-        expected_status=expected_status,
+        status="status/data-completed",
+        execution_id="2",
     )
 
+    # All queries should have completed.
     assert await state_store.get_active_queries() == set()
 
     # If Qserv was configured to intermittently fail, check that we logged
@@ -176,19 +175,23 @@ async def test_immediate(factory: Factory, mock_qserv: MockQserv) -> None:
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
 async def test_no_delete(
-    factory: Factory, mock_qserv: MockQserv, monkeypatch: pytest.MonkeyPatch
+    *,
+    data: QservKafkaData,
+    factory: Factory,
+    mock_qserv: MockQserv,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test that deleting results from Qserv can be configured."""
     monkeypatch.setattr(config, "qserv_delete_queries", False)
     query_service = factory.create_query_service()
-    job = read_test_job_run("data")
-    expected_status = read_test_job_status("data-completed")
+    job = data.read_pydantic(JobRun, "jobs/data")
 
     await assert_query_successful(
+        data=data,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
-        expected_status=expected_status,
+        status="status/data-completed",
     )
 
     # Check that the query was not deleted.
@@ -210,7 +213,7 @@ async def test_no_delete(
         "rows": 2,
         "qserv_size": 250,
         "qserv_rate": ANY,
-        "encoded_size": len(read_test_data("results/data.binary2")),
+        "encoded_size": len(data.read_text("results/data.binary2")),
         "result_size": ANY,
         "rate": ANY,
         "result_rate": ANY,
@@ -223,32 +226,31 @@ async def test_no_delete(
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
-async def test_cancel(factory: Factory) -> None:
-    job = read_test_job_run("simple")
-    started_status = read_test_job_status("simple-started")
-    cancel = read_test_job_cancel("simple")
-    canceled_status = read_test_job_status("simple-aborted")
+async def test_cancel(data: QservKafkaData, factory: Factory) -> None:
+    job = data.read_pydantic(JobRun, "jobs/simple")
+    cancel = data.read_pydantic(JobCancel, "cancel/simple")
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
 
-    status: JobStatus | None = await query_service.start_query(job)
-    assert status == started_status
-    assert_approximately_now(status.timestamp)
-    assert status.query_info
-    start_time = status.query_info.start_time
+    start_status = await query_service.start_query(job)
+    data.assert_job_status_matches(start_status, "status/simple-started")
+    assert_approximately_now(start_status.timestamp)
+    assert start_status.query_info
+    start_time = start_status.query_info.start_time
     assert_approximately_now(start_time)
 
     assert await state_store.get_active_queries() == {"1"}
 
     now = datetime.now(tz=UTC)
-    status = await query_service.cancel_query(cancel)
+    cancel_status = await query_service.cancel_query(cancel)
+    assert cancel_status
     finish = datetime.now(tz=UTC)
-    assert status == canceled_status
-    assert_approximately_now(status.timestamp)
-    assert status.query_info
-    assert status.query_info.start_time == start_time
-    assert status.query_info.end_time
-    assert status.query_info.end_time >= now
+    data.assert_job_status_matches(cancel_status, "status/simple-aborted")
+    assert_approximately_now(cancel_status.timestamp)
+    assert cancel_status.query_info
+    assert cancel_status.query_info.start_time == start_time
+    assert cancel_status.query_info.end_time
+    assert cancel_status.query_info.end_time >= now
 
     # Check that the correct metrics event was sent.
     assert isinstance(factory.events.query_abort, MockEventPublisher)
@@ -267,20 +269,24 @@ async def test_cancel(factory: Factory) -> None:
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
 async def test_cancel_completed(
-    factory: Factory, mock_qserv: MockQserv, mock_slack: MockSlackWebhook
+    *,
+    data: QservKafkaData,
+    factory: Factory,
+    mock_qserv: MockQserv,
+    mock_slack: MockSlackWebhook,
 ) -> None:
     query_service = factory.create_query_service()
-    job = read_test_job_run("simple")
-    expected_status = read_test_job_status("simple-started")
-    cancel = read_test_job_cancel("simple")
+    job = data.read_pydantic(JobRun, "jobs/simple")
+    cancel = data.read_pydantic(JobCancel, "cancel/simple")
 
     # Start the query.
     start_time = datetime.now(tz=UTC).replace(microsecond=0)
-    assert await query_service.start_query(job) == expected_status
+    start_status = await query_service.start_query(job)
+    data.assert_job_status_matches(start_status, "status/simple-started")
 
     # Mark the query complete in the mock behind the back of the bridge.
-    qserv_status = read_test_qserv_status(
-        "simple-completed",
+    qserv_status = data.read_qserv_status(
+        "qserv/simple-completed",
         query_begin=start_time,
         last_update=datetime.now(tz=UTC).replace(microsecond=0),
     )
@@ -298,16 +304,18 @@ async def test_cancel_completed(
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
-async def test_maxrec(factory: Factory, mock_qserv: MockQserv) -> None:
+async def test_maxrec(
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
+) -> None:
     query_service = factory.create_query_service()
-    job = read_test_job_run("data-maxrec")
-    expected_status = read_test_job_status("data-maxrec-completed")
+    job = data.read_pydantic(JobRun, "jobs/data-maxrec")
 
     await assert_query_successful(
+        data=data,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
-        expected_status=expected_status,
+        status="status/data-maxrec-completed",
     )
 
 
@@ -315,17 +323,19 @@ async def test_maxrec(factory: Factory, mock_qserv: MockQserv) -> None:
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
-async def test_maxrec_zero(factory: Factory, mock_qserv: MockQserv) -> None:
+async def test_maxrec_zero(
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
+) -> None:
     """Test a query with MAXREC set to zero."""
     query_service = factory.create_query_service()
-    job = read_test_job_run("data-zero")
-    expected_status = read_test_job_status("data-zero-completed")
+    job = data.read_pydantic(JobRun, "jobs/data-zero")
 
     await assert_query_successful(
+        data=data,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
-        expected_status=expected_status,
+        status="status/data-zero-completed",
     )
 
 
@@ -334,31 +344,35 @@ async def test_maxrec_zero(factory: Factory, mock_qserv: MockQserv) -> None:
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
 async def test_no_api_version(
-    factory: Factory, mock_qserv: MockQserv, monkeypatch: pytest.MonkeyPatch
+    *,
+    data: QservKafkaData,
+    factory: Factory,
+    mock_qserv: MockQserv,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test disabling sending the API version in Qserv requests."""
     monkeypatch.setattr(config, "qserv_rest_send_api_version", False)
     query_service = factory.create_query_service()
-    job = read_test_job_run("data")
-    expected_status = read_test_job_status("data-completed")
+    job = data.read_pydantic(JobRun, "jobs/data")
     state_store = factory.create_query_state_store()
 
     await assert_query_successful(
+        data=data,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
-        expected_status=expected_status,
+        status="status/data-completed",
     )
 
     # Also test starting a job with table upload, since that tests an
     # additional API endpoint.
-    job = read_test_job_run("upload")
-    expected_status = read_test_job_status("upload-started")
-    expected_status.execution_id = "2"
+    job = data.read_pydantic(JobRun, "jobs/upload")
 
     mock_qserv.set_immediate_success(None)
     status = await query_service.start_query(job)
-    assert status == expected_status
+    data.assert_job_status_matches(
+        status, "status/upload-started", execution_id="2"
+    )
     assert_approximately_now(status.timestamp)
     assert status.query_info
     assert_approximately_now(status.query_info.start_time)
@@ -371,32 +385,35 @@ async def test_no_api_version(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
 async def test_auth(
-    factory: Factory, mock_qserv: MockQserv, monkeypatch: pytest.MonkeyPatch
+    *,
+    data: QservKafkaData,
+    factory: Factory,
+    mock_qserv: MockQserv,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test authenticating to the Qserv REST API."""
     monkeypatch.setattr(config, "qserv_rest_username", "someuser")
     monkeypatch.setattr(config, "qserv_rest_password", SecretStr("password"))
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    job = read_test_job_run("data")
-    expected_status = read_test_job_status("data-completed")
+    job = data.read_pydantic(JobRun, "jobs/data")
 
     await assert_query_successful(
+        data=data,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
-        expected_status=expected_status,
+        status="status/data-completed",
     )
 
     # Also test starting a job with table upload, since that tests an
     # additional API endpoint.
-    job = read_test_job_run("upload")
-    expected_status = read_test_job_status("upload-started")
-    expected_status.execution_id = "2"
-
+    job = data.read_pydantic(JobRun, "jobs/upload")
     mock_qserv.set_immediate_success(None)
     status = await query_service.start_query(job)
-    assert status == expected_status
+    data.assert_job_status_matches(
+        status, "status/upload-started", execution_id="2"
+    )
     assert_approximately_now(status.timestamp)
     assert status.query_info
     assert_approximately_now(status.query_info.start_time)
@@ -408,20 +425,21 @@ async def test_auth(
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
-async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
+async def test_upload(
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
+) -> None:
     """Test temporary table upload."""
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    job = read_test_job_run("upload")
-    completed_status = read_test_job_status("upload-completed")
-    started_status = read_test_job_status("upload-started")
+    job = data.read_pydantic(JobRun, "jobs/upload")
 
     start = datetime.now(tz=UTC)
     await assert_query_successful(
+        data=data,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
-        expected_status=completed_status,
+        status="status/upload-completed",
     )
     finish = datetime.now(tz=UTC)
     assert mock_qserv.get_uploaded_table() is None
@@ -443,7 +461,7 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
         "rows": 2,
         "qserv_size": 250,
         "qserv_rate": ANY,
-        "encoded_size": len(read_test_data("results/data.binary2")),
+        "encoded_size": len(data.read_text("results/data.binary2")),
         "result_size": ANY,
         "rate": ANY,
         "result_rate": ANY,
@@ -467,8 +485,9 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
     # (not yet deleted) since the query is still running.
     mock_qserv.set_immediate_success(None)
     status = await query_service.start_query(job)
-    started_status.execution_id = "2"
-    assert status == started_status
+    data.assert_job_status_matches(
+        status, "status/upload-started", execution_id="2"
+    )
     assert mock_qserv.get_uploaded_table() == job.upload_tables[0].table_name
     assert mock_qserv.get_uploaded_database() == job.upload_tables[0].database
 
@@ -478,18 +497,18 @@ async def test_upload(factory: Factory, mock_qserv: MockQserv) -> None:
 
 @pytest.mark.asyncio
 async def test_upload_director(
-    factory: Factory, mock_qserv: MockQserv
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
 ) -> None:
     """Test upload of a spatially-partitioned (director) table."""
     query_service = factory.create_query_service()
-    job = read_test_job_run("upload-director")
-    completed_status = read_test_job_status("upload-completed")
+    job = data.read_pydantic(JobRun, "jobs/upload-director")
 
     await assert_query_successful(
+        data=data,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
-        expected_status=completed_status,
+        status="status/upload-completed",
     )
     assert mock_qserv.get_uploaded_table() is None
     assert mock_qserv.get_uploaded_database() is None
@@ -497,18 +516,18 @@ async def test_upload_director(
 
 @pytest.mark.asyncio
 async def test_upload_dependent(
-    factory: Factory, mock_qserv: MockQserv
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
 ) -> None:
     """Test upload of a dependent (FK-partitioned) table."""
     query_service = factory.create_query_service()
-    job = read_test_job_run("upload-dependent")
-    completed_status = read_test_job_status("upload-completed")
+    job = data.read_pydantic(JobRun, "jobs/upload-dependent")
 
     await assert_query_successful(
+        data=data,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
-        expected_status=completed_status,
+        status="status/upload-completed",
     )
     assert mock_qserv.get_uploaded_table() is None
     assert mock_qserv.get_uploaded_database() is None
@@ -516,12 +535,12 @@ async def test_upload_dependent(
 
 @pytest.mark.asyncio
 async def test_upload_submit_failure(
-    factory: Factory, mock_qserv: MockQserv
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
 ) -> None:
     """Test that a rejected submission cleans up any uploaded tables."""
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    job = read_test_job_run("upload")
+    job = data.read_pydantic(JobRun, "jobs/upload")
 
     mock_qserv.set_submit_response(
         Response(200, json={"success": 0, "error": "Some error"})

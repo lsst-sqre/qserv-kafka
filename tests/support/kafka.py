@@ -6,21 +6,14 @@ from datetime import timedelta
 
 from aiokafka import AIOKafkaConsumer
 from faststream.kafka import KafkaBroker
+from pydantic import ValidationError
 
 from qservkafka.config import config
 from qservkafka.factory import Factory
 from qservkafka.models.kafka import JobRun, JobStatus
 
-from ..support.data import (
-    read_test_job_run,
-    read_test_job_run_json,
-    read_test_job_status,
-    read_test_job_status_json,
-)
-from ..support.datetime import (
-    assert_approximately_now,
-    milliseconds_to_timestamp,
-)
+from ..support.data import QservKafkaData
+from ..support.datetime import assert_approximately_now
 
 __all__ = [
     "start_query",
@@ -29,11 +22,15 @@ __all__ = [
 ]
 
 
-async def start_query(kafka_broker: KafkaBroker, job: str) -> JobRun:
+async def start_query(
+    data: QservKafkaData, kafka_broker: KafkaBroker, job: str
+) -> JobRun:
     """Send the Kafka message to start a query.
 
     Parameters
     ----------
+    data
+        Test data.
     kafka_broker
         Kafka broker to use to send the message.
     job
@@ -44,13 +41,13 @@ async def start_query(kafka_broker: KafkaBroker, job: str) -> JobRun:
     JobRun
         Parsed version of the Kafka message.
     """
-    job_model = read_test_job_run(job)
-    job_json = read_test_job_run_json(job)
+    job_json = data.read_json(f"jobs/{job}")
     await kafka_broker.publish(job_json, config.job_run_topic)
-    return job_model
+    return JobRun.model_validate(job_json)
 
 
 async def wait_for_status(
+    data: QservKafkaData,
     kafka_status_consumer: AIOKafkaConsumer,
     status: str,
     *,
@@ -60,10 +57,12 @@ async def wait_for_status(
 
     Parameters
     ----------
+    data
+        Test data.
     kafka_status_consumer
         Consumer for the Kafka status topic.
     status
-        Name to the Kafka status message to expect.
+        Name of the Kafka status message to expect.
     execution_id
         If set, expect this execution ID instead of the one in the loaded JSON
         file.
@@ -73,36 +72,24 @@ async def wait_for_status(
     JobStatus
         Parsed Kafka status message.
     """
-    expected = read_test_job_status_json(status)
-    status_model = read_test_job_status(status)
-    if execution_id is not None:
-        expected["executionID"] = execution_id
-        status_model.execution_id = execution_id
-
     # Get the status message from Kafka and do the equality check
     raw_message = await kafka_status_consumer.getone()
     try:
         message = json.loads(raw_message.value.decode())
-    except json.JSONDecodeError as e:
+        status_model = JobStatus.model_validate(message)
+    except (json.JSONDecodeError, ValidationError) as e:
         msg = f"cannot decode message {raw_message.value.decode()}"
         raise AssertionError(msg) from e
-    assert message == expected
+    data.assert_job_status_matches(
+        status_model, f"status/{status}", execution_id=execution_id
+    )
 
-    # Check the timestamps and update the model to match the received message.
-    timestamp = milliseconds_to_timestamp(message["timestamp"])
-    assert_approximately_now(timestamp)
-    status_model.timestamp = timestamp
-    if message.get("queryInfo"):
-        start_time_milli = message["queryInfo"]["startTime"]
-        start_time = milliseconds_to_timestamp(start_time_milli)
-        assert_approximately_now(start_time)
-        assert status_model.query_info
-        status_model.query_info.start_time = start_time
-        if message["queryInfo"].get("endTime"):
-            end_time_milli = message["queryInfo"]["endTime"]
-            end_time = milliseconds_to_timestamp(end_time_milli)
-            assert_approximately_now(end_time)
-            status_model.query_info.end_time = end_time
+    # Check the timestamps.
+    assert_approximately_now(status_model.timestamp)
+    if status_model.query_info:
+        assert_approximately_now(status_model.query_info.start_time)
+        if status_model.query_info.end_time:
+            assert_approximately_now(status_model.query_info.end_time)
     return status_model
 
 
