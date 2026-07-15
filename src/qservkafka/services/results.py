@@ -484,9 +484,16 @@ class ResultProcessor(ABC):
             Logger to use.
         """
         databases_to_delete = {t.database for t in job.upload_tables}
+        logger.debug(
+            "Deleting upload databases",
+            upload_table_count=len(job.upload_tables),
+            upload_table_types=[type(t).__name__ for t in job.upload_tables],
+            databases=list(databases_to_delete),
+        )
         for database in databases_to_delete:
             try:
                 await self._backend.delete_database(database)
+                logger.debug("Deleted upload database", database_name=database)
             except BackendApiError as e:
                 await report_exception(e, slack_client=self._slack_client)
                 logger.exception(
@@ -510,6 +517,10 @@ class ResultProcessor(ABC):
         logger
             Logger to use.
         """
+        logger.debug(
+            "Cleaning up query data",
+            upload_table_count=len(query.job.upload_tables),
+        )
         await self._state.delete_query(query.query_id)
         await self._rate_store.end_query(query.job.owner)
         await self.delete_upload_databases(query.job, logger)
