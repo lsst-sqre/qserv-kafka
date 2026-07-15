@@ -1,0 +1,7 @@
+{
+  "status": {
+    "queryId": 1,
+    "status": "FOO"
+  },
+  "success": 1
+}

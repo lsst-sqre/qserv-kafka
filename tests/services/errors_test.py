@@ -6,23 +6,12 @@ from unittest.mock import patch
 import pytest
 from httpx import Response
 from safir.metrics import MockEventPublisher
-from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.config import config
 from qservkafka.factory import Factory
-from qservkafka.models.kafka import (
-    JobCancel,
-    JobError,
-    JobErrorCode,
-    JobQueryInfo,
-    JobRun,
-    JobStatus,
-)
-from qservkafka.models.progress import ChunkProgress
-from qservkafka.models.qserv import QservAsyncStatusData, QservQueryPhase
+from qservkafka.models.kafka import JobCancel, JobRun
 from qservkafka.storage import qserv
 
-from ..support.constants import ANY_DATETIME, ANY_STRING
 from ..support.data import QservKafkaData
 from ..support.datetime import assert_approximately_now
 from ..support.qserv import MockQserv
@@ -42,38 +31,21 @@ async def test_start_errors(
     # HTTP failure starting the job.
     mock_qserv.set_submit_response(Response(500))
     status = await query_service.start_query(job)
-    expected = JobStatus(
-        job_id=job.job_id,
-        execution_id=None,
-        timestamp=datetime.now(tz=UTC),
-        status=ExecutionPhase.ERROR,
-        error=JobError(code=JobErrorCode.backend_request_error, message=""),
-        metadata=job.to_job_metadata(),
-    )
-    expected.timestamp = ANY_DATETIME
-    assert expected.error
-    expected.error.message = ANY_STRING
-    assert status == expected
-    assert status.error
-    assert "Status 500 from POST" in status.error.message
+    data.assert_job_status_matches(status, "status/error-submit-http")
     assert_approximately_now(status.timestamp)
 
     # Invalid response from job creation endpoint.
     mock_qserv.set_submit_response(Response(200, json={"success": 1}))
     status = await query_service.start_query(job)
-    expected.error.code = JobErrorCode.backend_internal_error
-    assert status == expected
+    data.assert_job_status_matches(status, "status/error-submit-invalid")
     assert status.error
     assert "Qserv request failed: " in status.error.message
 
     # Error response from job creation endpoint.
-    mock_qserv.set_submit_response(
-        Response(200, json={"success": 0, "error": "Some error"})
-    )
+    error_json = data.read_json("qserv/error")
+    mock_qserv.set_submit_response(Response(200, json=error_json))
     status = await query_service.start_query(job)
-    expected.error.code = JobErrorCode.backend_error
-    expected.error.message = "Qserv request failed: Some error"
-    assert status == expected
+    data.assert_job_status_matches(status, "status/error-submit-failed")
 
     assert await state_store.get_active_queries() == set()
 
@@ -93,71 +65,40 @@ async def test_status_errors(
     # HTTP failure getting the job status.
     mock_qserv.set_status_response(Response(500))
     status = await query_service.start_query(job)
-    expected = JobStatus(
-        job_id=job.job_id,
-        execution_id="1",
-        timestamp=now,
-        status=ExecutionPhase.ERROR,
-        error=JobError(code=JobErrorCode.backend_request_error, message=""),
-        metadata=job.to_job_metadata(),
-    )
-    expected.timestamp = ANY_DATETIME
-    assert expected.error
-    expected.error.message = ANY_STRING
-    assert status == expected
-    assert status.error
-    assert "Status 500 from GET" in status.error.message
+    data.assert_job_status_matches(status, "status/error-status-http")
     assert_approximately_now(status.timestamp)
 
     # Invalid response from the status endpoint.
-    error_json = {"success": 1, "status": {"queryId": 1, "status": "FOO"}}
+    error_json = data.read_json("qserv/error-invalid")
     mock_qserv.set_status_response(Response(200, json=error_json))
     status = await query_service.start_query(job)
-    expected.execution_id = "2"
-    expected.error.code = JobErrorCode.backend_internal_error
-    assert status == expected
+    data.assert_job_status_matches(
+        status, "status/error-status-invalid", execution_id="2"
+    )
     assert status.error
     assert "Qserv request failed: " in status.error.message
 
     # Error returned from the status endpoint.
-    error_json = {
-        "success": 0,
-        "error": "Some error",
-        "error_ext": {"foo": "bar"},
-    }
+    error_json = data.read_json("qserv/error-ext")
     mock_qserv.set_status_response(Response(200, json=error_json))
     status = await query_service.start_query(job)
-    expected.execution_id = "3"
-    expected.error.code = JobErrorCode.backend_error
-    expected.error.message = "Qserv request failed: Some error"
-    assert status == expected
+    data.assert_job_status_matches(
+        status, "status/error-status-failed", execution_id="3"
+    )
 
     # Return a normal reply from the status endpoint but mark the job as being
     # in an error state.
     start = datetime.now(tz=UTC).replace(microsecond=0)
-    query_status = QservAsyncStatusData(
-        query_id=4,
-        status=QservQueryPhase.FAILED,
-        total_chunks=10,
-        completed_chunks=4,
-        collected_bytes=150,
-        query_begin=now,
-        last_update=start,
-    )
-    error_json = {"success": 1, "status": query_status.model_dump(mode="json")}
+    error_json = data.read_json("qserv/error-status")
+    error_json["query_begin"] = now.isoformat(timespec="seconds")
+    error_json["last_update"] = start.isoformat(timespec="seconds")
     mock_qserv.set_status_response(Response(200, json=error_json))
     status = await query_service.start_query(job)
     now = datetime.now(tz=UTC)
-    expected.execution_id = "4"
-    assert status.query_info
-    expected.query_info = JobQueryInfo(
-        progress=ChunkProgress(total_chunks=10, completed_chunks=4),
-        start_time=status.query_info.start_time,
-        end_time=status.query_info.end_time,
+    data.assert_job_status_matches(
+        status, "status/error-status-partial", execution_id="4"
     )
-    expected.error.code = JobErrorCode.backend_error
-    expected.error.message = "Query failed in backend"
-    assert status == expected
+    assert status.query_info
     assert status.query_info.start_time <= now
     assert status.query_info.end_time
     assert start <= status.query_info.end_time <= now
@@ -180,40 +121,14 @@ async def test_start_invalid(
 ) -> None:
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    now = datetime.now(tz=UTC).replace(microsecond=0)
 
     job = data.read_pydantic(JobRun, "jobs/tabledata")
     status = await query_service.start_query(job)
-    expected = JobStatus(
-        job_id=job.job_id,
-        execution_id=None,
-        timestamp=now,
-        status=ExecutionPhase.ERROR,
-        error=JobError(
-            code=JobErrorCode.invalid_request,
-            message="TABLEDATA serialization not supported",
-        ),
-        metadata=job.to_job_metadata(),
-    )
-    expected.timestamp = ANY_DATETIME
-    assert expected.error
-    assert status == expected
+    data.assert_job_status_matches(status, "status/error-tabledata")
 
     job = data.read_pydantic(JobRun, "jobs/arraysize")
     status = await query_service.start_query(job)
-    expected = JobStatus(
-        job_id=job.job_id,
-        execution_id=None,
-        timestamp=now,
-        status=ExecutionPhase.ERROR,
-        error=JobError(
-            code=JobErrorCode.invalid_request,
-            message="arraysize only supported for char and unicodeChar fields",
-        ),
-        metadata=job.to_job_metadata(),
-    )
-    expected.timestamp = ANY_DATETIME
-    assert status == expected
+    data.assert_job_status_matches(status, "status/error-arraysize")
 
     assert await state_store.get_active_queries() == set()
 
@@ -228,25 +143,14 @@ async def test_sql_failure(
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
     job = data.read_pydantic(JobRun, "jobs/data")
-    now = datetime.now(tz=UTC).replace(microsecond=0)
 
     mock_qserv.set_immediate_success(job)
     results_sql = "SELECT * FROM nonexistent"
     with patch.object(qserv, "_query_results_sql", return_value=results_sql):
         status = await query_service.start_query(job)
-
-    expected = JobStatus(
-        job_id=job.job_id,
-        execution_id="1",
-        timestamp=now,
-        status=ExecutionPhase.ERROR,
-        error=JobError(code=JobErrorCode.backend_sql_error, message=""),
-        metadata=job.to_job_metadata(),
-    )
-    assert expected.error
-    expected.error.message = ANY_STRING
-    expected.timestamp = ANY_DATETIME
-    assert status == expected
+    data.assert_job_status_matches(status, "status/error-sql")
+    assert status.error
+    assert "SQL query error: " in status.error.message
     assert_approximately_now(status.timestamp)
 
     assert await state_store.get_active_queries() == set()
@@ -272,20 +176,7 @@ async def test_upload_timeout(
     mock_qserv.set_upload_delay(timedelta(seconds=2))
     monkeypatch.setattr(config, "result_timeout", timedelta(seconds=1))
     status = await query_service.start_query(job)
-
-    expected = JobStatus(
-        job_id=job.job_id,
-        execution_id="1",
-        timestamp=datetime.now(tz=UTC).replace(microsecond=0),
-        status=ExecutionPhase.ERROR,
-        error=JobError(
-            code=JobErrorCode.result_timeout,
-            message="Retrieving and uploading results timed out",
-        ),
-        metadata=job.to_job_metadata(),
-    )
-    expected.timestamp = ANY_DATETIME
-    assert status == expected
+    data.assert_job_status_matches(status, "status/error-upload-timeout")
     assert_approximately_now(status.timestamp)
 
     assert await state_store.get_active_queries() == set()
