@@ -2,7 +2,6 @@
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import ANY
 
 import pytest
 from aiokafka import AIOKafkaConsumer
@@ -85,25 +84,8 @@ async def test_success(
     assert isinstance(factory.events.qserv_success, MockEventPublisher)
     events = factory.events.qserv_success.published
     assert len(events) == 1
-    assert events[0].model_dump(mode="json") == {
-        "job_id": job.job_id,
-        "username": job.owner,
-        "elapsed": ANY,
-        "kafka_elapsed": ANY,
-        "qserv_elapsed": ANY,
-        "result_elapsed": ANY,
-        "submit_elapsed": ANY,
-        "delete_elapsed": ANY,
-        "rows": 2,
-        "qserv_size": qserv_status.collected_bytes,
-        "qserv_rate": ANY,
-        "encoded_size": ANY,
-        "result_size": ANY,
-        "rate": ANY,
-        "result_rate": ANY,
-        "upload_tables": 0,
-        "immediate": False,
-    }
+    data.assert_pydantic_matches(events[0], "events/success-kafka")
+    assert events[0].qserv_size == qserv_status.collected_bytes
     assert events[0].kafka_elapsed <= start_time - start
 
 
