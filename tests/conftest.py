@@ -32,6 +32,7 @@ from qservkafka.factory import Factory, ProcessContext
 from qservkafka.main import create_app
 
 from .support.data import QservKafkaData
+from .support.kafka import KafkaTestManager
 from .support.qserv import MockQserv, register_mock_qserv
 
 
@@ -171,6 +172,15 @@ def kafka_connection_settings(
 def kafka_docker_network() -> Iterator[Network]:
     with Network() as network:
         yield network
+
+
+@pytest.fixture
+def kafka_manager(
+    data: QservKafkaData,
+    kafka_broker: KafkaBroker,
+    kafka_status_consumer: AIOKafkaConsumer,
+) -> KafkaTestManager:
+    return KafkaTestManager(data, kafka_broker, kafka_status_consumer)
 
 
 @pytest_asyncio.fixture
