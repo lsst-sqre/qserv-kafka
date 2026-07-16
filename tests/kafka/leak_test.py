@@ -11,11 +11,9 @@ from datetime import UTC, datetime
 
 import pytest
 import respx
-from aiokafka import AIOKafkaConsumer
 from arq import Worker
 from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
-from faststream.kafka import KafkaBroker
 from safir.logging import LogLevel
 from safir.metrics import metrics_configuration_factory
 
@@ -23,9 +21,9 @@ from qservkafka.config import config
 from qservkafka.dependencies.context import context_dependency
 from qservkafka.factory import Factory
 
-from ..support.arq import create_arq_worker
+from ..support.arq import create_arq_worker, wait_for_dispatch
 from ..support.data import QservKafkaData
-from ..support.kafka import start_query, wait_for_dispatch, wait_for_status
+from ..support.kafka import KafkaTestManager
 from ..support.qserv import MockQserv
 
 
@@ -56,19 +54,15 @@ async def run_job(
     *,
     data: QservKafkaData,
     factory: Factory,
-    kafka_broker: KafkaBroker,
-    kafka_status_consumer: AIOKafkaConsumer,
+    kafka_manager: KafkaTestManager,
     mock_qserv: MockQserv,
     arq_worker: Worker,
     execution_id: int,
 ) -> None:
     """Run a single job end-to-end."""
-    job = await start_query(data, kafka_broker, "data")
-    status = await wait_for_status(
-        data,
-        kafka_status_consumer,
-        "data-started",
-        execution_id=str(execution_id),
+    job = await kafka_manager.start_query("jobs/data")
+    status = await kafka_manager.wait_for_status(
+        "status/data-started", execution_id=str(execution_id)
     )
     assert status.query_info
     start_time = status.query_info.start_time
@@ -82,11 +76,8 @@ async def run_job(
     await mock_qserv.update_status(execution_id, qserv_status)
     await wait_for_dispatch(factory, execution_id)
     assert await arq_worker.run_check() == execution_id
-    await wait_for_status(
-        data,
-        kafka_status_consumer,
-        "data-completed",
-        execution_id=str(execution_id),
+    await kafka_manager.wait_for_status(
+        "status/data-completed", execution_id=str(execution_id)
     )
 
 
@@ -96,8 +87,7 @@ async def test_leak(
     *,
     data: QservKafkaData,
     app: FastAPI,
-    kafka_broker: KafkaBroker,
-    kafka_status_consumer: AIOKafkaConsumer,
+    kafka_manager: KafkaTestManager,
     mock_qserv: MockQserv,
     respx_mock: respx.Router,
     monkeypatch: pytest.MonkeyPatch,
@@ -112,8 +102,7 @@ async def test_leak(
         await run_job(
             data=data,
             factory=factory,
-            kafka_broker=kafka_broker,
-            kafka_status_consumer=kafka_status_consumer,
+            kafka_manager=kafka_manager,
             mock_qserv=mock_qserv,
             arq_worker=arq_worker,
             execution_id=1,
@@ -129,8 +118,7 @@ async def test_leak(
             await run_job(
                 data=data,
                 factory=factory,
-                kafka_broker=kafka_broker,
-                kafka_status_consumer=kafka_status_consumer,
+                kafka_manager=kafka_manager,
                 mock_qserv=mock_qserv,
                 arq_worker=arq_worker,
                 execution_id=i,

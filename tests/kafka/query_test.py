@@ -4,7 +4,6 @@ import json
 from datetime import UTC, datetime
 
 import pytest
-from aiokafka import AIOKafkaConsumer
 from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 from faststream.kafka import KafkaBroker
@@ -24,9 +23,9 @@ from qservkafka.dependencies.context import context_dependency
 from qservkafka.models.kafka import JobRun
 from qservkafka.models.state import RunningQuery
 
-from ..support.arq import create_arq_worker
+from ..support.arq import create_arq_worker, wait_for_dispatch
 from ..support.data import QservKafkaData
-from ..support.kafka import start_query, wait_for_dispatch, wait_for_status
+from ..support.kafka import KafkaTestManager
 from ..support.qserv import MockQserv
 
 
@@ -39,8 +38,7 @@ async def test_success(
     *,
     data: QservKafkaData,
     app: FastAPI,
-    kafka_broker: KafkaBroker,
-    kafka_status_consumer: AIOKafkaConsumer,
+    kafka_manager: KafkaTestManager,
     mock_qserv: MockQserv,
     redis: RedisContainer,
 ) -> None:
@@ -49,10 +47,8 @@ async def test_success(
         arq_worker = create_arq_worker(factory._context)
 
         start = datetime.now(tz=UTC)
-        job = await start_query(data, kafka_broker, "data")
-        status = await wait_for_status(
-            data, kafka_status_consumer, "data-started"
-        )
+        job = await kafka_manager.start_query("jobs/data")
+        status = await kafka_manager.wait_for_status("status/data-started")
         assert status.query_info
         start_time = status.query_info.start_time
 
@@ -63,14 +59,11 @@ async def test_success(
             last_update=datetime.now(tz=UTC).replace(microsecond=0),
         )
         await mock_qserv.update_status(1, qserv_status)
-
         await wait_for_dispatch(factory, 1)
 
         # Run the background task queue.
         assert await arq_worker.run_check() == 1
-        status = await wait_for_status(
-            data, kafka_status_consumer, "data-completed"
-        )
+        status = await kafka_manager.wait_for_status("status/data-completed")
         assert status.query_info
         assert status.query_info.start_time == start_time
         assert status.query_info.end_time
@@ -95,8 +88,7 @@ async def test_failure(
     *,
     data: QservKafkaData,
     app: FastAPI,
-    kafka_broker: KafkaBroker,
-    kafka_status_consumer: AIOKafkaConsumer,
+    kafka_manager: KafkaTestManager,
     mock_qserv: MockQserv,
     redis: RedisContainer,
 ) -> None:
@@ -104,10 +96,8 @@ async def test_failure(
         factory = context_dependency.create_factory()
         arq_worker = create_arq_worker(factory._context)
 
-        await start_query(data, kafka_broker, "simple")
-        status = await wait_for_status(
-            data, kafka_status_consumer, "simple-started"
-        )
+        await kafka_manager.start_query("jobs/simple")
+        status = await kafka_manager.wait_for_status("status/simple-started")
         assert status.query_info
         start_time = status.query_info.start_time
 
@@ -116,9 +106,7 @@ async def test_failure(
             "qserv/simple-partial", query_begin=start_time, last_update=now
         )
         await mock_qserv.update_status(1, qserv_status)
-        status = await wait_for_status(
-            data, kafka_status_consumer, "simple-partial"
-        )
+        status = await kafka_manager.wait_for_status("status/simple-partial")
         assert status.timestamp == now
         assert status.query_info
         assert status.query_info.start_time == start_time
@@ -132,9 +120,7 @@ async def test_failure(
 
         # Run the background tsk queue.
         assert await arq_worker.run_check() == 1
-        status = await wait_for_status(
-            data, kafka_status_consumer, "simple-failed"
-        )
+        status = await kafka_manager.wait_for_status("status/simple-failed")
         assert status.timestamp == now
         assert status.query_info
         assert status.query_info.start_time == start_time
@@ -152,8 +138,7 @@ async def test_too_large(
     *,
     data: QservKafkaData,
     app: FastAPI,
-    kafka_broker: KafkaBroker,
-    kafka_status_consumer: AIOKafkaConsumer,
+    kafka_manager: KafkaTestManager,
     mock_qserv: MockQserv,
     redis: RedisContainer,
 ) -> None:
@@ -161,10 +146,8 @@ async def test_too_large(
         factory = context_dependency.create_factory()
         arq_worker = create_arq_worker(factory._context)
 
-        await start_query(data, kafka_broker, "simple")
-        status = await wait_for_status(
-            data, kafka_status_consumer, "simple-started"
-        )
+        await kafka_manager.start_query("jobs/simple")
+        status = await kafka_manager.wait_for_status("status/simple-started")
         assert status.query_info
         start_time = status.query_info.start_time
 
@@ -177,9 +160,7 @@ async def test_too_large(
 
         # Run the background tsk queue.
         assert await arq_worker.run_check() == 1
-        status = await wait_for_status(
-            data, kafka_status_consumer, "simple-large"
-        )
+        status = await kafka_manager.wait_for_status("status/simple-large")
         assert status.timestamp == now
         assert status.query_info
         assert status.query_info.start_time == start_time
@@ -197,8 +178,7 @@ async def test_qserv_error(
     *,
     data: QservKafkaData,
     app: FastAPI,
-    kafka_broker: KafkaBroker,
-    kafka_status_consumer: AIOKafkaConsumer,
+    kafka_manager: KafkaTestManager,
     mock_qserv: MockQserv,
     redis: RedisContainer,
 ) -> None:
@@ -211,14 +191,12 @@ async def test_qserv_error(
         factory = context_dependency.create_factory()
         arq_worker = create_arq_worker(factory._context)
 
-        await start_query(data, kafka_broker, "simple")
-        status = await wait_for_status(
-            data, kafka_status_consumer, "simple-started"
-        )
+        await kafka_manager.start_query("jobs/simple")
+        status = await kafka_manager.wait_for_status("status/simple-started")
         assert status.query_info
         start_time = status.query_info.start_time
 
-        error_json = {"success": 0, "error": "Some error"}
+        error_json = data.read_json("qserv/error")
         mock_qserv.set_status_response(Response(200, json=error_json))
         qserv_status = data.read_qserv_status(
             "qserv/simple-completed",
@@ -230,9 +208,7 @@ async def test_qserv_error(
 
         # Run the background tsk queue.
         assert await arq_worker.run_check() == 1
-        status = await wait_for_status(
-            data, kafka_status_consumer, "simple-error"
-        )
+        status = await kafka_manager.wait_for_status("status/simple-error")
 
     # Ensure all query state has been deleted.
     redis_client = redis.get_client()
@@ -245,16 +221,15 @@ async def test_missing_executing(
     *,
     data: QservKafkaData,
     app: FastAPI,
-    kafka_broker: KafkaBroker,
-    kafka_status_consumer: AIOKafkaConsumer,
+    kafka_manager: KafkaTestManager,
     mock_qserv: MockQserv,
     redis: RedisContainer,
 ) -> None:
     """Test queries that are not in the process list but still executing."""
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
-        await start_query(data, kafka_broker, "data")
-        await wait_for_status(data, kafka_status_consumer, "data-started")
+        await kafka_manager.start_query("jobs/data")
+        await kafka_manager.wait_for_status("status/data-started")
 
         # Remove the query from the running query list. It should be
         # dispatched to the result worker.
@@ -265,7 +240,7 @@ async def test_missing_executing(
     # status update we already sent (since nothing has changed).
     arq_worker = create_arq_worker()
     assert await arq_worker.run_check() == 1
-    await wait_for_status(data, kafka_status_consumer, "data-started")
+    await kafka_manager.wait_for_status("status/data-started")
 
     # The query should still be active and should no longer be marked as
     # dispatched, so it will be checked again the next time through the
@@ -283,15 +258,13 @@ async def test_cancel(
     *,
     data: QservKafkaData,
     app: FastAPI,
+    kafka_manager: KafkaTestManager,
     kafka_broker: KafkaBroker,
-    kafka_status_consumer: AIOKafkaConsumer,
     redis: RedisContainer,
 ) -> None:
     async with LifespanManager(app):
-        await start_query(data, kafka_broker, "simple")
-        status = await wait_for_status(
-            data, kafka_status_consumer, "simple-started"
-        )
+        await kafka_manager.start_query("jobs/simple")
+        status = await kafka_manager.wait_for_status("status/simple-started")
         assert status.query_info
         start_time = status.query_info.start_time
 
@@ -299,9 +272,7 @@ async def test_cancel(
         cancel = data.read_json("cancel/simple")
         await kafka_broker.publish(cancel, config.job_cancel_topic)
 
-        status = await wait_for_status(
-            data, kafka_status_consumer, "simple-aborted"
-        )
+        status = await kafka_manager.wait_for_status("status/simple-aborted")
         assert status.query_info
         assert status.query_info.start_time == start_time
         assert status.query_info.end_time
@@ -318,20 +289,17 @@ async def test_upload(
     *,
     data: QservKafkaData,
     app: FastAPI,
-    kafka_broker: KafkaBroker,
-    kafka_status_consumer: AIOKafkaConsumer,
+    kafka_manager: KafkaTestManager,
     mock_qserv: MockQserv,
     redis: RedisContainer,
 ) -> None:
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
 
-        job = await start_query(data, kafka_broker, "upload")
+        job = await kafka_manager.start_query("jobs/upload")
         table_name = job.upload_tables[0].table_name
         database_name = job.upload_tables[0].database
-        status = await wait_for_status(
-            data, kafka_status_consumer, "upload-started"
-        )
+        status = await kafka_manager.wait_for_status("status/upload-started")
         assert status.query_info
         start_time = status.query_info.start_time
         assert mock_qserv.get_uploaded_table() == table_name
@@ -353,7 +321,7 @@ async def test_upload(
     # Run the backend worker.
     arq_worker = create_arq_worker()
     assert await arq_worker.run_check() == 1
-    await wait_for_status(data, kafka_status_consumer, "upload-failed")
+    await kafka_manager.wait_for_status("status/upload-failed")
 
     # Now that results have been processed, the table should be deleted.
     assert mock_qserv.get_uploaded_database() is None
@@ -370,8 +338,7 @@ async def test_quota(
     *,
     data: QservKafkaData,
     app: FastAPI,
-    kafka_broker: KafkaBroker,
-    kafka_status_consumer: AIOKafkaConsumer,
+    kafka_manager: KafkaTestManager,
     mock_gafaelfawr: MockGafaelfawr,
     mock_qserv: MockQserv,
     redis: RedisContainer,
@@ -389,21 +356,19 @@ async def test_quota(
         arq_worker = create_arq_worker(factory._context)
 
         # Start a couple of queries.
-        await start_query(data, kafka_broker, "data")
-        status = await wait_for_status(
-            data, kafka_status_consumer, "data-started"
-        )
+        await kafka_manager.start_query("jobs/data")
+        status = await kafka_manager.wait_for_status("status/data-started")
         assert status.query_info
         start_time = status.query_info.start_time
-        job = await start_query(data, kafka_broker, "data")
-        await wait_for_status(
-            data, kafka_status_consumer, "data-started", execution_id="2"
+        job = await kafka_manager.start_query("jobs/data")
+        await kafka_manager.wait_for_status(
+            "status/data-started", execution_id="2"
         )
 
         # This should have exhausted the user's quota, and starting a third
         # job should be rejected with an error.
-        await start_query(data, kafka_broker, "data")
-        await wait_for_status(data, kafka_status_consumer, "data-overquota")
+        await kafka_manager.start_query("jobs/data")
+        await kafka_manager.wait_for_status("status/data-overquota")
 
         # Make sure that we decremented the counter of running queries again
         # when rejecting that job.
@@ -421,12 +386,12 @@ async def test_quota(
 
         # Run the background task queue.
         assert await arq_worker.run_check() == 1
-        await wait_for_status(data, kafka_status_consumer, "data-completed")
+        await kafka_manager.wait_for_status("status/data-completed")
 
         # Now, it should be possible to start a new query.
-        await start_query(data, kafka_broker, "data")
-        await wait_for_status(
-            data, kafka_status_consumer, "data-started", execution_id="3"
+        await kafka_manager.start_query("jobs/data")
+        await kafka_manager.wait_for_status(
+            "status/data-started", execution_id="3"
         )
         assert redis_client.get(f"rate:{job.owner}") == b"2"
 
@@ -437,8 +402,7 @@ async def test_wrong_schema(
     *,
     data: QservKafkaData,
     app: FastAPI,
-    kafka_broker: KafkaBroker,
-    kafka_status_consumer: AIOKafkaConsumer,
+    kafka_manager: KafkaTestManager,
     mock_slack: MockSlackWebhook,
     mock_qserv: MockQserv,
     redis: RedisContainer,
@@ -447,10 +411,8 @@ async def test_wrong_schema(
         factory = context_dependency.create_factory()
         arq_worker = create_arq_worker(factory._context)
 
-        job = await start_query(data, kafka_broker, "data-wrong-schema")
-        status = await wait_for_status(
-            data, kafka_status_consumer, "data-started"
-        )
+        job = await kafka_manager.start_query("jobs/data-wrong-schema")
+        status = await kafka_manager.wait_for_status("status/data-started")
         assert status.query_info
         start_time = status.query_info.start_time
 
@@ -461,12 +423,11 @@ async def test_wrong_schema(
             last_update=datetime.now(tz=UTC).replace(microsecond=0),
         )
         await mock_qserv.update_status(1, qserv_status)
-
         await wait_for_dispatch(factory, 1)
 
         # Run the background task queue.
         assert await arq_worker.run_check() == 1
-        await wait_for_status(data, kafka_status_consumer, "data-wrong-schema")
+        await kafka_manager.wait_for_status("status/data-wrong-schema")
 
     # Ensure all query state has been deleted.
     redis_client = redis.get_client()
