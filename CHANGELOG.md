@@ -7,43 +7,65 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-5.0.0'></a>
+## 5.0.0 (2026-07-16)
+
+### Backwards-incompatible changes
+
+- Request version 55 of the Qserv REST API instead of version 51. This only applies if the Qserv Kafka bridge is configured to send versions in REST API requests.
+
+### New features
+
+- Ingest temporary uploaded tables that are part of join queries with director tables as director or dependent partitioned tables, enabling more efficient spatial cross-match queries in QServ.
+
+### Bug fixes
+
+- Delete temporary upload databases when Qserv rejects a query at submission time.
+- Catch errors during BINARY2 encoding of the VOTable, normally due to a schema mismatch with the data returned by the database, so that the job is terminated correctly with an error status. Include the column name and type in error reports.
+
+### Other changes
+
+- qserv-kafka now uses [nox](https://nox.thea.codes/en/stable/index.html) as the build system for development and testing instead of tox.
+
 <a id='changelog-4.5.0'></a>
 ## 4.5.0 (2026-05-15)
 
 ### New features
 
-- Switch BigQuery result streaming to the Storage Read API using Arrow-based retrieval. This improves result processing by making it faster at the expense of more resource utilization.
-
-- Add configurable max result size limit.
+- Switch BigQuery result streaming to the Storage Read API using Arrow-based retrieval. This speeds up result processing at the expense of more resource utilization.
+- Add a configurable maximum result size limit.
 
 <a id='changelog-4.4.0'></a>
 ## 4.4.0 (2026-02-24)
 
-## Other changes
+### Other changes
 
-- Change event field names to use backend-specific prefix
+- Change metrics events field names to use a backend-specific prefix so that Qserv and BigQuery metrics can be more easily distinguished.
 
 <a id='changelog-4.3.1'></a>
 ## 4.3.1 (2026-02-17)
 
 ### Bug fixes
 
-- Fix bug where null chunk information error would cause a Pydantic validation exception
-- Catch deserialization error due to schema changes and delete stale query with a warning logged
+- Correctly handle null chunk information from Qserv.
+- Catch deserialization errors in retrieving qserv-kafka's internal state due to schema changes and delete those stale queries with a warning.
 
 <a id='changelog-4.3.0'></a>
 ## 4.3.0 (2026-02-09)
 
 ### New features
 
-- Add support for Google BigQuery as a database backend using its REST API. The database backend, either BigQuery (new) or Qsev (existing), is selected via the new `backend` query parameter.
+- Add support for Google BigQuery as a database backend using its REST API. The database backend, either BigQuery (new) or Qsev (existing), is selected via the new `config.backend` setting.
+
+### Bug fixes
+
+- Configure database engine timeouts to properly detect hanging SQL queries when retrieving query status from Qserv.
 
 ### Other changes
 
 - Split the `query_success` metrics event into backend-specific events (`qserv_success` and `bigquery_success`). Both use generic field names (`backend_elapsed`, `backend_size`, `backend_rate`) for backend timing and size metrics.
 - Split the protocol failure metrics event into `qserv_failure` and `bigquery_failure`.
-- Add timeouts to database engine in factory. Used to address issue with monitor SQL query not returning.
-- Log a warning when query state is not found in worker during query result handling.
+- Log a warning when the query state is not found in worker during query result handling.
 
 <a id='changelog-4.2.1'></a>
 ## 4.2.1 (2026-01-06)

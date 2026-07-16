@@ -31,6 +31,7 @@ from qservkafka.config import config
 from qservkafka.factory import Factory, ProcessContext
 from qservkafka.main import create_app
 
+from .support.constants import REDIS_IMAGE
 from .support.data import QservKafkaData
 from .support.kafka import KafkaTestManager
 from .support.qserv import MockQserv, register_mock_qserv
@@ -302,5 +303,5 @@ def redis_container() -> Generator[RedisContainer]:
     """Start a Redis container for testing."""
     assert config.redis_password
     password = config.redis_password.get_secret_value()
-    with RedisContainer(password=password) as redis:
+    with RedisContainer(image=REDIS_IMAGE, password=password) as redis:
         yield redis
