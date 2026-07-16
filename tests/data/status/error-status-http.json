@@ -1,7 +1,7 @@
 {
   "errorInfo": {
     "errorCode": "backend_request_error",
-    "errorMessage": "Status 500 from GET https://qserv.example.com/query-async/status/1?version=51"
+    "errorMessage": "Status 500 from GET https://qserv.example.com/query-async/status/1?version=55"
   },
   "executionID": "1",
   "jobID": "uws123",
