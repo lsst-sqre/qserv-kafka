@@ -45,7 +45,7 @@ from ..models.qserv import (
 from ..models.query import AsyncQueryPhase, ProcessStatus, QservQueryStatus
 from .backend import DatabaseBackend
 
-API_VERSION = 51
+API_VERSION = 55
 """Version of the REST API that this client requests."""
 
 __all__ = ["API_VERSION", "QservClient"]

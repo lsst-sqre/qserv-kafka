@@ -37,8 +37,8 @@ class QservKafkaData(Data):
         """
         if self._update:
             old_execution_id = seen.execution_id
-            if execution_id is not None:
-                seen.execution_id = execution_id
+            if old_execution_id is not None:
+                seen.execution_id = "1"
             self.write_pydantic(seen, path, exclude_defaults=True)
             seen.execution_id = old_execution_id
         seen_json = seen.model_dump(mode="json", exclude_defaults=True)
