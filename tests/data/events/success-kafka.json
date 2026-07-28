@@ -6,7 +6,7 @@
   "job_id": "uws123",
   "kafka_elapsed": "<ANY>",
   "qserv_elapsed": "<ANY>",
-  "qserv_rate": null,
+  "qserv_rate": "<ANY>",
   "qserv_size": 250,
   "rate": "<ANY>",
   "result_elapsed": "<ANY>",
