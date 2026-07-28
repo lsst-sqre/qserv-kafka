@@ -361,6 +361,8 @@ class ResultProcessor(ABC):
     ) -> JobStatus:
         """Construct the job status for an exception.
 
+        This method may only be called from inside an exception handler.
+
         Parameters
         ----------
         query
@@ -378,18 +380,20 @@ class ResultProcessor(ABC):
         elapsed = now - query.start
         elapsed_seconds = elapsed.total_seconds()
 
-        # Analyze the exception.
+        # Analyze the exception. _build_exception_status is only called inside
+        # an exception handler, so suppress the Ruff diagnostics since Ruff
+        # has no way of knowing that.
         await report_exception(exc, slack_client=self._slack_client)
         match exc:
             case QueryError():
-                logger.exception(
+                logger.exception(  # noqa: LOG004
                     exc.description,
                     elapsed=elapsed_seconds,
                     **exc.to_logging_context(),
                 )
                 error = exc.to_job_error()
             case TimeoutError():
-                logger.exception(
+                logger.exception(  # noqa: LOG004
                     "Retrieving and uploading results timed out",
                     elapsed=elapsed_seconds,
                     timeout=config.result_timeout.total_seconds(),
