@@ -15,6 +15,7 @@ from qservkafka.storage import qserv
 from ..support.data import QservKafkaData
 from ..support.datetime import assert_approximately_now
 from ..support.qserv import MockQserv
+from ..support.query import start_and_complete_immediate
 
 
 @pytest.mark.asyncio
@@ -147,7 +148,9 @@ async def test_sql_failure(
     mock_qserv.set_immediate_success(job)
     results_sql = "SELECT * FROM nonexistent"
     with patch.object(qserv, "_query_results_sql", return_value=results_sql):
-        status = await query_service.start_query(job)
+        status = await start_and_complete_immediate(
+            query_service, factory, job
+        )
     data.assert_job_status_matches(status, "status/error-sql")
     assert status.error
     assert "SQL query error: " in status.error.message
@@ -175,7 +178,7 @@ async def test_upload_timeout(
     mock_qserv.set_immediate_success(job)
     mock_qserv.set_upload_delay(timedelta(seconds=2))
     monkeypatch.setattr(config, "result_timeout", timedelta(seconds=1))
-    status = await query_service.start_query(job)
+    status = await start_and_complete_immediate(query_service, factory, job)
     data.assert_job_status_matches(status, "status/error-upload-timeout")
     assert_approximately_now(status.timestamp)
 

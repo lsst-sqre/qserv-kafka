@@ -4,6 +4,8 @@ import uuid
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+from arq import func
+from arq.worker import Function
 from safir.logging import configure_logging
 from safir.metrics.arq import initialize_arq_metrics, make_on_job_start
 from safir.sentry import initialize_sentry
@@ -15,6 +17,7 @@ from ..config import config
 from ..constants import ARQ_TIMEOUT_GRACE
 from ..factory import Factory, ProcessContext
 from .functions.results import handle_finished_query
+from .functions.upload import handle_upload_job
 
 
 async def startup(ctx: dict[Any, Any]) -> None:
@@ -73,7 +76,7 @@ async def shutdown(ctx: dict[Any, Any]) -> None:
 
 
 class WorkerSettings:
-    """Configuration for the arq worker."""
+    """Configuration for the arq worker that processes completed queries."""
 
     functions: ClassVar[list[Callable]] = [handle_finished_query]
     job_completion_wait = int(
@@ -85,4 +88,28 @@ class WorkerSettings:
     on_startup = startup
     on_shutdown = shutdown
     queue_name = config.arq_queue
+    redis_settings = config.arq_redis_settings
+
+
+class UploadWorkerSettings:
+    """Configuration for the arq worker that starts queries with uploads.
+
+    Runs on a separate queue from `WorkerSettings` so that a slow upload
+    can't starve result processing.
+    """
+
+    functions: ClassVar[list[Callable | Function]] = [
+        func(
+            handle_upload_job,
+            timeout=config.upload_worker_timeout + ARQ_TIMEOUT_GRACE,
+        ),
+    ]
+    job_completion_wait = int(
+        (config.upload_worker_timeout + ARQ_TIMEOUT_GRACE).total_seconds()
+    )
+    max_jobs = config.upload_worker_max_jobs
+    on_job_start = make_on_job_start(config.upload_queue)
+    on_startup = startup
+    on_shutdown = shutdown
+    queue_name = config.upload_queue
     redis_settings = config.arq_redis_settings

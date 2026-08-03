@@ -22,8 +22,13 @@ from qservkafka.config import config
 from qservkafka.dependencies.context import context_dependency
 from qservkafka.models.kafka import JobRun
 from qservkafka.models.state import RunningQuery
+from qservkafka.workers.main import UploadWorkerSettings
 
-from ..support.arq import create_arq_worker, wait_for_dispatch
+from ..support.arq import (
+    create_arq_worker,
+    run_worker_until_processed,
+    wait_for_dispatch,
+)
 from ..support.data import QservKafkaData
 from ..support.kafka import KafkaTestManager
 from ..support.qserv import MockQserv
@@ -80,6 +85,48 @@ async def test_success(
     data.assert_pydantic_matches(events[0], "events/success-kafka")
     assert events[0].qserv_size == qserv_status.collected_bytes
     assert events[0].kafka_elapsed <= start_time - start
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(40)
+async def test_immediate(
+    *,
+    data: QservKafkaData,
+    app: FastAPI,
+    kafka_manager: KafkaTestManager,
+    mock_qserv: MockQserv,
+    redis: RedisContainer,
+) -> None:
+    """Test a query that completes before its first status check."""
+    job = data.read_pydantic(JobRun, "jobs/data")
+    mock_qserv.set_immediate_success(job)
+
+    async with LifespanManager(app):
+        factory = context_dependency.create_factory()
+        arq_worker = create_arq_worker(factory._context)
+
+        await kafka_manager.start_query("jobs/data")
+        status = await kafka_manager.wait_for_status(
+            "status/data-immediate-started"
+        )
+        assert status.query_info
+        start_time = status.query_info.start_time
+
+        await wait_for_dispatch(factory, 1)
+
+        assert await arq_worker.run_check() == 1
+        status = await kafka_manager.wait_for_status("status/data-completed")
+        assert status.query_info
+        assert status.query_info.start_time == start_time
+        assert status.query_info.end_time
+        assert status.query_info.end_time >= start_time
+
+    redis_client = redis.get_client()
+    assert set(redis_client.scan_iter("query:*")) == set()
+    assert isinstance(factory.events.qserv_success, MockEventPublisher)
+    events = factory.events.qserv_success.published
+    assert len(events) == 1
+    assert events[0].immediate is True
 
 
 @pytest.mark.asyncio
@@ -295,10 +342,17 @@ async def test_upload(
 ) -> None:
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
+        upload_worker = create_arq_worker(
+            factory._context, settings=UploadWorkerSettings
+        )
 
         job = await kafka_manager.start_query("jobs/upload")
         table_name = job.upload_tables[0].table_name
         database_name = job.upload_tables[0].database
+
+        # Jobs with table uploads are dispatched to a separate arq worker
+        # pool so that worker has to run before the job is actually started.
+        assert await run_worker_until_processed(upload_worker) == 1
         status = await kafka_manager.wait_for_status("status/upload-started")
         assert status.query_info
         start_time = status.query_info.start_time

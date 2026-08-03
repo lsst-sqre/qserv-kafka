@@ -160,8 +160,8 @@ class QuerySuccessEvent(BaseQueryEvent):
         False,
         title="Query finished immediately",
         description=(
-            "Whether the query finished so quickly that it was processed"
-            " entirely by the frontend"
+            "Whether the query had already completed before its"
+            " status was first checked"
         ),
     )
 

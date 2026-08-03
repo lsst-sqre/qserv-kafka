@@ -72,6 +72,9 @@ class ProcessContext:
     kafka_broker: KafkaBroker
     """Kafka broker to use for publishing messages from background jobs."""
 
+    arq_queue: ArqQueue
+    """Queue to which to dispatch work to arq workers."""
+
     event_manager: EventManager
     """Manager for publishing metrics events."""
 
@@ -150,6 +153,8 @@ class ProcessContext:
             logger=logger,
         )
 
+        arq_queue = await cls._create_arq_queue()
+
         return cls(
             http_client=http_client,
             discovery_client=discovery_client,
@@ -161,6 +166,7 @@ class ProcessContext:
             gafaelfawr=gafaelfawr,
             events=events,
             redis=redis_client,
+            arq_queue=arq_queue,
         )
 
     @classmethod
@@ -250,6 +256,17 @@ class ProcessContext:
                 return None, None
 
     @classmethod
+    async def _create_arq_queue(cls) -> ArqQueue:
+        """Create the queue used to dispatch work to arq workers."""
+        if config.arq_mode == ArqMode.production:
+            settings = config.arq_redis_settings
+            return await RedisArqQueue.initialize(
+                settings, default_queue_name=config.arq_queue
+            )
+        else:
+            return MockArqQueue()
+
+    @classmethod
     def _create_slack_client(
         cls, logger: BoundLogger
     ) -> SlackWebhookClient | None:
@@ -273,6 +290,7 @@ class ProcessContext:
         """
         await self.event_manager.aclose()
         await self.kafka_broker.stop()
+        await self.arq_queue.aclose()
         await self.redis.aclose()
         if self.engine is not None:
             await self.engine.dispose()
@@ -385,17 +403,10 @@ class Factory:
         QueryMonitor
             New service to monitor query status.
         """
-        if config.arq_mode == ArqMode.production:
-            settings = config.arq_redis_settings
-            arq_queue: ArqQueue = await RedisArqQueue.initialize(
-                settings, default_queue_name=config.arq_queue
-            )
-        else:
-            arq_queue = MockArqQueue()
         return QueryMonitor(
             result_processor=self.create_result_processor(),
             backend=self.create_backend_client(),
-            arq_queue=arq_queue,
+            arq_queue=self._context.arq_queue,
             state_store=self.create_query_state_store(),
             rate_limit_store=self.create_rate_limit_store(),
             events=self._context.events,
@@ -404,11 +415,6 @@ class Factory:
 
     def create_query_service(self) -> QueryService:
         """Create a new service for starting queries.
-
-        Parameters
-        ----------
-        arq_queue
-            arq queue to which to dispatch result handling jobs.
 
         Returns
         -------
@@ -421,6 +427,7 @@ class Factory:
             result_processor=self.create_result_processor(),
             rate_limit_store=self.create_rate_limit_store(),
             gafaelfawr_storage=self.gafaelfawr,
+            arq_queue=self._context.arq_queue,
             events=self._context.events,
             slack_client=self._context.slack_client,
             logger=self._logger,
@@ -454,6 +461,7 @@ class Factory:
             ),
             kafka_broker=self._context.kafka_broker,
             rate_limit_store=self.create_rate_limit_store(),
+            arq_queue=self._context.arq_queue,
             events=self._context.events,
             slack_client=self._context.slack_client,
             logger=self._logger,
