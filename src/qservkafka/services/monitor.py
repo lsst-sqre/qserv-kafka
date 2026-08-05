@@ -5,11 +5,12 @@ from collections import Counter
 from safir.arq import ArqQueue
 from structlog.stdlib import BoundLogger
 
-from ..events import Events
+from ..config import config
+from ..events import BigQueryExecutingEvent, Events, QservExecutingEvent
 from ..models.kafka import JobStatus
 from ..models.query import AsyncQueryPhase, ProcessStatus
 from ..models.state import RunningQuery
-from ..storage.backend import DatabaseBackend
+from ..storage.backend import BackendType, DatabaseBackend
 from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from .results import ResultProcessor
@@ -63,13 +64,29 @@ class QueryMonitor:
         if not active_queries:
             return
         running = await self._backend.list_running_queries()
+        queries_executing = 0
         for query_id in active_queries:
             query = await self._state.get_query(query_id)
             if not query:
                 continue
-            update = await self.check_query(query, running.get(query_id))
+            status = running.get(query_id)
+            if status and status.status == AsyncQueryPhase.EXECUTING:
+                queries_executing += 1
+            update = await self.check_query(query, status)
             if update:
                 await self._results.publish_status(update)
+
+        # Post a metric for how many queries are in flight. This counts only
+        # queries that are both still executing and that this bridge instance
+        # is aware of, since the same backend may be shared by multiple
+        # bridges and each should only count its own queries.
+        match config.backend:
+            case BackendType.BIGQUERY:
+                bq_event = BigQueryExecutingEvent(count=queries_executing)
+                await self._events.bigquery_executing.publish(bq_event)
+            case BackendType.QSERV:
+                qs_event = QservExecutingEvent(count=queries_executing)
+                await self._events.qserv_executing.publish(qs_event)
 
     async def check_query(
         self, query: RunningQuery, status: ProcessStatus | None

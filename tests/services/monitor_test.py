@@ -5,6 +5,7 @@ from unittest.mock import call, patch
 
 import pytest
 from safir.arq import RedisArqQueue
+from safir.metrics import MockEventPublisher
 from testcontainers.redis import RedisContainer
 
 from qservkafka.factory import Factory
@@ -28,6 +29,14 @@ async def test_dispatch(
 
     status = await query_service.start_query(job)
     data.assert_job_status_matches(status, "status/simple-started")
+
+    # Check running query status and see if the count of running queries is
+    # logged properly as a metric.
+    await monitor.check_status()
+    assert isinstance(factory.events.qserv_executing, MockEventPublisher)
+    events = factory.events.qserv_executing.published
+    assert len(events) == 1
+    data.assert_pydantic_matches(events[0], "events/executing")
 
     qserv_status = mock_qserv.get_status(1)
     now = datetime.now(tz=UTC).replace(microsecond=0)
