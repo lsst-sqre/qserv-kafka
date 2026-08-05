@@ -7,6 +7,18 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-5.0.1'></a>
+## 5.0.1 (2026-08-06)
+
+### Bug fixes
+
+- Jobs with table uploads and queries that complete before their first status check are now dispatched to arq workers, so a slow upload can no longer delay unrelated querie behind them.
+- Add more information to result retrieval and upload timeout errors when reporting them to Sentry and Slack.
+
+### Other changes
+
+- After each check of backend status, log a metric for the number of queries currently executing in the backend. The metric will be `qserv_executing` for Qserv backends and `bigquery_executing` for BigQuery backends.
+
 <a id='changelog-5.0.0'></a>
 ## 5.0.0 (2026-07-16)
 
