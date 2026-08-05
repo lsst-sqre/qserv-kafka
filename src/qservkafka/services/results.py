@@ -29,6 +29,7 @@ from ..exceptions import (
     BackendApiError,
     BackendApiTransientError,
     QueryError,
+    UploadTimeoutError,
     UploadWebError,
 )
 from ..models.kafka import (
@@ -305,7 +306,7 @@ class ResultProcessor(ABC):
         # Retrieve and upload the results.
         try:
             stats = await self._upload_results_with_retry(query, logger)
-        except (QueryError, TimeoutError) as e:
+        except QueryError as e:
             return await self._build_exception_status(query, e)
 
         # Delete the results if configured to do so.
@@ -359,9 +360,7 @@ class ResultProcessor(ABC):
         )
 
     async def _build_exception_status(
-        self,
-        query: RunningQuery,
-        exc: QueryError | TimeoutError,
+        self, query: RunningQuery, exc: QueryError
     ) -> JobStatus:
         """Construct the job status for an exception.
 
@@ -379,33 +378,18 @@ class ResultProcessor(ABC):
         JobStatus
             Status for the query.
         """
-        logger = self._logger.bind(**query.to_logging_context())
+        logger = self._logger.bind(
+            **query.to_logging_context(), **exc.to_logging_context()
+        )
         now = datetime.now(tz=UTC)
         elapsed = now - query.start
-        elapsed_seconds = elapsed.total_seconds()
 
         # Analyze the exception. _build_exception_status is only called inside
         # an exception handler, so suppress the Ruff diagnostics since Ruff
         # has no way of knowing that.
         await report_exception(exc, slack_client=self._slack_client)
-        match exc:
-            case QueryError():
-                logger.exception(  # noqa: LOG004
-                    exc.description,
-                    elapsed=elapsed_seconds,
-                    **exc.to_logging_context(),
-                )
-                error = exc.to_job_error()
-            case TimeoutError():
-                logger.exception(  # noqa: LOG004
-                    "Retrieving and uploading results timed out",
-                    elapsed=elapsed_seconds,
-                    timeout=config.result_timeout.total_seconds(),
-                )
-                error = JobError(
-                    code=JobErrorCode.result_timeout,
-                    message="Retrieving and uploading results timed out",
-                )
+        logger.exception(exc.description)  # noqa: LOG004
+        error = exc.to_job_error()
 
         # Send a metrics event for the failure.
         event = QueryFailureEvent(
@@ -561,16 +545,20 @@ class ResultProcessor(ABC):
         results = self._backend.get_query_results_gen(query.query_id)
         timeout = config.result_timeout.total_seconds()
 
-        async with asyncio.timeout(timeout):
-            size = await self._votable.store(
-                query.job.result_url,
-                query.job.result_format,
-                results,
-                maxrec=query.job.maxrec,
-            )
-            return UploadStats(
-                elapsed=datetime.now(tz=UTC) - result_start, **asdict(size)
-            )
+        try:
+            async with asyncio.timeout(timeout):
+                size = await self._votable.store(
+                    query.job.result_url,
+                    query.job.result_format,
+                    results,
+                    maxrec=query.job.maxrec,
+                )
+                return UploadStats(
+                    elapsed=datetime.now(tz=UTC) - result_start, **asdict(size)
+                )
+        except TimeoutError as e:
+            elapsed = datetime.now(tz=UTC) - result_start
+            raise UploadTimeoutError(elapsed) from e
 
     async def _upload_results_with_retry(
         self, query: RunningQuery, logger: BoundLogger

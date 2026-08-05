@@ -1,5 +1,6 @@
 """Custom exceptions for the Qserv Kafka bridge."""
 
+from datetime import timedelta
 from typing import Any, ClassVar, Self, override
 
 from safir.slack.blockkit import (
@@ -473,6 +474,25 @@ class TableUploadWebError(SlackWebException, QueryError):
     """Retrieving an uploaded table failed."""
 
     error = JobErrorCode.table_read
+
+
+class UploadTimeoutError(QueryError):
+    """Timeout retrieving and uploading the query results."""
+
+    description = "Timeout uploading results"
+    error = JobErrorCode.result_timeout
+
+    def __init__(self, elapsed: timedelta) -> None:
+        delay = elapsed.total_seconds()
+        msg = f"Timed out retrieving and uploading results after {delay:.2f}s"
+        super().__init__(msg)
+        self.elapsed = elapsed
+
+    @override
+    def to_logging_context(self) -> dict[str, Any]:
+        context = super().to_logging_context()
+        context["elapsed"] = round(self.elapsed.total_seconds(), 2)
+        return context
 
 
 class UploadWebError(SlackWebException, QueryError):

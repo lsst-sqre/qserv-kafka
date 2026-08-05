@@ -180,6 +180,9 @@ async def test_upload_timeout(
     monkeypatch.setattr(config, "result_timeout", timedelta(seconds=1))
     status = await start_and_complete_immediate(query_service, factory, job)
     data.assert_job_status_matches(status, "status/error-upload-timeout")
+    expected = "Timed out retrieving and uploading results after "
+    assert status.error
+    assert status.error.message.startswith(expected)
     assert_approximately_now(status.timestamp)
 
     assert await state_store.get_active_queries() == set()

@@ -1,7 +1,7 @@
 {
   "errorInfo": {
     "errorCode": "result_timeout",
-    "errorMessage": "Retrieving and uploading results timed out"
+    "errorMessage": "<ANY>"
   },
   "executionID": "1",
   "jobID": "uws123",
