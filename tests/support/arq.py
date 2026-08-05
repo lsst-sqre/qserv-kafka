@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 from datetime import timedelta
+from typing import Any
 
 from arq import Worker
 
@@ -10,16 +11,26 @@ from qservkafka.config import config
 from qservkafka.factory import Factory, ProcessContext
 from qservkafka.workers.main import WorkerSettings
 
-__all__ = ["create_arq_worker", "wait_for_dispatch"]
+__all__ = [
+    "create_arq_worker",
+    "run_worker_until_processed",
+    "wait_for_dispatch",
+]
 
 
-def create_arq_worker(context: ProcessContext | None = None) -> Worker:
+def create_arq_worker(
+    context: ProcessContext | None = None,
+    *,
+    settings: type[Any] = WorkerSettings,
+) -> Worker:
     """Create an arq worker to run queued jobs.
 
     Parameters
     ----------
     context
         Process context to use, if given.
+    settings
+        arq worker settings class to use (default `WorkerSettings`).
 
     Returns
     -------
@@ -29,13 +40,47 @@ def create_arq_worker(context: ProcessContext | None = None) -> Worker:
     ctx = {}
     if context:
         ctx["context"] = context
-    WorkerSettings.redis_settings = config.arq_redis_settings
+    settings.redis_settings = config.arq_redis_settings
     worker_args = set(inspect.signature(Worker).parameters.keys())
     return Worker(
         burst=True,
         ctx=ctx,
-        **{k: v for k, v in vars(WorkerSettings).items() if k in worker_args},
+        **{k: v for k, v in vars(settings).items() if k in worker_args},
     )
+
+
+async def run_worker_until_processed(
+    worker: Worker,
+    *,
+    timeout: timedelta = timedelta(seconds=5),
+) -> int:
+    """Run an arq worker repeatedly until it processes a job,
+    to handle the delay during upload jobs between the Kafka consumer
+    enqueuing a job and it becoming visible to the worker.
+
+    Parameters
+    ----------
+    worker
+        Worker to run.
+    timeout
+        How long to wait for a job to appear before giving up.
+
+    Returns
+    -------
+    int
+        Number of jobs processed by the run that found at least one.
+
+    Raises
+    ------
+    TimeoutError
+        Raised if no job was processed within the timeout.
+    """
+    async with asyncio.timeout(timeout.total_seconds()):
+        while True:
+            count = await worker.run_check()
+            if count:
+                return count
+            await asyncio.sleep(0.05)
 
 
 async def wait_for_dispatch(

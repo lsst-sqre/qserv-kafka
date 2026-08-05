@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import override
 
 from faststream.kafka import KafkaBroker
+from safir.arq import ArqQueue
 from safir.sentry import report_exception
 from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
@@ -67,6 +68,8 @@ class ResultProcessor(ABC):
         Broker to use to publish status messages.
     rate_limit_store
         Storage for rate limiting.
+    arq_queue
+        Shared client used to dispatch jobs to arq workers.
     events
         Metrics events publishers.
     slack_client
@@ -83,6 +86,7 @@ class ResultProcessor(ABC):
         votable_writer: VOTableWriter,
         kafka_broker: KafkaBroker,
         rate_limit_store: RateLimitStore,
+        arq_queue: ArqQueue,
         events: Events,
         slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
@@ -92,6 +96,7 @@ class ResultProcessor(ABC):
         self._votable = votable_writer
         self._kafka = kafka_broker
         self._rate_store = rate_limit_store
+        self._arq = arq_queue
         self._events = events
         self._slack_client = slack_client
         self._logger = logger
@@ -160,6 +165,7 @@ class ResultProcessor(ABC):
             await self._delete_query_data(query, logger)
             return update
         full_query = RunningQuery.from_query(query, status)
+        logger = self._logger.bind(**full_query.to_logging_context())
 
         # Based on the status, process the results.
         match status.status:
@@ -171,10 +177,20 @@ class ResultProcessor(ABC):
                 else:
                     await self._state.update_status(query.query_id, status)
                 return self.build_executing_status(full_query)
-            case AsyncQueryPhase.COMPLETED:
-                result = await self._build_completed_status(
-                    full_query, initial=initial
+            case AsyncQueryPhase.COMPLETED if initial:
+                # The query was already completed on the first check.
+                # Dispatch to the worker pool and report the job as
+                # still executing.
+                full_query.result_queued = True
+                full_query.immediate = True
+                await self._state.store_query(full_query)
+                await self._arq.enqueue(
+                    "handle_finished_query", query.query_id
                 )
+                logger.info("Dispatched immediately completed query to worker")
+                return self.build_executing_status(full_query)
+            case AsyncQueryPhase.COMPLETED:
+                result = await self._build_completed_status(full_query)
             case AsyncQueryPhase.FAILED:
                 result = await self._build_failed_status(full_query)
 
@@ -208,7 +224,6 @@ class ResultProcessor(ABC):
         backend_elapsed: timedelta,
         backend_rate: float | None,
         delete_elapsed: timedelta | None,
-        initial: bool,
     ) -> QuerySuccessEvent:
         """Publish backend-specific success event.
 
@@ -226,8 +241,6 @@ class ResultProcessor(ABC):
             Backend processing rate (bytes/sec).
         delete_elapsed
             Time spent deleting results.
-        initial
-            Whether this was immediate completion.
 
         Returns
         -------
@@ -269,12 +282,7 @@ class ResultProcessor(ABC):
             metadata=query.job.to_job_metadata(),
         )
 
-    async def _build_completed_status(
-        self,
-        query: RunningQuery,
-        *,
-        initial: bool = False,
-    ) -> JobStatus:
+    async def _build_completed_status(self, query: RunningQuery) -> JobStatus:
         """Retrieve results and construct status for a completed job.
 
         This method is responsible for retrieving the results from the backend,
@@ -285,9 +293,6 @@ class ResultProcessor(ABC):
         ----------
         query
             Metadata about the query.
-        initial
-            Whether this is the initial invocation, immediately after creating
-            the job.
 
         Returns
         -------
@@ -333,7 +338,6 @@ class ResultProcessor(ABC):
             backend_elapsed=backend_elapsed,
             backend_rate=backend_rate,
             delete_elapsed=delete_elapsed,
-            initial=initial,
         )
         logger.info(
             "Job complete and results uploaded", **event.to_logging_context()
@@ -642,7 +646,6 @@ class QservResultProcessor(ResultProcessor):
         backend_elapsed: timedelta,
         backend_rate: float | None,
         delete_elapsed: timedelta | None,
-        initial: bool,
     ) -> QservSuccessEvent:
         event = QservSuccessEvent(
             job_id=query.job.job_id,
@@ -661,7 +664,7 @@ class QservResultProcessor(ResultProcessor):
             qserv_rate=backend_rate,
             result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
             upload_tables=len(query.job.upload_tables),
-            immediate=initial,
+            immediate=query.immediate,
         )
         await self._events.qserv_success.publish(event)
         return event
@@ -688,7 +691,6 @@ class BigQueryResultProcessor(ResultProcessor):
         backend_elapsed: timedelta,
         backend_rate: float | None,
         delete_elapsed: timedelta | None,
-        initial: bool,
     ) -> BigQuerySuccessEvent:
         event = BigQuerySuccessEvent(
             job_id=query.job.job_id,
@@ -707,7 +709,7 @@ class BigQueryResultProcessor(ResultProcessor):
             rate=stats.data_bytes / elapsed.total_seconds(),
             result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
             upload_tables=len(query.job.upload_tables),
-            immediate=initial,
+            immediate=query.immediate,
         )
         await self._events.bigquery_success.publish(event)
         return event

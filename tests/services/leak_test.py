@@ -20,6 +20,7 @@ from qservkafka.models.kafka import JobRun
 
 from ..support.data import QservKafkaData
 from ..support.qserv import MockQserv
+from ..support.query import start_and_complete_immediate
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -61,7 +62,7 @@ async def test_success(
     mock_qserv.set_immediate_success(job)
 
     # Run one query first to set up the various internal Python caches.
-    status = await query_service.start_query(job)
+    status = await start_and_complete_immediate(query_service, factory, job)
     data.assert_job_status_matches(status, "status/data-completed")
 
     # Start tracing memory.
@@ -71,7 +72,9 @@ async def test_success(
 
     # Run 100 more tasks with memory tracing.
     for i in range(2, 102):
-        status = await query_service.start_query(job)
+        status = await start_and_complete_immediate(
+            query_service, factory, job
+        )
         data.assert_job_status_matches(
             status, "status/data-completed", execution_id=str(i)
         )

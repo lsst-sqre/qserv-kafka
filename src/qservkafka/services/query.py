@@ -2,11 +2,13 @@
 
 from datetime import UTC, datetime
 
+from safir.arq import ArqQueue
 from safir.sentry import report_exception
 from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
+from ..config import config
 from ..events import Events, TemporaryTableUploadEvent
 from ..exceptions import (
     BackendApiError,
@@ -48,6 +50,8 @@ class QueryService:
         Storage for rate limiting.
     gafaelfawr_storage
         Storage for quota information.
+    arq_queue
+        Shared client used to dispatch jobs to arq workers.
     events
         Metrics events publishers.
     slack_client
@@ -64,6 +68,7 @@ class QueryService:
         result_processor: ResultProcessor,
         rate_limit_store: RateLimitStore,
         gafaelfawr_storage: GafaelfawrStorage,
+        arq_queue: ArqQueue,
         events: Events,
         slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
@@ -73,6 +78,7 @@ class QueryService:
         self._results = result_processor
         self._rate_store = rate_limit_store
         self._gafaelfawr = gafaelfawr_storage
+        self._arq_queue = arq_queue
         self._events = events
         self._slack_client = slack_client
         self._logger = logger
@@ -146,7 +152,9 @@ class QueryService:
         """Handle an incoming request to run a query.
 
         Start the query if possible and publish the status of the query as a
-        Kafka message.
+        Kafka message. Jobs with table uploads are dispatched to an arq
+        worker instead, since an upload can take a long time and would
+        otherwise block consumption of the job-run topic.
 
         Parameters
         ----------
@@ -155,6 +163,14 @@ class QueryService:
         kafka_start
             Time at which the Kafka message for the job was queued.
         """
+        if job.upload_tables:
+            await self._arq_queue.enqueue(
+                "handle_upload_job",
+                job,
+                kafka_start,
+                _queue_name=config.upload_queue,
+            )
+            return
         status = await self.start_query(job, kafka_start)
         await self._results.publish_status(status)
 

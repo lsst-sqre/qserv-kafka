@@ -381,6 +381,34 @@ class Config(BaseSettings):
         description="Used to determine which TAP quota to apply",
     )
 
+    upload_queue: str = Field(
+        "arq:upload",
+        title="arq queue for jobs with table uploads",
+        description=(
+            "Separate arq queue for jobs with table uploads, listened to by"
+            " UploadWorkerSettings instead of the default result-processing"
+            " worker pool"
+        ),
+    )
+
+    upload_worker_max_jobs: int = Field(
+        10,
+        title="Concurrent upload worker jobs per pod",
+        description=(
+            "Table uploads are I/O-bound so we default to a higher "
+            " default than the result-processing worker pool"
+        ),
+    )
+
+    upload_worker_timeout: HumanTimedelta = Field(
+        timedelta(minutes=15),
+        title="Timeout for starting a query with table uploads",
+        description=(
+            "Maximum time allowed to upload tables and submit the query to"
+            " the backend"
+        ),
+    )
+
     @property
     def arq_redis_settings(self) -> RedisSettings:
         """Redis settings for arq."""

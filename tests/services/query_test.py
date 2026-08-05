@@ -1,10 +1,12 @@
 """Tests for creating new queries."""
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import call, patch
 
 import pytest
 from httpx import Response
 from pydantic import SecretStr
+from safir.arq import RedisArqQueue
 from safir.metrics import MockEventPublisher
 from safir.testing.slack import MockSlackWebhook
 from vo_models.uws.types import ExecutionPhase
@@ -17,11 +19,13 @@ from qservkafka.services.query import QueryService
 from ..support.data import QservKafkaData
 from ..support.datetime import assert_approximately_now
 from ..support.qserv import MockQserv
+from ..support.query import start_and_complete_immediate
 
 
 async def assert_query_successful(
     *,
     data: QservKafkaData,
+    factory: Factory,
     query_service: QueryService,
     mock_qserv: MockQserv,
     job: JobRun,
@@ -34,6 +38,8 @@ async def assert_query_successful(
     ----------
     data
         Test data management.
+    factory
+        Component factory to use.
     query_service
         Query service to test.
     mock_qserv
@@ -47,7 +53,9 @@ async def assert_query_successful(
     """
     mock_qserv.set_immediate_success(job)
     kafka_timestamp = datetime.now(tz=UTC) - timedelta(seconds=10)
-    result = await query_service.start_query(job, kafka_timestamp)
+    result = await start_and_complete_immediate(
+        query_service, factory, job, kafka_start=kafka_timestamp
+    )
     data.assert_job_status_matches(result, status, execution_id=execution_id)
     assert_approximately_now(result.timestamp)
     assert result.query_info
@@ -88,6 +96,7 @@ async def test_immediate(
     start = datetime.now(tz=UTC)
     await assert_query_successful(
         data=data,
+        factory=factory,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
@@ -132,6 +141,7 @@ async def test_immediate(
     # re-added.
     await assert_query_successful(
         data=data,
+        factory=factory,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
@@ -152,6 +162,37 @@ async def test_immediate(
 
 
 @pytest.mark.asyncio
+async def test_immediate_dispatch(
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
+) -> None:
+    """Test that a job that completed immediately is dispatched to a worker
+    and that the dispatch is not repeated on a later check.
+    """
+    query_service = factory.create_query_service()
+    state_store = factory.create_query_state_store()
+    job = data.read_pydantic(JobRun, "jobs/data")
+    mock_qserv.set_immediate_success(job)
+
+    with patch.object(RedisArqQueue, "enqueue") as mock:
+        status = await query_service.start_query(job)
+        assert mock.call_args_list == [call("handle_finished_query", "1")]
+
+    assert status.status == ExecutionPhase.EXECUTING
+    assert status.execution_id == "1"
+
+    query = await state_store.get_query("1")
+    assert query
+    assert query.result_queued
+    assert query.immediate
+
+    result_processor = factory.create_result_processor()
+    with patch.object(RedisArqQueue, "enqueue") as mock:
+        result = await result_processor.build_query_status(query)
+        assert mock.call_args_list == []
+    data.assert_job_status_matches(result, "status/data-completed")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
@@ -169,6 +210,7 @@ async def test_no_delete(
 
     await assert_query_successful(
         data=data,
+        factory=factory,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
@@ -271,6 +313,7 @@ async def test_maxrec(
 
     await assert_query_successful(
         data=data,
+        factory=factory,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
@@ -291,6 +334,7 @@ async def test_maxrec_zero(
 
     await assert_query_successful(
         data=data,
+        factory=factory,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
@@ -317,6 +361,7 @@ async def test_no_api_version(
 
     await assert_query_successful(
         data=data,
+        factory=factory,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
@@ -359,6 +404,7 @@ async def test_auth(
 
     await assert_query_successful(
         data=data,
+        factory=factory,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
@@ -395,6 +441,7 @@ async def test_upload(
     start = datetime.now(tz=UTC)
     await assert_query_successful(
         data=data,
+        factory=factory,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
@@ -440,6 +487,7 @@ async def test_upload_director(
 
     await assert_query_successful(
         data=data,
+        factory=factory,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,
@@ -459,6 +507,7 @@ async def test_upload_dependent(
 
     await assert_query_successful(
         data=data,
+        factory=factory,
         query_service=query_service,
         mock_qserv=mock_qserv,
         job=job,

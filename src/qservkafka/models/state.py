@@ -30,6 +30,10 @@ class Query(BaseModel):
 
     job: Annotated[JobRun, Field(title="Full job request")]
 
+    immediate: Annotated[
+        bool, Field(title="Whether query completed before first status check")
+    ] = False
+
     def to_logging_context(self) -> dict[str, str | float]:
         """Convert to variables for a structlog logging context."""
         result: dict[str, str | float] = {
@@ -99,6 +103,7 @@ class RunningQuery(Query):
             start=query.start,
             created=query.created,
             job=query.job,
+            immediate=query.immediate,
             status=status,
             result_queued=False,
         )
