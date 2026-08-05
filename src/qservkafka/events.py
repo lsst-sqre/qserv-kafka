@@ -11,10 +11,14 @@ from safir.metrics import EventManager, EventPayload
 from .models.kafka import JobErrorCode
 
 __all__ = [
-    "BackendFailureEvent",
+    "BaseExecutingEvent",
+    "BaseFailureEvent",
+    "BaseQueryEvent",
+    "BigQueryExecutingEvent",
     "BigQueryFailureEvent",
     "BigQuerySuccessEvent",
     "Events",
+    "QservExecutingEvent",
     "QservFailureEvent",
     "QservProtocol",
     "QservSuccessEvent",
@@ -35,7 +39,7 @@ class QservProtocol(StrEnum):
     SQL = "SQL"
 
 
-class BackendFailureEvent(EventPayload):
+class BaseFailureEvent(EventPayload):
     """Base class for backend-specific failure events.
 
     Different backends (Qserv, BigQuery, etc.) inherit from this to create
@@ -43,7 +47,7 @@ class BackendFailureEvent(EventPayload):
     """
 
 
-class QservFailureEvent(BackendFailureEvent):
+class QservFailureEvent(BaseFailureEvent):
     """Unexpected failure sending a Qserv API request.
 
     This event will be logged for each low-level API failure (either HTTP or
@@ -53,7 +57,7 @@ class QservFailureEvent(BackendFailureEvent):
     protocol: QservProtocol = Field(..., title="Protocol of Qserv API")
 
 
-class BigQueryFailureEvent(BackendFailureEvent):
+class BigQueryFailureEvent(BaseFailureEvent):
     """Unexpected failure sending a BigQuery API request.
 
     This event will be logged for each low-level API failure to the BigQuery
@@ -282,6 +286,28 @@ class QueryFailureEvent(BaseQueryEvent):
     )
 
 
+class BaseExecutingEvent(EventPayload):
+    """Base for gauge metrics for queries in progress in the backend."""
+
+    count: int = Field(..., title="Queries in progress")
+
+
+class BigQueryExecutingEvent(BaseExecutingEvent):
+    """Queries in progress in BigQuery.
+
+    This will be logged every time BigQuery is asked for its list of running
+    queries to see if any have finished.
+    """
+
+
+class QservExecutingEvent(BaseExecutingEvent):
+    """Queries in progress in Qserv.
+
+    This will be logged every time Qserv is asked for its list of running
+    queries to see if any have finished.
+    """
+
+
 class TemporaryTableUploadEvent(BaseQueryEvent):
     """Table uploaded for a query."""
 
@@ -322,6 +348,12 @@ class Events(EventMaker):
 
     @override
     async def initialize(self, manager: EventManager) -> None:
+        self.qserv_executing = await manager.create_publisher(
+            "qserv_executing", QservExecutingEvent
+        )
+        self.bigquery_executing = await manager.create_publisher(
+            "bigquery_executing", BigQueryExecutingEvent
+        )
         self.qserv_failure = await manager.create_publisher(
             "qserv_failure", QservFailureEvent
         )
