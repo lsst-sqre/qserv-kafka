@@ -86,6 +86,28 @@ class QueryStateStore:
                 query_id, query, lifetime, exclude_defaults=True
             )
 
+    async def mark_published(
+        self, query_id: str, *, needs_result_cleanup: bool
+    ) -> None:
+        """Mark a query's result as published to Kafka.
+
+        Parameters
+        ----------
+        query_id
+            Backend query ID.
+        needs_result_cleanup
+            Whether the query completed with results that still need to be
+            deleted.
+        """
+        query = await self.get_query(query_id)
+        if query:
+            query.result_published = True
+            query.needs_result_cleanup = needs_result_cleanup
+            lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
+            await self._storage.store(
+                query_id, query, lifetime, exclude_defaults=True
+            )
+
     async def store_query(
         self, query: RunningQuery, *, result_queued: bool = False
     ) -> None:

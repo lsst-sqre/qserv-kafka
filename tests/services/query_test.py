@@ -122,13 +122,12 @@ async def test_immediate(
         assert timestamp <= elapsed + timedelta(seconds=10)
 
     # These time fields shouldn't include the Kafka delay.
-    for field in (
-        "qserv_elapsed",
-        "result_elapsed",
-        "submit_elapsed",
-        "delete_elapsed",
-    ):
+    for field in ("qserv_elapsed", "result_elapsed", "submit_elapsed"):
         assert timedelta(seconds=0) <= getattr(event, field) <= elapsed
+
+    # Timing of delete is not available now that result deletion is
+    # deferred until after the status is published.
+    assert event.delete_elapsed is None
 
     # Check the calculated rates.
     assert event.rate == event.encoded_size / event.elapsed.total_seconds()
