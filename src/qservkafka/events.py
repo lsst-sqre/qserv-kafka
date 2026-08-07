@@ -170,24 +170,29 @@ class QuerySuccessEvent(BaseQueryEvent):
     )
 
     def to_logging_context(self) -> dict[str, Any]:
-        """Convert relevant information to a dictionary for logging."""
+        """Convert relevant information to a dictionary for logging.
+
+        Try to add fields in a natural order for reading since the order of
+        keys in the dictionary is preserved through the logging subsystem.
+        """
         result: dict[str, Any] = {
             "rows": self.rows,
             "encoded_size": self.encoded_size,
             "total_size": self.result_size,
-            "elapsed": self.elapsed.total_seconds(),
+            "elapsed": self._to_seconds(self.elapsed),
         }
         if self.kafka_elapsed:
-            result["kafka_elapsed"] = self.kafka_elapsed.total_seconds()
-        result.update(
-            {
-                "result_elapsed": self.result_elapsed.total_seconds(),
-                "submit_elapsed": self.submit_elapsed.total_seconds(),
-            }
-        )
+            result["kafka_elapsed"] = self._to_seconds(self.kafka_elapsed)
+        result["result_elapsed"] = self._to_seconds(self.result_elapsed)
+        result["submit_elapsed"] = self._to_seconds(self.submit_elapsed)
         if self.delete_elapsed:
-            result["delete_elapsed"] = self.delete_elapsed.total_seconds()
+            result["delete_elapsed"] = self._to_seconds(self.delete_elapsed)
         return result
+
+    @staticmethod
+    def _to_seconds(elapsed: timedelta) -> float:
+        """Convert a timedelta to rounded seconds for logging."""
+        return round(elapsed.total_seconds(), 2)
 
 
 class QservSuccessEvent(QuerySuccessEvent):
@@ -218,7 +223,7 @@ class QservSuccessEvent(QuerySuccessEvent):
     def to_logging_context(self) -> dict[str, Any]:
         result = super().to_logging_context()
         result["qserv_size"] = self.qserv_size
-        result["qserv_elapsed"] = self.qserv_elapsed.total_seconds()
+        result["qserv_elapsed"] = self._to_seconds(self.qserv_elapsed)
         return result
 
 
@@ -250,7 +255,7 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
     def to_logging_context(self) -> dict[str, Any]:
         result = super().to_logging_context()
         result["bigquery_size"] = self.bigquery_size
-        result["bigquery_elapsed"] = self.bigquery_elapsed.total_seconds()
+        result["bigquery_elapsed"] = self._to_seconds(self.bigquery_elapsed)
         return result
 
 
