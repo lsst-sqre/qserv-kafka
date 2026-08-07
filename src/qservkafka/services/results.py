@@ -464,7 +464,10 @@ class ResultProcessor(ABC):
         )
 
     async def delete_upload_databases(
-        self, job: JobRun, logger: BoundLogger
+        self,
+        job: JobRun,
+        logger: BoundLogger,
+        databases: set[str] | None = None,
     ) -> None:
         """Delete any temporary databases created for uploaded tables.
 
@@ -474,15 +477,19 @@ class ResultProcessor(ABC):
             Job metadata.
         logger
             Logger to use.
+        databases
+            If given, the databases to delete. Otherwise, all databases in the
+            list of tables to upload will be deleted.
         """
-        databases_to_delete = {t.database for t in job.upload_tables}
+        if databases is None:
+            databases = {t.database for t in job.upload_tables}
         logger.debug(
             "Deleting upload databases",
             upload_table_count=len(job.upload_tables),
             upload_table_types=[type(t).__name__ for t in job.upload_tables],
-            databases=list(databases_to_delete),
+            databases=list(databases),
         )
-        for database in databases_to_delete:
+        for database in databases:
             try:
                 await self._backend.delete_database(database)
                 logger.debug("Deleted upload database", database_name=database)

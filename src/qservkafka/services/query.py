@@ -329,9 +329,11 @@ class QueryService:
         metadata = job.to_job_metadata()
 
         # Upload any tables.
+        uploaded = set()
         try:
             for upload in job.upload_tables:
                 stats = await self._backend.upload_table(upload)
+                uploaded.add(upload.database)
                 logger.info("Uploaded table", table_name=upload.table_name)
                 event = TemporaryTableUploadEvent(
                     job_id=job.job_id,
@@ -348,7 +350,7 @@ class QueryService:
                 msg = "Unable to upload table"
             await report_exception(e, self._slack_client)
             logger.exception(msg, error=str(e))
-            await self._results.delete_upload_databases(job, logger)
+            await self._results.delete_upload_databases(job, logger, uploaded)
             return JobStatus(
                 job_id=job.job_id,
                 execution_id=None,
