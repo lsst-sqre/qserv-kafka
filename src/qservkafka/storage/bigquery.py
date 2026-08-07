@@ -131,10 +131,10 @@ class BigQueryClient(DatabaseBackend):
 
     Notes
     -----
-    BigQuery differs from Qserv in a few ways:
-    Query IDs are UUIDs (strings) instead of int, progress is reported
-    in bytes processed, there is no temp table upload. Also results are
-    cached for 24 hours and auto-expire, and query listing is limited.
+    BigQuery differs from Qserv in a few ways: Query IDs are UUIDs (strings)
+    instead of int, progress is reported in bytes processed, there is no temp
+    table upload. Also results are cached for 24 hours and auto-expire, and
+    query listing is limited.
     """
 
     def __init__(

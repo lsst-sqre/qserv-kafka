@@ -541,10 +541,9 @@ class ResultProcessor(ABC):
             Raised if the processing and upload did not complete within the
             configured timeout.
         """
-        result_start = datetime.now(tz=UTC)
+        start = datetime.now(tz=UTC)
         results = self._backend.get_query_results_gen(query.query_id)
         timeout = config.result_timeout.total_seconds()
-
         try:
             async with asyncio.timeout(timeout):
                 size = await self._votable.store(
@@ -553,11 +552,10 @@ class ResultProcessor(ABC):
                     results,
                     maxrec=query.job.maxrec,
                 )
-                return UploadStats(
-                    elapsed=datetime.now(tz=UTC) - result_start, **asdict(size)
-                )
+            elapsed = datetime.now(tz=UTC) - start
+            return UploadStats(elapsed=elapsed, **asdict(size))
         except TimeoutError as e:
-            elapsed = datetime.now(tz=UTC) - result_start
+            elapsed = datetime.now(tz=UTC) - start
             raise UploadTimeoutError(elapsed) from e
 
     async def _upload_results_with_retry(

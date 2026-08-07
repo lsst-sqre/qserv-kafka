@@ -16,12 +16,11 @@ from typing import Any, Concatenate, Protocol, overload, override
 from httpx import AsyncClient, HTTPError, Response
 from pydantic import BaseModel, ValidationError
 from safir.database import datetime_from_db
-from safir.datetime import format_datetime_for_logging
 from safir.slack.blockkit import SlackWebException
 from safir.slack.webhook import SlackWebhookClient
 from sqlalchemy import Row, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.stdlib import BoundLogger
 
 from ..config import config
@@ -302,22 +301,7 @@ class QservClient(DatabaseBackend):
         try:
             async with self._sessionmaker() as session:
                 async with session.begin():
-                    result = await session.stream(text(_query_list_sql()))
-                    processes = {}
-                    try:
-                        async for row in result:
-                            msg = "Saw running query"
-                            self.logger.debug(msg, query=row._asdict())
-                            processes[str(row.id)] = ProcessStatus(
-                                status=AsyncQueryPhase.EXECUTING,
-                                progress=ChunkProgress(
-                                    total_chunks=row.chunks or 0,
-                                    completed_chunks=row.chunks_comp or 0,
-                                ),
-                                last_update=datetime_from_db(row.updated),
-                            )
-                    finally:
-                        await result.close()
+                    processes = await self._list_processes(session)
         except SQLAlchemyError as e:
             raise QservApiSqlError.from_exception(e) from e
         self.logger.debug("Listed running queries", count=len(processes))
@@ -352,9 +336,8 @@ class QservClient(DatabaseBackend):
             ),
             timeout=config.qserv_upload_timeout + timedelta(seconds=1),
         )
-        return TableUploadStats(
-            size=len(source), elapsed=datetime.now(tz=UTC) - start
-        )
+        elapsed = datetime.now(tz=UTC) - start
+        return TableUploadStats(size=len(source), elapsed=elapsed)
 
     @_retry
     async def _delete(self, route: str) -> None:
@@ -375,20 +358,16 @@ class QservClient(DatabaseBackend):
         else:
             params = None
         url = str(config.qserv_rest_url).rstrip("/") + route
+        logger = self.logger.bind(method="DELETE", url=url)
+
         start = datetime.now(tz=UTC)
         try:
             r = await self._client.delete(
                 url, params=params, auth=config.rest_authentication
             )
             r.raise_for_status()
-            self.logger.debug(
-                "Qserv API reply",
-                method="DELETE",
-                url=url,
-                result=r.json(),
-                start=format_datetime_for_logging(start),
-                elapsed=(datetime.now(tz=UTC) - start).total_seconds(),
-            )
+            elapsed = round((datetime.now(tz=UTC) - start).total_seconds(), 2)
+            logger.debug("Qserv API reply", result=r.json(), elapsed=elapsed)
             self._parse_response("DELETE", url, r, BaseResponse)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
@@ -422,6 +401,8 @@ class QservClient(DatabaseBackend):
         if config.qserv_rest_send_api_version:
             params_with_version["version"] = str(API_VERSION)
         url = str(config.qserv_rest_url).rstrip("/") + route
+        logger = self.logger.bind(method="GET", url=url)
+
         try:
             r = await self._client.get(
                 url,
@@ -429,9 +410,7 @@ class QservClient(DatabaseBackend):
                 auth=config.rest_authentication,
             )
             r.raise_for_status()
-            self.logger.debug(
-                "Qserv API reply", method="GET", url=url, result=r.json()
-            )
+            logger.debug("Qserv API reply", result=r.json())
             return self._parse_response("GET", url, r, result_type)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
@@ -462,6 +441,38 @@ class QservClient(DatabaseBackend):
             raise TableUploadWebError.from_exception(e) from e
         else:
             return r.content
+
+    async def _list_processes(
+        self, session: AsyncSession
+    ) -> dict[str, ProcessStatus]:
+        """Get process status of running Qserv queries.
+
+        Parameters
+        ----------
+        session
+            Database session with an open transaction.
+
+        Returns
+        -------
+        dict of ProcessStatus
+            Qserv process information for running queries.
+        """
+        result = await session.stream(text(_query_list_sql()))
+        processes = {}
+        try:
+            async for row in result:
+                self.logger.debug("Saw running query", query=row._asdict())
+                processes[str(row.id)] = ProcessStatus(
+                    status=AsyncQueryPhase.EXECUTING,
+                    progress=ChunkProgress(
+                        total_chunks=row.chunks or 0,
+                        completed_chunks=row.chunks_comp or 0,
+                    ),
+                    last_update=datetime_from_db(row.updated),
+                )
+        finally:
+            await result.close()
+        return processes
 
     def _parse_response[T: BaseResponse](
         self, method: str, url: str, response: Response, result_type: type[T]
@@ -528,6 +539,8 @@ class QservClient(DatabaseBackend):
             params["version"] = str(API_VERSION)
         body_dict = body.model_dump(mode="json", exclude_none=True)
         url = str(config.qserv_rest_url).rstrip("/") + route
+        logger = self.logger.bind(method="POST", url=url)
+
         start = datetime.now(tz=UTC)
         try:
             r = await self._client.post(
@@ -537,14 +550,8 @@ class QservClient(DatabaseBackend):
                 auth=config.rest_authentication,
             )
             r.raise_for_status()
-            self.logger.debug(
-                "Qserv API reply",
-                method="POST",
-                url=url,
-                result=r.json(),
-                start=format_datetime_for_logging(start),
-                elapsed=(datetime.now(tz=UTC) - start).total_seconds(),
-            )
+            elapsed = round((datetime.now(tz=UTC) - start).total_seconds(), 2)
+            logger.debug("Qserv API reply", result=r.json(), elapsed=elapsed)
             return self._parse_response("POST", url, r, result_type)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
@@ -580,6 +587,9 @@ class QservClient(DatabaseBackend):
         if config.qserv_rest_send_api_version:
             params["version"] = str(API_VERSION)
         url = str(config.qserv_rest_url).rstrip("/") + route
+        logger = self.logger.bind(method="POST", url=url)
+
+        start = datetime.now(tz=UTC)
         try:
             r = await self._client.post(
                 url,
@@ -590,9 +600,8 @@ class QservClient(DatabaseBackend):
                 auth=config.rest_authentication,
             )
             r.raise_for_status()
-            self.logger.debug(
-                "Qserv API reply", method="POST", url=url, result=r.json()
-            )
+            elapsed = round((datetime.now(tz=UTC) - start).total_seconds(), 2)
+            logger.debug("Qserv API reply", result=r.json(), elapsed=elapsed)
             self._parse_response("POST", url, r, BaseResponse)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
