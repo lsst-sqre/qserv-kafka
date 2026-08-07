@@ -4,7 +4,7 @@ env:
   # Current supported uv version. The uv documentation recommends pinning
   # this. The version should match the version used in .pre-commit-config.yaml
   # and frozen in uv.lock. It is updated by make update-deps.
-  UV_VERSION: "0.11.32"
+  UV_VERSION: "0.12.2"
 
 "on":
   merge_group: {}
@@ -41,6 +41,9 @@ jobs:
         run: uv run --only-group=nox nox -s lint typing test coverage-report
 
   build:
+    concurrency:
+      group: docker
+      queue: max
     needs: [test]
     secrets: inherit
     uses: lsst-sqre/multiplatform-build-and-push/.github/workflows/build.yaml@v4
