@@ -86,6 +86,9 @@ class QueryService:
     async def cancel_query(self, message: JobCancel) -> JobStatus | None:
         """Cancel a running query.
 
+        Callers are responsible for any cleanup required, as well as
+        publishing resulting status.
+
         Parameters
         ----------
         message
@@ -135,7 +138,10 @@ class QueryService:
     async def handle_cancel(self, message: JobCancel) -> None:
         """Handle an incoming cancel request.
 
-        Cancel the running query if necessary and publish any status update.
+        Cancel the running query if necessary, publish any status update,
+        and then clean up backend resources for the query. Cleanup
+        is best-effort and happens after publishing so that the caller
+        is not blocked.
 
         Parameters
         ----------
@@ -143,8 +149,27 @@ class QueryService:
             Request to cancel the query.
         """
         status = await self.cancel_query(message)
-        if status:
-            await self._results.publish_status(status)
+        if not status:
+            return
+        await self._results.publish_status(status)
+        is_executing = status.status == ExecutionPhase.EXECUTING
+        if is_executing or not status.execution_id:
+            return
+        query = await self._state.get_query(status.execution_id)
+        if query:
+            needs_result_cleanup = status.status == ExecutionPhase.COMPLETED
+            try:
+                await self._results.cleanup_query(
+                    query,
+                    self._logger,
+                    needs_result_cleanup=needs_result_cleanup,
+                )
+            except Exception as e:
+                await report_exception(e, self._slack_client)
+                self._logger.exception(
+                    "Cleanup failed for cancelled query",
+                    query_id=status.execution_id,
+                )
 
     async def handle_query(
         self, job: JobRun, kafka_start: datetime | None

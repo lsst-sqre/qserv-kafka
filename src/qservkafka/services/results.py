@@ -163,7 +163,12 @@ class ResultProcessor(ABC):
                 error=e.to_job_error(),
                 metadata=query.job.to_job_metadata(),
             )
-            await self._delete_query_data(query, logger)
+            if initial:
+                # We cleanup on initial here because the other paths handle
+                # cleanup themselves after publishing the status.
+                await self.cleanup_query(
+                    query, logger, needs_result_cleanup=False
+                )
             return update
         full_query = RunningQuery.from_query(query, status)
         logger = self._logger.bind(**full_query.to_logging_context())
@@ -195,10 +200,12 @@ class ResultProcessor(ABC):
             case AsyncQueryPhase.FAILED:
                 result = await self._build_failed_status(full_query)
 
-        # Query was completed, either successfully or unsuccessfully. Delete
-        # any state storage needed for it, update rate limits, and return the
-        # resulting status.
-        await self._delete_query_data(query, logger)
+        # Query was completed, either successfully or unsuccessfully. For the
+        # initial synchronous submission path (reached via failure or abort)
+        # there is no separate caller to cleanup after publishing so we
+        # do it here.
+        if initial:
+            await self.cleanup_query(query, logger, needs_result_cleanup=False)
         return result
 
     async def publish_status(self, status: JobStatus) -> None:
@@ -309,18 +316,10 @@ class ResultProcessor(ABC):
         except QueryError as e:
             return await self._build_exception_status(query, e)
 
-        # Delete the results if configured to do so.
+        # Result and database cleanup happens in cleanup_query after
+        # this status has been published to Kafka, so there is no deletion
+        # timing to report here.
         delete_elapsed = None
-        if config.qserv_delete_queries:
-            delete_start = datetime.now(tz=UTC)
-            try:
-                await self._backend.delete_result(query.query_id)
-                delete_elapsed = datetime.now(tz=UTC) - delete_start
-            except BackendApiError as e:
-                delete_elapsed = None
-                await report_exception(e, slack_client=self._slack_client)
-                logger.exception("Cannot delete results")
-            delete_elapsed = datetime.now(tz=UTC) - delete_start
 
         # Send a metrics event for the job completion and log it.
         now = datetime.now(tz=UTC)
@@ -501,13 +500,18 @@ class ResultProcessor(ABC):
                     database_name=database,
                 )
 
-    async def _delete_query_data(
-        self, query: Query, logger: BoundLogger
+    async def cleanup_query(
+        self, query: Query, logger: BoundLogger, *, needs_result_cleanup: bool
     ) -> None:
-        """Delete stored information for the query.
+        """Delete backend resources for a finished query.
 
-        Remove the query from the Kafka bridge state storage and delete
-        any uploaded temporary tables.
+        External callers (the finished-query worker, cancellation) must only
+        call this after the query's final status has already been published,
+        so that users aren't kept waiting on this cleanup. One exception is
+        `build_query_status`'s own internal use of this method for the
+        initial, synchronous submission path, which has no separate caller
+        to defer cleanup to and so calls this before  publishing as before.
+        This should be safe to call more than once.
 
         Parameters
         ----------
@@ -515,14 +519,23 @@ class ResultProcessor(ABC):
             Query metadata.
         logger
             Logger to use.
+        needs_result_cleanup
+            Whether the query completed with results in the backend that
+            need to be deleted.
         """
         logger.debug(
             "Cleaning up query data",
             upload_table_count=len(query.job.upload_tables),
         )
-        await self._state.delete_query(query.query_id)
-        await self._rate_store.end_query(query.job.owner)
+        if needs_result_cleanup and config.qserv_delete_queries:
+            try:
+                await self._backend.delete_result(query.query_id)
+            except BackendApiError as e:
+                await report_exception(e, slack_client=self._slack_client)
+                logger.exception("Cannot delete results")
         await self.delete_upload_databases(query.job, logger)
+        await self._rate_store.end_query(query.job.owner)
+        await self._state.delete_query(query.query_id)
 
     async def _upload_results(self, query: RunningQuery) -> UploadStats:
         """Retrieve and upload the results.

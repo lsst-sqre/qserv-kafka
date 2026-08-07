@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from structlog.stdlib import get_logger
 from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.factory import Factory
@@ -50,4 +51,10 @@ async def start_and_complete_immediate(
     assert query
 
     result_processor = factory.create_result_processor()
-    return await result_processor.build_query_status(query)
+    status = await result_processor.build_query_status(query)
+    needs_result_cleanup = status.status == ExecutionPhase.COMPLETED
+    logger = get_logger("qservkafka")
+    await result_processor.cleanup_query(
+        query, logger, needs_result_cleanup=needs_result_cleanup
+    )
+    return status

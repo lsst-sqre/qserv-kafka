@@ -56,6 +56,15 @@ class RunningQuery(Query):
         bool, Field(title="Whether queued for result procesing")
     ]
 
+    result_published: Annotated[
+        bool, Field(title="Whether the result has been published to Kafka")
+    ] = False
+
+    needs_result_cleanup: Annotated[
+        bool,
+        Field(title="Whether the query completed and has results to delete"),
+    ] = False
+
     @model_validator(mode="before")
     @classmethod
     def _migrate_old_schema(cls, data: Any) -> Any:
@@ -106,6 +115,8 @@ class RunningQuery(Query):
             immediate=query.immediate,
             status=status,
             result_queued=False,
+            result_published=False,
+            needs_result_cleanup=False,
         )
 
     def to_job_query_info(self, *, finished: bool = False) -> JobQueryInfo:

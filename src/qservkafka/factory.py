@@ -329,6 +329,11 @@ class Factory:
         """Global shared caching Gafaelfawr client."""
         return self._context.gafaelfawr
 
+    @property
+    def slack_client(self) -> SlackWebhookClient | None:
+        """Global shared Slack client for error notifications."""
+        return self._context.slack_client
+
     async def create_background_task_manager(self) -> BackgroundTaskManager:
         """Create the background task manager to monitor Qserv jobs.
 
