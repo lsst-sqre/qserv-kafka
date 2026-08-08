@@ -32,13 +32,7 @@ from ..exceptions import (
     UploadTimeoutError,
     UploadWebError,
 )
-from ..models.kafka import (
-    JobError,
-    JobErrorCode,
-    JobResultInfo,
-    JobRun,
-    JobStatus,
-)
+from ..models.kafka import JobError, JobErrorCode, JobRun, JobStatus
 from ..models.query import AsyncQueryPhase
 from ..models.state import Query, RunningQuery
 from ..models.votable import UploadStats
@@ -116,14 +110,7 @@ class ResultProcessor(ABC):
             Job status to report to Kafka.
         """
         self._logger.debug("Query is executing", **query.to_logging_context())
-        return JobStatus(
-            job_id=query.job.job_id,
-            execution_id=str(query.query_id),
-            timestamp=query.status.last_update or datetime.now(tz=UTC),
-            status=ExecutionPhase.EXECUTING,
-            query_info=query.to_job_query_info(),
-            metadata=query.job.to_job_metadata(),
-        )
+        return query.to_job_status()
 
     async def build_query_status(
         self, query: Query, *, initial: bool = False
@@ -155,16 +142,10 @@ class ResultProcessor(ABC):
         except BackendApiError as e:
             await report_exception(e, slack_client=self._slack_client)
             logger.exception("Unable to get job status", error=str(e))
-            update = JobStatus(
-                job_id=query.job.job_id,
-                execution_id=str(query.query_id),
-                timestamp=datetime.now(tz=UTC),
-                status=ExecutionPhase.ERROR,
-                error=e.to_job_error(),
-                metadata=query.job.to_job_metadata(),
-            )
             await self._delete_query_data(query, logger)
-            return update
+            return JobStatus.from_error(
+                query.job, e.to_job_error(), query.query_id
+            )
         full_query = RunningQuery.from_query(query, status)
         logger = self._logger.bind(**full_query.to_logging_context())
 
@@ -274,14 +255,7 @@ class ResultProcessor(ABC):
             elapsed=timestamp - query.start,
         )
         await self._events.query_abort.publish(event)
-        return JobStatus(
-            job_id=query.job.job_id,
-            execution_id=str(query.query_id),
-            timestamp=query.status.last_update or datetime.now(tz=UTC),
-            status=ExecutionPhase.ABORTED,
-            query_info=query.to_job_query_info(finished=True),
-            metadata=query.job.to_job_metadata(),
-        )
+        return query.to_job_status(ExecutionPhase.ABORTED)
 
     async def _build_completed_status(self, query: RunningQuery) -> JobStatus:
         """Retrieve results and construct status for a completed job.
@@ -345,19 +319,7 @@ class ResultProcessor(ABC):
         )
 
         # Return the resulting status.
-        return JobStatus(
-            job_id=query.job.job_id,
-            execution_id=str(query.query_id),
-            timestamp=datetime.now(tz=UTC),
-            status=ExecutionPhase.COMPLETED,
-            query_info=query.to_job_query_info(finished=True),
-            result_info=JobResultInfo(
-                total_rows=stats.rows,
-                result_location=query.job.result_location,
-                format=query.job.result_format.format,
-            ),
-            metadata=query.job.to_job_metadata(),
-        )
+        return query.to_completed_job_status(stats)
 
     async def _build_exception_status(
         self, query: RunningQuery, exc: QueryError
@@ -401,14 +363,7 @@ class ResultProcessor(ABC):
         await self._events.query_failure.publish(event)
 
         # Return the job status to send to Kafka.
-        return JobStatus(
-            job_id=query.job.job_id,
-            execution_id=str(query.query_id),
-            timestamp=now,
-            status=ExecutionPhase.ERROR,
-            error=error,
-            metadata=query.job.to_job_metadata(),
-        )
+        return JobStatus.from_error(query.job, error, query.query_id)
 
     async def _build_failed_status(self, query: RunningQuery) -> JobStatus:
         """Build the status for a failed job.
@@ -453,15 +408,8 @@ class ResultProcessor(ABC):
             elapsed=datetime.now(tz=UTC) - query.start,
         )
         await self._events.query_failure.publish(event)
-        return JobStatus(
-            job_id=query.job.job_id,
-            execution_id=str(query.query_id),
-            timestamp=query.status.last_update or datetime.now(tz=UTC),
-            status=ExecutionPhase.ERROR,
-            query_info=query.to_job_query_info(finished=True),
-            error=JobError(code=code, message=error),
-            metadata=metadata,
-        )
+        job_error = JobError(code=code, message=error)
+        return query.to_job_status(ExecutionPhase.ERROR, job_error)
 
     async def delete_upload_databases(
         self,

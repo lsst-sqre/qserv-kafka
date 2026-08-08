@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Any, Literal, override
+from typing import Annotated, Any, Literal, Self, override
 
 from pydantic import (
     BaseModel,
@@ -19,6 +19,7 @@ from safir.pydantic import SecondsTimedelta
 from vo_models.uws.types import ExecutionPhase
 
 from .progress import ProgressMetrics
+from .query import QueryStatus
 from .votable import VOTableArraySize, VOTablePrimitive
 
 type DatetimeMillis = Annotated[
@@ -254,6 +255,7 @@ class UploadTablePartitionType(StrEnum):
 
 
 def _partition_type_discriminator(v: Any) -> str:
+    """Union discriminator for upload table partitioning type."""
     if isinstance(v, dict):
         val = v.get("partitionType", v.get("partition_type"))
     else:
@@ -535,6 +537,15 @@ class JobRun(BaseModel):
         ),
     ] = None
 
+    def to_logging_context(self) -> dict[str, Any]:
+        """Convert job status details to a logging context."""
+        metadata = self.to_job_metadata()
+        return {
+            "job_id": self.job_id,
+            "username": self.owner,
+            "query": metadata.model_dump(mode="json", exclude_none=True),
+        }
+
     def to_job_metadata(self) -> JobMetadata:
         """Convert to the job metadata used in status responses."""
         return JobMetadata(query=self.query, database=self.database)
@@ -642,6 +653,29 @@ class JobError(BaseModel):
         ),
     ]
 
+    @classmethod
+    def for_quota_exceeded(cls, used: int, quota: int) -> Self:
+        """Generate an error object for a quota exceeded error.
+
+        Parameters
+        ----------
+        used
+            Number of running queries.
+        quota
+            Maximum allowed number of concurrent running queries.
+
+        Returns
+        -------
+        JobError
+            Corresponding error component of a Kafka job status message.
+        """
+        error = (
+            f"Maximum running queries reached ({used} running, maximum"
+            f" {quota}); wait for a query to finish or cancel one of your"
+            " running queries"
+        )
+        return cls(code=JobErrorCode.quota_exceeded, message=error)
+
 
 class JobStatus(BaseModel):
     """Status of a TAP query."""
@@ -714,3 +748,63 @@ class JobStatus(BaseModel):
     ] = None
 
     metadata: Annotated[JobMetadata, Field(title="Job metadata")]
+
+    @classmethod
+    def from_abort(
+        cls, job: JobRun, status: QueryStatus, start: datetime
+    ) -> Self:
+        """Construct from an underlying `QueryStatus`.
+
+        Parameters
+        ----------
+        job
+            Job for which to create a status message.
+        status
+            Underlying query status.
+        start
+            Start time of the query.
+
+        Returns
+        -------
+        JobStatus
+            Job status message for Kafka.
+        """
+        return cls(
+            job_id=job.job_id,
+            execution_id=status.query_id,
+            timestamp=status.last_update or datetime.now(tz=UTC),
+            status=ExecutionPhase.EXECUTING,
+            query_info=JobQueryInfo(
+                start_time=start, progress=status.progress
+            ),
+            metadata=job.to_job_metadata(),
+        )
+
+    @classmethod
+    def from_error(
+        cls, job: JobRun, error: JobError, execution_id: str | None = None
+    ) -> Self:
+        """Construct from an underlying `JobError`.
+
+        Parameters
+        ----------
+        job
+            Job for which to create a status message.
+        error
+            Error to report.
+        execution_id
+            Backend execution ID, if one is known.
+
+        Returns
+        -------
+        JobStatus
+            Job status message for Kafka.
+        """
+        return cls(
+            job_id=job.job_id,
+            execution_id=execution_id,
+            timestamp=datetime.now(tz=UTC),
+            status=ExecutionPhase.ERROR,
+            error=error,
+            metadata=job.to_job_metadata(),
+        )
