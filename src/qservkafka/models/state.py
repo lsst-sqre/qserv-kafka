@@ -5,9 +5,11 @@ from typing import Annotated, Any, Self, override
 
 from pydantic import BaseModel, Field, model_validator
 from safir.datetime import format_datetime_for_logging
+from vo_models.uws.types import ExecutionPhase
 
-from .kafka import JobQueryInfo, JobRun
+from .kafka import JobError, JobQueryInfo, JobResultInfo, JobRun, JobStatus
 from .query import QueryStatus
+from .votable import UploadStats
 
 __all__ = [
     "Query",
@@ -108,6 +110,22 @@ class RunningQuery(Query):
             result_queued=False,
         )
 
+    def to_completed_job_status(self, stats: UploadStats) -> JobStatus:
+        """Construct a Kafka job status message for a completed query."""
+        return JobStatus(
+            job_id=self.job.job_id,
+            execution_id=self.query_id,
+            timestamp=datetime.now(tz=UTC),
+            status=ExecutionPhase.COMPLETED,
+            query_info=self.to_job_query_info(finished=True),
+            result_info=JobResultInfo(
+                total_rows=stats.rows,
+                result_location=self.job.result_location,
+                format=self.job.result_format.format,
+            ),
+            metadata=self.job.to_job_metadata(),
+        )
+
     def to_job_query_info(self, *, finished: bool = False) -> JobQueryInfo:
         """Build job query information based on query status.
 
@@ -126,6 +144,23 @@ class RunningQuery(Query):
             start_time=self.start,
             progress=self.status.progress,
             end_time=datetime.now(tz=UTC) if finished else None,
+        )
+
+    def to_job_status(
+        self,
+        status: ExecutionPhase = ExecutionPhase.EXECUTING,
+        error: JobError | None = None,
+    ) -> JobStatus:
+        """Construct a Kafka job status message from the query."""
+        finished = status != ExecutionPhase.EXECUTING
+        return JobStatus(
+            job_id=self.job.job_id,
+            execution_id=self.query_id,
+            timestamp=self.status.last_update or datetime.now(tz=UTC),
+            status=status,
+            query_info=self.to_job_query_info(finished=finished),
+            error=error,
+            metadata=self.job.to_job_metadata(),
         )
 
     @override

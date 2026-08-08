@@ -6,7 +6,6 @@ from safir.arq import ArqQueue
 from safir.sentry import report_exception
 from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
-from vo_models.uws.types import ExecutionPhase
 
 from ..config import config
 from ..events import Events, TemporaryTableUploadEvent
@@ -191,10 +190,6 @@ class QueryService:
         JobStatus
             Initial status of the job.
         """
-        metadata = job.to_job_metadata()
-        query_for_logging = metadata.model_dump(mode="json", exclude_none=True)
-
-        # Check that the job request is supported.
         result_type = job.result_format.format.type
         serialization = job.result_format.format.serialization
         if result_type == JobResultType.VOTable:
@@ -219,11 +214,9 @@ class QueryService:
 
         # Set up the logger for the query.
         logger = self._logger.bind(
-            job_id=job.job_id,
-            username=job.owner,
             quota=quota.to_logging_context() if quota else None,
             running=count,
-            query=query_for_logging,
+            **job.to_logging_context(),
         )
 
         # Start the query.
@@ -234,7 +227,7 @@ class QueryService:
             raise
 
     def _build_invalid_request_status(
-        self, job: JobRun, error: str
+        self, job: JobRun, message: str
     ) -> JobStatus:
         """Build a status reply for an invalid request.
 
@@ -242,7 +235,7 @@ class QueryService:
         ----------
         job
             Initial query request.
-        error
+        message
             Error message.
 
         Returns
@@ -250,23 +243,12 @@ class QueryService:
         JobStatus
             Job status to report to Kafka.
         """
-        metadata = job.to_job_metadata()
-        self._logger.warning(
-            error,
-            job_id=job.job_id,
-            username=job.owner,
-            query=metadata.model_dump(mode="json", exclude_none=True),
-        )
-        return JobStatus(
-            job_id=job.job_id,
-            timestamp=datetime.now(tz=UTC),
-            status=ExecutionPhase.ERROR,
-            error=JobError(code=JobErrorCode.invalid_request, message=error),
-            metadata=metadata,
-        )
+        self._logger.warning(message, **job.to_logging_context())
+        error = JobError(code=JobErrorCode.invalid_request, message=message)
+        return JobStatus.from_error(job, error)
 
     def _build_quota_status(
-        self, job: JobRun, count: int, quota: int
+        self, job: JobRun, running: int, quota: int
     ) -> JobStatus:
         """Build a status reply for an over-quota request.
 
@@ -274,7 +256,7 @@ class QueryService:
         ----------
         job
             Initial query request.
-        count
+        running
             Number of running queries.
         quota
             Maximum allowed number of concurrent running queries.
@@ -284,27 +266,14 @@ class QueryService:
         JobStatus
             Job status to report to Kafka.
         """
-        metadata = job.to_job_metadata()
         self._logger.info(
             "Query rejected due to quota",
-            job_id=job.job_id,
-            username=job.owner,
             quota={"concurrent": quota},
-            running=count,
-            query=metadata.model_dump(mode="json", exclude_none=True),
+            running=running,
+            **job.to_logging_context(),
         )
-        error = (
-            f"Maximum running queries reached ({count} running, maximum"
-            f" {quota}); wait for a query to finish or cancel one of your"
-            " running queries"
-        )
-        return JobStatus(
-            job_id=job.job_id,
-            timestamp=datetime.now(tz=UTC),
-            status=ExecutionPhase.ERROR,
-            error=JobError(code=JobErrorCode.quota_exceeded, message=error),
-            metadata=metadata,
-        )
+        error = JobError.for_quota_exceeded(running, quota)
+        return JobStatus.from_error(job, error)
 
     async def _start_query_internal(
         self, job: JobRun, kafka_start: datetime | None, logger: BoundLogger
@@ -326,7 +295,6 @@ class QueryService:
             Initial status of the job.
         """
         start = datetime.now(tz=UTC)
-        metadata = job.to_job_metadata()
 
         # Upload any tables.
         uploaded = set()
@@ -351,14 +319,7 @@ class QueryService:
             await report_exception(e, self._slack_client)
             logger.exception(msg, error=str(e))
             await self._results.delete_upload_databases(job, logger, uploaded)
-            return JobStatus(
-                job_id=job.job_id,
-                execution_id=None,
-                timestamp=datetime.now(tz=UTC),
-                status=ExecutionPhase.ERROR,
-                error=e.to_job_error(),
-                metadata=metadata,
-            )
+            return JobStatus.from_error(job, e.to_job_error())
 
         # Start the query.
         query_id = None
@@ -374,14 +335,9 @@ class QueryService:
                 await report_exception(e, self._slack_client)
                 logger.exception("Unable to start query", error=str(e))
             await self._results.delete_upload_databases(job, logger)
-            return JobStatus(
-                job_id=job.job_id,
-                execution_id=str(query_id) if query_id else None,
-                timestamp=datetime.now(tz=UTC),
-                status=ExecutionPhase.ERROR,
-                error=e.to_job_error(),
-                metadata=metadata,
-            )
+            return JobStatus.from_error(job, e.to_job_error())
+
+        # Record the time at which the query was started.
         created = datetime.now(tz=UTC)
         logger.info("Started query", backend_id=query_id)
 
