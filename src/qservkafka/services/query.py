@@ -105,6 +105,7 @@ class QueryService:
         try:
             await self._backend.cancel_query(query_id)
         except BackendApiError as e:
+            e.user = cancel.owner
             try:
                 status = await self._backend.get_query_status(query_id)
                 if status.status != AsyncQueryPhase.EXECUTING:
@@ -326,6 +327,7 @@ class QueryService:
                 )
                 await self._events.temporary_table.publish(event)
         except (BackendApiError, TableUploadWebError) as e:
+            e.user = query.job.owner
             await self._rate_store.end_query(query.job.owner)
             if isinstance(e, TableUploadWebError):
                 msg = "Unable to retrieve table to upload"

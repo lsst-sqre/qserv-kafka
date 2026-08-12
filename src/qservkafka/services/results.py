@@ -122,6 +122,7 @@ class ResultProcessor:
             try:
                 await self._backend.delete_result(query.query_id)
             except BackendApiError as e:
+                e.user = query.job.owner
                 await report_exception(e, slack_client=self._slack_client)
                 logger.exception("Cannot delete results")
 
@@ -154,6 +155,7 @@ class ResultProcessor:
                 await self._backend.delete_database(database)
                 logger.debug("Deleted upload database", database_name=database)
             except BackendApiError as e:
+                e.user = job.owner
                 await report_exception(e, slack_client=self._slack_client)
                 logger.exception(
                     "Unable to delete temporary database, orphaning it",
@@ -177,6 +179,7 @@ class ResultProcessor:
         try:
             status = await self._backend.get_query_status(query.query_id)
         except BackendApiError as e:
+            e.user = query.job.owner
             await report_exception(e, slack_client=self._slack_client)
             logger = self._logger.bind(**query.to_logging_context())
             logger.exception("Unable to get job status", error=str(e))
@@ -293,6 +296,7 @@ class ResultProcessor:
         try:
             stats = await self._upload_results_with_retry(query, logger)
         except QueryError as e:
+            e.user = query.job.owner
             return await self._build_exception_status(query, e)
 
         # Send a metrics event for the job completion and log it.
