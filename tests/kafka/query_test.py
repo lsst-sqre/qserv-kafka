@@ -80,8 +80,8 @@ async def test_success(
     assert set(redis_client.scan_iter("query:*")) == set()
 
     # Check that the correct metrics event was sent.
-    assert isinstance(factory.events.qserv_success, MockEventPublisher)
-    events = factory.events.qserv_success.published
+    assert isinstance(factory.events.query_success, MockEventPublisher)
+    events = factory.events.query_success.published
     assert len(events) == 1
     data.assert_pydantic_matches(events[0], "events/success-kafka")
     assert events[0].qserv_size == qserv_status.collected_bytes
@@ -124,8 +124,8 @@ async def test_immediate(
 
     redis_client = redis.get_client()
     assert set(redis_client.scan_iter("query:*")) == set()
-    assert isinstance(factory.events.qserv_success, MockEventPublisher)
-    events = factory.events.qserv_success.published
+    assert isinstance(factory.events.query_success, MockEventPublisher)
+    events = factory.events.query_success.published
     assert len(events) == 1
     data.assert_pydantic_matches(events[0], "events/success")
 

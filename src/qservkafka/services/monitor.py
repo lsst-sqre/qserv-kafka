@@ -6,12 +6,11 @@ from collections import Counter
 from safir.arq import ArqQueue
 from structlog.stdlib import BoundLogger
 
-from ..config import config
-from ..events import BigQueryExecutingEvent, Events, QservExecutingEvent
+from ..events import Events, QueryExecutingEvent
 from ..exceptions import QueryError
 from ..models.query import AsyncQueryPhase, ProcessStatus
 from ..models.state import RunningQuery
-from ..storage.backend import BackendType, DatabaseBackend
+from ..storage.backend import DatabaseBackend
 from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from .results import ResultProcessor
@@ -85,13 +84,8 @@ class QueryMonitor:
         # queries that are both still executing and that this bridge instance
         # is aware of, since the same backend may be shared by multiple
         # bridges and each should only count its own queries.
-        match config.backend:
-            case BackendType.BIGQUERY:
-                bq_event = BigQueryExecutingEvent(count=queries_executing)
-                await self._events.bigquery_executing.publish(bq_event)
-            case BackendType.QSERV:
-                qs_event = QservExecutingEvent(count=queries_executing)
-                await self._events.qserv_executing.publish(qs_event)
+        event = QueryExecutingEvent(count=queries_executing)
+        await self._events.query_executing.publish(event)
 
     async def check_query(
         self, query: RunningQuery, status: ProcessStatus | None

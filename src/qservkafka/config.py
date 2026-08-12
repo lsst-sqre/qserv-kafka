@@ -1,6 +1,7 @@
 """Application settings."""
 
 from datetime import timedelta
+from enum import StrEnum
 from typing import Any, Self
 
 from arq.connections import RedisSettings
@@ -22,9 +23,24 @@ from safir.logging import LogLevel, Profile
 from safir.metrics import MetricsConfiguration, metrics_configuration_factory
 from safir.pydantic import EnvRedisDsn, HumanTimedelta
 
-from .storage.backend import BackendType
+__all__ = [
+    "BackendType",
+    "Config",
+    "SlackConfig",
+    "config",
+]
 
-__all__ = ["Config", "config"]
+
+class BackendType(StrEnum):
+    """Supported database backend types.
+
+    These values use canonical capitalization (Qserv, BigQuery). Metrics
+    events use separate hardcoded names (qserv_success, bigquery_success)
+    so changes here don't affect metrics dashboards.
+    """
+
+    QSERV = "Qserv"
+    BIGQUERY = "BigQuery"
 
 
 class SlackConfig(BaseSettings):

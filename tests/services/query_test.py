@@ -109,8 +109,8 @@ async def test_immediate(
     assert not mock_qserv.results_stored
 
     # Check that the correct metrics event was sent.
-    assert isinstance(factory.events.qserv_success, MockEventPublisher)
-    events = factory.events.qserv_success.published
+    assert isinstance(factory.events.query_success, MockEventPublisher)
+    events = factory.events.query_success.published
     assert len(events) == 1
     event = events[0]
     data.assert_pydantic_matches(event, "events/success")
@@ -150,8 +150,8 @@ async def test_immediate(
     # If Qserv was configured to intermittently fail, check that we logged
     # metrics events recording the failures.
     if mock_qserv.flaky:
-        assert isinstance(factory.events.qserv_failure, MockEventPublisher)
-        factory.events.qserv_failure.published.assert_published(
+        assert isinstance(factory.events.query_api_failure, MockEventPublisher)
+        factory.events.query_api_failure.published.assert_published(
             [{"protocol": "HTTP"}, {"protocol": "SQL"}]
         )
 
@@ -209,8 +209,8 @@ async def test_no_delete(
     assert mock_qserv.results_stored
 
     # Check that the correct metrics events were sent.
-    assert isinstance(factory.events.qserv_success, MockEventPublisher)
-    events = factory.events.qserv_success.published
+    assert isinstance(factory.events.query_success, MockEventPublisher)
+    events = factory.events.query_success.published
     assert len(events) == 1
     data.assert_pydantic_matches(events[0], "events/success-no-delete")
 
@@ -404,8 +404,8 @@ async def test_upload(
     assert mock_qserv.get_uploaded_database() is None
 
     # Check that the correct metrics events were sent.
-    assert isinstance(factory.events.qserv_success, MockEventPublisher)
-    events = factory.events.qserv_success.published
+    assert isinstance(factory.events.query_success, MockEventPublisher)
+    events = factory.events.query_success.published
     assert len(events) == 1
     data.assert_pydantic_matches(events[0], "events/success-upload")
     assert isinstance(factory.events.temporary_table, MockEventPublisher)
