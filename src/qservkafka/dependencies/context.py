@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from faststream.kafka.fastapi import KafkaMessage
 from structlog.stdlib import BoundLogger, get_logger
 
-from ..factory import Factory, ProcessContext
+from ..factory import Factory, ProcessContext, build_process_context
 
 __all__ = [
     "ConsumerContext",
@@ -20,14 +20,14 @@ __all__ = [
 class ConsumerContext:
     """Context for a Kafka consumer."""
 
-    logger: BoundLogger
-    """Logger for the consumer."""
-
     factory: Factory
     """The component factory."""
 
     message_timestamp: datetime
     """Timestamp of the message, extracted from the Kafka header."""
+
+    logger: BoundLogger
+    """Logger for the consumer."""
 
 
 class ContextDependency:
@@ -40,13 +40,10 @@ class ContextDependency:
     """
 
     def __init__(self) -> None:
-        self._process_context: ProcessContext | None = None
+        self._context: ProcessContext | None = None
 
     async def __call__(self, message: KafkaMessage) -> ConsumerContext:
         """Create a per-request context."""
-        if not self._process_context:
-            raise RuntimeError("Context dependency not initialized")
-
         # The underlying Kafka messages can either be a single message or a
         # tuple of messages. Since we only are using them to extract some
         # metadata for logging purposes, use the first message if there are
@@ -68,38 +65,42 @@ class ContextDependency:
         timestamp = datetime.fromtimestamp(record.timestamp / 1000, tz=UTC)
         return ConsumerContext(
             logger=logger,
-            factory=Factory(self._process_context, logger),
+            factory=self.create_factory(logger),
             message_timestamp=timestamp,
         )
 
     async def aclose(self) -> None:
         """Clean up the per-process singletons."""
-        if self._process_context:
-            await self._process_context.aclose()
-        self._process_context = None
+        if self._context:
+            await self._context.aclose()
+        self._context = None
 
-    def create_factory(self) -> Factory:
+    def create_factory(self, logger: BoundLogger | None = None) -> Factory:
         """Create a new factory.
 
         This is used for background processing, so it is separate from the
         work inside ``__call__``, which assumes that there is a Kafka message
         to which the bridge is reacting.
 
+        Parameters
+        ----------
+        logger
+            Logger to use. If not given, the default logger will be used.
+
         Returns
         -------
         Factory
             Newly-constructed factory.
         """
-        if not self._process_context:
+        if not self._context:
             raise RuntimeError("Context dependency not initialized")
-        logger = get_logger("qservkafka")
-        return Factory(self._process_context, logger)
+        if not logger:
+            logger = get_logger("qservkafka")
+        return self._context.build_factory(logger)
 
     async def initialize(self) -> None:
         """Initialize the process-wide shared context."""
-        if self._process_context:
-            await self.aclose()
-        self._process_context = await ProcessContext.create()
+        self._context = await build_process_context()
 
 
 context_dependency = ContextDependency()

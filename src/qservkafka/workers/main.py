@@ -15,7 +15,7 @@ from structlog.stdlib import get_logger
 from .. import __version__
 from ..config import config
 from ..constants import ARQ_TIMEOUT_GRACE
-from ..factory import Factory, ProcessContext
+from ..factory import ProcessContext, build_process_context
 from .functions.results import handle_finished_query
 from .functions.upload import handle_upload_job
 
@@ -41,13 +41,10 @@ async def startup(ctx: dict[Any, Any]) -> None:
 
     # Allow the test suite to override the process context to, for example,
     # provide mock metrics event publishers that are accessible to the test.
-    if "context" in ctx:
-        context = ctx["context"]
-    else:
-        context = await ProcessContext.create(
-            qserv_database_pool_size=config.max_worker_jobs
-        )
-    factory = Factory(context, logger)
+    context = ctx.get("context")
+    if not context:
+        context = await build_process_context(worker_max_jobs=ctx["max_jobs"])
+    factory = context.build_factory(logger)
 
     # Metrics initialization must be done exactly once. If not done at all,
     # the on_job_start function fails; if done more than once, Safir's metrics
@@ -79,16 +76,17 @@ class WorkerSettings:
     """Configuration for the arq worker that processes completed queries."""
 
     functions: ClassVar[list[Callable]] = [handle_finished_query]
+    queue_name = config.arq_queue
+    redis_settings = config.arq_redis_settings
+    on_startup = startup
+    on_shutdown = shutdown
+    on_job_start = make_on_job_start(config.arq_queue)
     job_completion_wait = int(
         (config.result_timeout + ARQ_TIMEOUT_GRACE).total_seconds()
     )
-    job_timeout = config.result_timeout + ARQ_TIMEOUT_GRACE
     max_jobs = config.max_worker_jobs
-    on_job_start = make_on_job_start(config.arq_queue)
-    on_startup = startup
-    on_shutdown = shutdown
-    queue_name = config.arq_queue
-    redis_settings = config.arq_redis_settings
+    job_timeout = config.result_timeout + ARQ_TIMEOUT_GRACE
+    ctx: ClassVar[dict[str, int]] = {"max_jobs": config.max_worker_jobs}
 
 
 class UploadWorkerSettings:
@@ -104,12 +102,13 @@ class UploadWorkerSettings:
             timeout=config.upload_worker_timeout + ARQ_TIMEOUT_GRACE,
         ),
     ]
+    queue_name = config.upload_queue
+    redis_settings = config.arq_redis_settings
+    on_startup = startup
+    on_shutdown = shutdown
+    on_job_start = make_on_job_start(config.upload_queue)
     job_completion_wait = int(
         (config.upload_worker_timeout + ARQ_TIMEOUT_GRACE).total_seconds()
     )
     max_jobs = config.upload_worker_max_jobs
-    on_job_start = make_on_job_start(config.upload_queue)
-    on_startup = startup
-    on_shutdown = shutdown
-    queue_name = config.upload_queue
-    redis_settings = config.arq_redis_settings
+    ctx: ClassVar[dict[str, int]] = {"max_jobs": config.upload_worker_max_jobs}
