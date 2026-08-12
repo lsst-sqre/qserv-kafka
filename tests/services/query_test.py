@@ -54,7 +54,7 @@ async def assert_query_successful(
     mock_qserv.set_immediate_success(job)
     kafka_timestamp = datetime.now(tz=UTC) - timedelta(seconds=10)
     result = await start_and_complete_immediate(
-        query_service, factory, job, kafka_start=kafka_timestamp
+        factory, job, kafka_start=kafka_timestamp
     )
     data.assert_job_status_matches(result, status, execution_id=execution_id)
     assert_approximately_now(result.timestamp)
@@ -165,8 +165,10 @@ async def test_immediate(
 async def test_immediate_dispatch(
     data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
 ) -> None:
-    """Test that a job that completed immediately is dispatched to a worker
-    and that the dispatch is not repeated on a later check.
+    """Test correct dispatch of a query that finishes immediately.
+
+    Test that a job that completed immediately is dispatched to a worker,
+    returns an executing status, and properly marked as queued.
     """
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
@@ -177,18 +179,10 @@ async def test_immediate_dispatch(
         status = await query_service.start_query(job)
         assert mock.call_args_list == [call("handle_finished_query", "1")]
 
-    assert status.status == ExecutionPhase.EXECUTING
-    assert status.execution_id == "1"
-
+    data.assert_job_status_matches(status, "status/simple-immediate")
     query = await state_store.get_query("1")
     assert query
     assert query.result_queued
-
-    result_processor = factory.create_result_processor()
-    with patch.object(RedisArqQueue, "enqueue") as mock:
-        result = await result_processor.build_query_status(query)
-        assert mock.call_args_list == []
-    data.assert_job_status_matches(result, "status/data-completed")
 
 
 @pytest.mark.asyncio
@@ -230,44 +224,6 @@ async def test_no_delete(
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
-async def test_cancel(data: QservKafkaData, factory: Factory) -> None:
-    job = data.read_pydantic(JobRun, "jobs/simple")
-    cancel = data.read_pydantic(JobCancel, "cancel/simple")
-    query_service = factory.create_query_service()
-    state_store = factory.create_query_state_store()
-
-    start_status = await query_service.start_query(job)
-    data.assert_job_status_matches(start_status, "status/simple-started")
-    assert_approximately_now(start_status.timestamp)
-    assert start_status.query_info
-    start_time = start_status.query_info.start_time
-    assert_approximately_now(start_time)
-
-    assert await state_store.get_active_queries() == {"1"}
-
-    now = datetime.now(tz=UTC)
-    cancel_status = await query_service.cancel_query(cancel)
-    assert cancel_status
-    finish = datetime.now(tz=UTC)
-    data.assert_job_status_matches(cancel_status, "status/simple-aborted")
-    assert_approximately_now(cancel_status.timestamp)
-    assert cancel_status.query_info
-    assert cancel_status.query_info.start_time == start_time
-    assert cancel_status.query_info.end_time
-    assert cancel_status.query_info.end_time >= now
-
-    # Check that the correct metrics event was sent.
-    assert isinstance(factory.events.query_abort, MockEventPublisher)
-    events = factory.events.query_abort.published
-    assert len(events) == 1
-    data.assert_pydantic_matches(events[0], "events/abort")
-    assert timedelta(seconds=0) < events[0].elapsed <= (finish - start_time)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
-)
 async def test_cancel_completed(
     *,
     data: QservKafkaData,
@@ -292,8 +248,10 @@ async def test_cancel_completed(
     )
     await mock_qserv.update_status(1, qserv_status)
 
-    # Canceling a completed query should quietly do nothing.
-    assert await query_service.cancel_query(cancel) is None
+    # Canceling a completed query should quietly do nothing. The mock Qserv
+    # returns an error if we try to cancel a completed job, so the lack of a
+    # reported error indicates correct behavior.
+    await query_service.cancel_query(cancel)
     assert isinstance(factory.events.query_abort, MockEventPublisher)
     events = factory.events.query_abort.published
     assert len(events) == 0

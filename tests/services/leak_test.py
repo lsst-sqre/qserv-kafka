@@ -56,13 +56,12 @@ async def test_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test for memory leaks in the immediate job processing flow."""
-    query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
     job = data.read_pydantic(JobRun, "jobs/data")
     mock_qserv.set_immediate_success(job)
 
     # Run one query first to set up the various internal Python caches.
-    status = await start_and_complete_immediate(query_service, factory, job)
+    status = await start_and_complete_immediate(factory, job)
     data.assert_job_status_matches(status, "status/data-completed")
 
     # Start tracing memory.
@@ -72,9 +71,7 @@ async def test_success(
 
     # Run 100 more tasks with memory tracing.
     for i in range(2, 102):
-        status = await start_and_complete_immediate(
-            query_service, factory, job
-        )
+        status = await start_and_complete_immediate(factory, job)
         data.assert_job_status_matches(
             status, "status/data-completed", execution_id=str(i)
         )

@@ -3,7 +3,6 @@
 from typing import Any
 
 from structlog.stdlib import BoundLogger
-from vo_models.uws.types import ExecutionPhase
 
 from ...factory import Factory
 
@@ -27,13 +26,6 @@ async def handle_finished_query(ctx: dict[Any, Any], query_id: str) -> None:
         logger.warning("Query state not found, skipping", query_id=query_id)
         return
     processor = factory.create_result_processor()
-    status = await processor.build_query_status(query)
-    if status.status == ExecutionPhase.EXECUTING:
-        logger.warning(
-            "Apparently completed job still executing",
-            job_id=query.job.job_id,
-            qserv_id=str(query.query_id),
-            username=query.job.owner,
-            status=status.model_dump(mode="json", exclude_none=True),
-        )
+    status = await processor.process_query(query)
     await processor.publish_status(status)
+    await processor.delete_query_data(query)

@@ -77,31 +77,32 @@ class QueryStateStore:
         ----------
         query_id
             Backend query ID.
+
+        Notes
+        -----
+        This is currently highly inefficient since it rewrites the whole Redis
+        object, which for queries that may contain large numbers of result
+        fields can be fairly large. So far, it hasn't seemed to matter, but
+        look here if you are seeing Redis performance issues.
         """
         query = await self.get_query(query_id)
         if query:
             query.result_queued = True
-            lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
-            await self._storage.store(
-                query_id, query, lifetime, exclude_defaults=True
-            )
+            await self.store_query(query)
 
-    async def store_query(
-        self, query: RunningQuery, *, result_queued: bool = False
-    ) -> None:
+    async def store_query(self, query: RunningQuery) -> None:
         """Add or update a record for an in-progress query.
 
         Parameters
         ----------
         query
             Query to store.
-        result_queued
-            Whether this query has been dispatched to arq for result
-            processing.
         """
-        lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
         await self._storage.store(
-            query.query_id, query, lifetime, exclude_defaults=True
+            query.query_id,
+            query,
+            lifetime=int(MAXIMUM_QUERY_LIFETIME.total_seconds()),
+            exclude_defaults=True,
         )
 
     async def update_status(self, query_id: str, status: QueryStatus) -> None:
@@ -113,12 +114,16 @@ class QueryStateStore:
             Backend query ID.
         status
             Backend query status.
+
+        Notes
+        -----
+        This is currently highly inefficient since it rewrites the whole Redis
+        object, which for queries that may contain large numbers of result
+        fields can be fairly large. So far, it hasn't seemed to matter, but
+        look here if you are seeing Redis performance issues.
         """
         query = await self.get_query(query_id)
         if query:
             query.result_queued = False
             query.status.update_from(status.to_process_status())
-            lifetime = int(MAXIMUM_QUERY_LIFETIME.total_seconds())
-            await self._storage.store(
-                query_id, query, lifetime, exclude_defaults=True
-            )
+            await self.store_query(query)

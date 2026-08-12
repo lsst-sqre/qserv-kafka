@@ -1,7 +1,7 @@
 """Test the Qserv Kafka bridge with a real Kafka server."""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -30,6 +30,7 @@ from ..support.arq import (
     wait_for_dispatch,
 )
 from ..support.data import QservKafkaData
+from ..support.datetime import assert_approximately_now
 from ..support.kafka import KafkaTestManager
 from ..support.qserv import MockQserv
 
@@ -235,9 +236,6 @@ async def test_qserv_error(
     processing when the API request failed.
     """
     async with LifespanManager(app):
-        factory = context_dependency.create_factory()
-        arq_worker = create_arq_worker(factory._context)
-
         await kafka_manager.start_query("jobs/simple")
         status = await kafka_manager.wait_for_status("status/simple-started")
         assert status.query_info
@@ -251,10 +249,6 @@ async def test_qserv_error(
             last_update=datetime.now(tz=UTC).replace(microsecond=0),
         )
         await mock_qserv.update_status(1, qserv_status)
-        await wait_for_dispatch(factory, 1)
-
-        # Run the background tsk queue.
-        assert await arq_worker.run_check() == 1
         status = await kafka_manager.wait_for_status("status/simple-error")
 
     # Ensure all query state has been deleted.
@@ -274,24 +268,16 @@ async def test_missing_executing(
 ) -> None:
     """Test queries that are not in the process list but still executing."""
     async with LifespanManager(app):
-        factory = context_dependency.create_factory()
         await kafka_manager.start_query("jobs/data")
         await kafka_manager.wait_for_status("status/data-started")
 
-        # Remove the query from the running query list. It should be
-        # dispatched to the result worker.
+        # Remove the query from the running query list. This should generate
+        # another status update from the monitor task.
         await mock_qserv.remove_running_query(1)
-        await wait_for_dispatch(factory, 1)
+        await kafka_manager.wait_for_status("status/data-started")
 
-    # Run the backend worker. It should process the job and send the same
-    # status update we already sent (since nothing has changed).
-    arq_worker = create_arq_worker()
-    assert await arq_worker.run_check() == 1
-    await kafka_manager.wait_for_status("status/data-started")
-
-    # The query should still be active and should no longer be marked as
-    # dispatched, so it will be checked again the next time through the
-    # monitor loop.
+    # The query should still be active and should not be marked as dispatched,
+    # so it will be checked again the next time through the monitor loop.
     redis_client = redis.get_client()
     raw_query = redis_client.get("query:1")
     assert raw_query
@@ -301,6 +287,9 @@ async def test_missing_executing(
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(60)
+@pytest.mark.parametrize(
+    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+)
 async def test_cancel(
     *,
     data: QservKafkaData,
@@ -310,6 +299,9 @@ async def test_cancel(
     redis: RedisContainer,
 ) -> None:
     async with LifespanManager(app):
+        factory = context_dependency.create_factory()
+        arq_worker = create_arq_worker(factory._context)
+
         await kafka_manager.start_query("jobs/simple")
         status = await kafka_manager.wait_for_status("status/simple-started")
         assert status.query_info
@@ -319,7 +311,12 @@ async def test_cancel(
         cancel = data.read_json("cancel/simple")
         await kafka_broker.publish(cancel, config.job_cancel_topic)
 
+        await wait_for_dispatch(factory, 1)
+        assert await arq_worker.run_check() == 1
+
         status = await kafka_manager.wait_for_status("status/simple-aborted")
+        finish = datetime.now(tz=UTC)
+        assert_approximately_now(status.timestamp)
         assert status.query_info
         assert status.query_info.start_time == start_time
         assert status.query_info.end_time
@@ -328,6 +325,13 @@ async def test_cancel(
     # Ensure all query state has been deleted.
     redis_client = redis.get_client()
     assert set(redis_client.scan_iter("query:*")) == set()
+
+    # Check that the correct metrics event was sent.
+    assert isinstance(factory.events.query_abort, MockEventPublisher)
+    events = factory.events.query_abort.published
+    assert len(events) == 1
+    data.assert_pydantic_matches(events[0], "events/abort")
+    assert timedelta(seconds=0) < events[0].elapsed <= (finish - start_time)
 
 
 @pytest.mark.asyncio
