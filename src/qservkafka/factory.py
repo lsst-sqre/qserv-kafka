@@ -20,7 +20,7 @@ from structlog.stdlib import BoundLogger, get_logger
 
 from qservkafka.background import BackgroundTaskManager
 
-from .config import config
+from .config import BackendType, config
 from .constants import (
     REDIS_BACKOFF_MAX,
     REDIS_BACKOFF_START,
@@ -32,12 +32,8 @@ from .events import Events
 from .models.state import RunningQuery
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
-from .services.results import (
-    BigQueryResultProcessor,
-    QservResultProcessor,
-    ResultProcessor,
-)
-from .storage.backend import BackendType, DatabaseBackend
+from .services.results import ResultProcessor
+from .storage.backend import DatabaseBackend
 from .storage.bigquery import BigQueryClient
 from .storage.gafaelfawr import GafaelfawrStorage
 from .storage.qserv import QservClient
@@ -439,19 +435,9 @@ class Factory:
         Returns
         -------
         ResultProcessor
-            New service to process a completed query. Returns the appropriate
-            subclass based on the configured backend.
+            New service to process a completed query.
         """
-        processor_class: type[ResultProcessor]
-        match config.backend:
-            case BackendType.QSERV:
-                processor_class = QservResultProcessor
-            case BackendType.BIGQUERY:
-                processor_class = BigQueryResultProcessor
-            case _:
-                raise ValueError(f"Unsupported backend type: {config.backend}")
-
-        return processor_class(
+        return ResultProcessor(
             backend=self.create_backend_client(),
             state_store=self.create_query_state_store(),
             votable_writer=VOTableWriter(

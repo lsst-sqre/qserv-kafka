@@ -4,29 +4,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Sequence
-from enum import StrEnum
 from typing import Any
 
+from ..events import QueryApiFailureEvent
 from ..models.kafka import JobRun, JobTableUpload
 from ..models.qserv import TableUploadStats
 from ..models.query import ProcessStatus, QueryStatus
 
-__all__ = [
-    "BackendType",
-    "DatabaseBackend",
-]
-
-
-class BackendType(StrEnum):
-    """Supported database backend types.
-
-    These values use canonical capitalization (Qserv, BigQuery). Metrics
-    events use separate hardcoded names (qserv_success, bigquery_success)
-    so changes here don't affect metrics dashboards.
-    """
-
-    QSERV = "Qserv"
-    BIGQUERY = "BigQuery"
+__all__ = ["DatabaseBackend"]
 
 
 class DatabaseBackend(ABC):
@@ -163,6 +148,23 @@ class DatabaseBackend(ABC):
         Some backends may not support listing all running
         queries. In such cases, implementations should return an empty dict
         and rely on status polling of known queries instead.
+        """
+
+    @abstractmethod
+    def result_api_failure_event(self) -> QueryApiFailureEvent:
+        """Return an appropriate API failure event for result retrieval.
+
+        Different backends use different metrics events, possibly with
+        parameters, for a failure in retrieving results. This event cannot be
+        easily logged from inside the result iterator and therefore must be
+        logged by the results service, but it is backend-agnostic. It
+        therefore calls this method to retrieve the appropriate event to log.
+
+        Returns
+        -------
+        QueryApiFailureEvent
+            Appropriate event to log for a backend failure while retrieving
+            results.
         """
 
     @abstractmethod

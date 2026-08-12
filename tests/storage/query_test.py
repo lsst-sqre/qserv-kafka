@@ -9,6 +9,7 @@ from typing import Any, override
 import pytest
 from pydantic import HttpUrl, TypeAdapter
 
+from qservkafka.events import QueryApiFailureEvent
 from qservkafka.models.kafka import (
     JobResultConfig,
     JobResultEnvelope,
@@ -129,6 +130,10 @@ class MockDatabaseBackend(DatabaseBackend):
     async def delete_database(self, database: str) -> None:
         """Mock database deletion."""
         self.deleted_databases.append(database)
+
+    @override
+    def result_api_failure_event(self) -> QueryApiFailureEvent:
+        return QueryApiFailureEvent()
 
 
 @pytest.mark.asyncio

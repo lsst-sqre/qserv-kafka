@@ -24,7 +24,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from structlog.stdlib import BoundLogger
 
 from ..config import config
-from ..events import Events, QservFailureEvent, QservProtocol
+from ..events import (
+    Events,
+    QservApiFailureEvent,
+    QservProtocol,
+    QueryApiFailureEvent,
+)
 from ..exceptions import (
     QservApiFailedError,
     QservApiProtocolError,
@@ -155,8 +160,8 @@ def _retry[**P, T, C: _QservClientProtocol](
                     # We don't want to notify Sentry or Slack about exceptions
                     # here because we are going to retry.
                     client.logger.exception(msg)
-                    event = QservFailureEvent(protocol=qserv_protocol)
-                    await client.events.qserv_failure.publish(event)
+                    event = QservApiFailureEvent(protocol=qserv_protocol)
+                    await client.events.query_api_failure.publish(event)
                     await asyncio.sleep(delay)
 
             # Fell through so failed max_tries - 1 times. Try one last time,
@@ -164,8 +169,8 @@ def _retry[**P, T, C: _QservClientProtocol](
             try:
                 return await f(client, *args, **kwargs)
             except QservApiSqlError, SlackWebException:
-                event = QservFailureEvent(protocol=qserv_protocol)
-                await client.events.qserv_failure.publish(event)
+                event = QservApiFailureEvent(protocol=qserv_protocol)
+                await client.events.query_api_failure.publish(event)
                 raise
 
         return retry_wrapper
@@ -306,6 +311,10 @@ class QservClient(DatabaseBackend):
             raise QservApiSqlError.from_exception(e) from e
         self.logger.debug("Listed running queries", count=len(processes))
         return processes
+
+    @override
+    def result_api_failure_event(self) -> QueryApiFailureEvent:
+        return QservApiFailureEvent(protocol=QservProtocol.SQL)
 
     @override
     async def submit_query(self, job: JobRun) -> str:

@@ -22,7 +22,7 @@ from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
 
 from ..config import config
-from ..events import BigQueryFailureEvent, Events
+from ..events import BigQueryApiFailureEvent, Events, QueryApiFailureEvent
 from ..exceptions import (
     BackendNotImplementedError,
     BigQueryApiNetworkError,
@@ -80,8 +80,8 @@ def _retry[**P, T, C: _BigQueryClientProtocol](
                 delay = config.backend_retry_delay.total_seconds()
                 msg = f"BigQuery API call failed, retrying after {delay}s"
                 client.logger.exception(msg)
-                event = BigQueryFailureEvent()
-                await client.events.bigquery_failure.publish(event)
+                event = BigQueryApiFailureEvent()
+                await client.events.query_api_failure.publish(event)
                 await asyncio.sleep(delay)
 
         # Fell through so failed max_tries - 1 times. Try one last time,
@@ -89,8 +89,8 @@ def _retry[**P, T, C: _BigQueryClientProtocol](
         try:
             return await __func(client, *args, **kwargs)
         except BigQueryApiNetworkError:
-            event = BigQueryFailureEvent()
-            await client.events.bigquery_failure.publish(event)
+            event = BigQueryApiFailureEvent()
+            await client.events.query_api_failure.publish(event)
             raise
 
     return retry_wrapper
@@ -352,6 +352,10 @@ class BigQueryClient(DatabaseBackend):
             return processes
 
         return await asyncio.to_thread(_list_running)
+
+    @override
+    def result_api_failure_event(self) -> QueryApiFailureEvent:
+        return BigQueryApiFailureEvent()
 
     @override
     async def submit_query(self, job: JobRun) -> str:

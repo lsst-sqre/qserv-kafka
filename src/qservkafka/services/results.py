@@ -1,10 +1,8 @@
 """Processing of completed queries."""
 
 import asyncio
-from abc import ABC, abstractmethod
 from dataclasses import asdict
-from datetime import UTC, datetime, timedelta
-from typing import override
+from datetime import UTC, datetime
 
 from faststream.kafka import KafkaBroker
 from safir.arq import ArqQueue
@@ -13,17 +11,13 @@ from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
-from ..config import config
+from ..config import BackendType, config
 from ..events import (
-    BigQueryFailureEvent,
     BigQuerySuccessEvent,
     Events,
-    QservFailureEvent,
-    QservProtocol,
     QservSuccessEvent,
     QueryAbortEvent,
     QueryFailureEvent,
-    QuerySuccessEvent,
 )
 from ..exceptions import (
     BackendApiError,
@@ -41,14 +35,10 @@ from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from ..storage.votable import VOTableWriter
 
-__all__ = [
-    "BigQueryResultProcessor",
-    "QservResultProcessor",
-    "ResultProcessor",
-]
+__all__ = ["ResultProcessor"]
 
 
-class ResultProcessor(ABC):
+class ResultProcessor:
     """Process the results of a completed query.
 
     Parameters
@@ -95,6 +85,15 @@ class ResultProcessor(ABC):
         self._events = events
         self._slack_client = slack_client
         self._logger = logger
+
+        self._success_event_class: type[
+            BigQuerySuccessEvent | QservSuccessEvent
+        ]
+        match config.backend:
+            case BackendType.QSERV:
+                self._success_event_class = QservSuccessEvent
+            case BackendType.BIGQUERY:
+                self._success_event_class = BigQuerySuccessEvent
 
     async def delete_query_data(self, query: StartedQuery) -> None:
         """Delete stored information for the query.
@@ -247,41 +246,6 @@ class ResultProcessor(ABC):
             headers={"Content-Type": "application/json"},
         )
 
-    @abstractmethod
-    async def publish_success_event(
-        self,
-        *,
-        query: RunningQuery,
-        stats: UploadStats,
-        elapsed: timedelta,
-        backend_elapsed: timedelta,
-        backend_rate: float | None,
-    ) -> QuerySuccessEvent:
-        """Publish backend-specific success event.
-
-        Parameters
-        ----------
-        query
-            Query metadata.
-        stats
-            Upload statistics.
-        elapsed
-            Total elapsed time.
-        backend_elapsed
-            Time spent in backend.
-        backend_rate
-            Backend processing rate (bytes/sec).
-
-        Returns
-        -------
-        QuerySuccessEvent
-            The published event for logging.
-        """
-
-    @abstractmethod
-    async def _publish_backend_failure_event(self) -> None:
-        """Publish backend-specific failure event during retry."""
-
     async def _build_aborted_status(self, query: RunningQuery) -> JobStatus:
         """Construct the status for an aborted job.
 
@@ -341,16 +305,26 @@ class ResultProcessor(ABC):
         else:
             backend_rate = None
         elapsed = now - (query.queued or query.start)
-        event = await self.publish_success_event(
-            query=query,
-            stats=stats,
+        event = self._success_event_class(
+            job_id=query.job.job_id,
+            username=query.job.owner,
             elapsed=elapsed,
+            kafka_elapsed=query.start - query.queued if query.queued else None,
+            result_elapsed=stats.elapsed,
+            submit_elapsed=query.created - query.start,
+            rows=stats.rows,
+            encoded_size=stats.data_bytes,
+            result_size=stats.total_bytes,
+            rate=stats.data_bytes / elapsed.total_seconds(),
+            result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
+            upload_tables=len(query.job.upload_tables),
             backend_elapsed=backend_elapsed,
+            backend_size=query.status.collected_bytes,
             backend_rate=backend_rate,
         )
-        logger.info(
-            "Job complete and results uploaded", **event.to_logging_context()
-        )
+        await self._events.query_success.publish(event)
+        logger = logger.bind(**event.to_logging_context())
+        logger.info("Job complete and results uploaded")
 
         # Return the resulting status.
         return query.to_completed_job_status(stats)
@@ -519,7 +493,8 @@ class ResultProcessor(ABC):
             except (BackendApiTransientError, UploadWebError) as e:
                 delay = config.backend_retry_delay.total_seconds()
                 if isinstance(e, BackendApiTransientError):
-                    await self._publish_backend_failure_event()
+                    event = self._backend.result_api_failure_event()
+                    await self._events.query_api_failure.publish(event)
                     msg = f"Backend call failed, retrying after {delay}s"
                 else:
                     msg = f"Upload of results failed, retrying after {delay}s"
@@ -534,89 +509,6 @@ class ResultProcessor(ABC):
         try:
             return await self._upload_results(query)
         except BackendApiTransientError:
-            await self._publish_backend_failure_event()
+            event = self._backend.result_api_failure_event()
+            await self._events.query_api_failure.publish(event)
             raise
-
-
-class QservResultProcessor(ResultProcessor):
-    """Result processor for Qserv backend.
-
-    Publishes Qserv-specific metrics events.
-    """
-
-    @override
-    async def publish_success_event(
-        self,
-        *,
-        query: RunningQuery,
-        stats: UploadStats,
-        elapsed: timedelta,
-        backend_elapsed: timedelta,
-        backend_rate: float | None,
-    ) -> QservSuccessEvent:
-        event = QservSuccessEvent(
-            job_id=query.job.job_id,
-            username=query.job.owner,
-            elapsed=elapsed,
-            kafka_elapsed=query.start - query.queued if query.queued else None,
-            qserv_elapsed=backend_elapsed,
-            result_elapsed=stats.elapsed,
-            submit_elapsed=query.created - query.start,
-            rows=stats.rows,
-            qserv_size=query.status.collected_bytes,
-            encoded_size=stats.data_bytes,
-            result_size=stats.total_bytes,
-            rate=stats.data_bytes / elapsed.total_seconds(),
-            qserv_rate=backend_rate,
-            result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
-            upload_tables=len(query.job.upload_tables),
-        )
-        await self._events.qserv_success.publish(event)
-        return event
-
-    @override
-    async def _publish_backend_failure_event(self) -> None:
-        event = QservFailureEvent(protocol=QservProtocol.SQL)
-        await self._events.qserv_failure.publish(event)
-
-
-class BigQueryResultProcessor(ResultProcessor):
-    """Result processor for BigQuery backend.
-
-    Publishes BigQuery-specific metrics events.
-    """
-
-    @override
-    async def publish_success_event(
-        self,
-        *,
-        query: RunningQuery,
-        stats: UploadStats,
-        elapsed: timedelta,
-        backend_elapsed: timedelta,
-        backend_rate: float | None,
-    ) -> BigQuerySuccessEvent:
-        event = BigQuerySuccessEvent(
-            job_id=query.job.job_id,
-            username=query.job.owner,
-            elapsed=elapsed,
-            kafka_elapsed=query.start - query.queued if query.queued else None,
-            bigquery_elapsed=backend_elapsed,
-            result_elapsed=stats.elapsed,
-            submit_elapsed=query.created - query.start,
-            rows=stats.rows,
-            bigquery_size=query.status.collected_bytes,
-            bigquery_rate=backend_rate,
-            encoded_size=stats.data_bytes,
-            result_size=stats.total_bytes,
-            rate=stats.data_bytes / elapsed.total_seconds(),
-            result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
-            upload_tables=len(query.job.upload_tables),
-        )
-        await self._events.bigquery_success.publish(event)
-        return event
-
-    @override
-    async def _publish_backend_failure_event(self) -> None:
-        event = BigQueryFailureEvent()
-        await self._events.bigquery_failure.publish(event)

@@ -33,8 +33,8 @@ async def test_dispatch(
     # Check running query status and see if the count of running queries is
     # logged properly as a metric.
     await monitor.check_status()
-    assert isinstance(factory.events.qserv_executing, MockEventPublisher)
-    events = factory.events.qserv_executing.published
+    assert isinstance(factory.events.query_executing, MockEventPublisher)
+    events = factory.events.query_executing.published
     assert len(events) == 1
     data.assert_pydantic_matches(events[0], "events/executing")
 

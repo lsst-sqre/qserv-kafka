@@ -4,25 +4,24 @@ from datetime import timedelta
 from enum import StrEnum
 from typing import Any, override
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from safir.dependencies.metrics import EventMaker
-from safir.metrics import EventManager, EventPayload
+from safir.metrics import EventManager, EventPayload, EventPublisher
 
+from .config import BackendType, config
 from .models.kafka import JobErrorCode
 
 __all__ = [
-    "BaseExecutingEvent",
-    "BaseFailureEvent",
     "BaseQueryEvent",
-    "BigQueryExecutingEvent",
-    "BigQueryFailureEvent",
+    "BigQueryApiFailureEvent",
     "BigQuerySuccessEvent",
     "Events",
-    "QservExecutingEvent",
-    "QservFailureEvent",
+    "QservApiFailureEvent",
     "QservProtocol",
     "QservSuccessEvent",
     "QueryAbortEvent",
+    "QueryApiFailureEvent",
+    "QueryExecutingEvent",
     "QueryFailureEvent",
     "QuerySuccessEvent",
     "TemporaryTableUploadEvent",
@@ -39,15 +38,11 @@ class QservProtocol(StrEnum):
     SQL = "SQL"
 
 
-class BaseFailureEvent(EventPayload):
-    """Base class for backend-specific failure events.
-
-    Different backends (Qserv, BigQuery, etc.) inherit from this to create
-    backend specific failure events with appropriate fields.
-    """
+class QueryApiFailureEvent(EventPayload):
+    """Base class for retriable backend-specific failure events."""
 
 
-class QservFailureEvent(BaseFailureEvent):
+class QservApiFailureEvent(QueryApiFailureEvent):
     """Unexpected failure sending a Qserv API request.
 
     This event will be logged for each low-level API failure (either HTTP or
@@ -57,7 +52,7 @@ class QservFailureEvent(BaseFailureEvent):
     protocol: QservProtocol = Field(..., title="Protocol of Qserv API")
 
 
-class BigQueryFailureEvent(BaseFailureEvent):
+class BigQueryApiFailureEvent(QueryApiFailureEvent):
     """Unexpected failure sending a BigQuery API request.
 
     This event will be logged for each low-level API failure to the BigQuery
@@ -81,8 +76,9 @@ class BaseQueryEvent(EventPayload):
 class QuerySuccessEvent(BaseQueryEvent):
     """Base class for backend-specific query success events.
 
-    Different backends (Qserv, BigQuery, etc.) inherit from this to create
-    backend-specific success events with appropriate metrics.
+    We unfortunately decided to use different field names for the backend
+    size, elapsed, and rate metrics, so those are provided by subclasses that
+    use the same validation alias but serialize with different field names.
     """
 
     elapsed: timedelta = Field(
@@ -182,12 +178,14 @@ class QservSuccessEvent(QuerySuccessEvent):
         ...,
         title="Qserv processing time",
         description="How long it took for Qserv to process the query",
+        validation_alias=AliasChoices("qserv_elapsed", "backend_elapsed"),
     )
 
     qserv_size: int = Field(
         ...,
         title="Data size from Qserv",
         description="Result size reported by Qserv in bytes",
+        validation_alias=AliasChoices("qserv_size", "backend_size"),
     )
 
     qserv_rate: float | None = Field(
@@ -197,6 +195,7 @@ class QservSuccessEvent(QuerySuccessEvent):
             "Qserv data bytes per second for query, or null if the"
             " query completed too quickly to determine a meaningful rate"
         ),
+        validation_alias=AliasChoices("qserv_rate", "backend_rate"),
     )
 
     @override
@@ -214,12 +213,14 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
         ...,
         title="BigQuery processing time",
         description="How long it took for BigQuery to process the query",
+        validation_alias=AliasChoices("bigquery_elapsed", "backend_elapsed"),
     )
 
     bigquery_size: int = Field(
         ...,
         title="Data size from BigQuery",
         description="Result size reported by BigQuery in bytes",
+        validation_alias=AliasChoices("bigquery_size", "backend_size"),
     )
 
     bigquery_rate: float | None = Field(
@@ -229,6 +230,7 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
             "BigQuery data bytes per second for query, or null if the"
             " query completed too quickly to determine a meaningful rate"
         ),
+        validation_alias=AliasChoices("bigquery_rate", "backend_rate"),
     )
 
     @override
@@ -252,6 +254,12 @@ class QueryAbortEvent(BaseQueryEvent):
     )
 
 
+class QueryExecutingEvent(EventPayload):
+    """Base for gauge metrics for queries in progress in the backend."""
+
+    count: int = Field(..., title="Queries in progress")
+
+
 class QueryFailureEvent(BaseQueryEvent):
     """Query failed for some reason.
 
@@ -269,28 +277,6 @@ class QueryFailureEvent(BaseQueryEvent):
             " query to the eventual failure of the query"
         ),
     )
-
-
-class BaseExecutingEvent(EventPayload):
-    """Base for gauge metrics for queries in progress in the backend."""
-
-    count: int = Field(..., title="Queries in progress")
-
-
-class BigQueryExecutingEvent(BaseExecutingEvent):
-    """Queries in progress in BigQuery.
-
-    This will be logged every time BigQuery is asked for its list of running
-    queries to see if any have finished.
-    """
-
-
-class QservExecutingEvent(BaseExecutingEvent):
-    """Queries in progress in Qserv.
-
-    This will be logged every time Qserv is asked for its list of running
-    queries to see if any have finished.
-    """
 
 
 class TemporaryTableUploadEvent(BaseQueryEvent):
@@ -313,50 +299,60 @@ class TemporaryTableUploadEvent(BaseQueryEvent):
 
 
 class Events(EventMaker):
-    """Event publishers for all possible events, used by workers and frontend.
+    """Event publishers for all possible events.
+
+    We made some unfortunate historical decisions in the naming of the various
+    metrics, so this class does some rewriting to preserve those metric names
+    while exposing the same publisher names to callers.
 
     Attributes
     ----------
-    qserv_failure
-        Qserv API call failed with a protocol error.
-    bigquery_failure
-        BigQuery API call failed with a protocol error.
-    qserv_success
-        Successful Qserv query execution.
-    bigquery_success
-        Successful BigQuery query execution.
-    query_failure
-        Failed query.
     query_abort
         Aborted query.
+    query_api_failure
+        Failed API call to the backend, possibly retriable and thus not
+        indicating a failure of the whole query.
+    query_executing
+        Count of queries currently executing in the backend.
+    query_failure
+        Failed query.
+    query_success
+        Successful query execution.
+    temporary_table
+        Temporary table upload.
     """
 
     @override
     async def initialize(self, manager: EventManager) -> None:
-        self.qserv_executing = await manager.create_publisher(
-            "qserv_executing", QservExecutingEvent
-        )
-        self.bigquery_executing = await manager.create_publisher(
-            "bigquery_executing", BigQueryExecutingEvent
-        )
-        self.qserv_failure = await manager.create_publisher(
-            "qserv_failure", QservFailureEvent
-        )
-        self.bigquery_failure = await manager.create_publisher(
-            "bigquery_failure", BigQueryFailureEvent
-        )
-        self.qserv_success = await manager.create_publisher(
-            "qserv_success", QservSuccessEvent
-        )
-        self.bigquery_success = await manager.create_publisher(
-            "bigquery_success", BigQuerySuccessEvent
+        self.query_abort = await manager.create_publisher(
+            "query_abort", QueryAbortEvent
         )
         self.query_failure = await manager.create_publisher(
             "query_failure", QueryFailureEvent
         )
-        self.query_abort = await manager.create_publisher(
-            "query_abort", QueryAbortEvent
-        )
+        self.query_api_failure: EventPublisher[QueryApiFailureEvent]
+        self.query_success: EventPublisher[QuerySuccessEvent]
+        match config.backend:
+            case BackendType.QSERV:
+                self.query_api_failure = await manager.create_publisher(
+                    "qserv_failure", QservApiFailureEvent
+                )
+                self.query_executing = await manager.create_publisher(
+                    "qserv_executing", QueryExecutingEvent
+                )
+                self.query_success = await manager.create_publisher(
+                    "qserv_success", QservSuccessEvent
+                )
+            case BackendType.BIGQUERY:
+                self.query_api_failure = await manager.create_publisher(
+                    "bigquery_failure", BigQueryApiFailureEvent
+                )
+                self.query_executing = await manager.create_publisher(
+                    "bigquery_executing", QueryExecutingEvent
+                )
+                self.query_success = await manager.create_publisher(
+                    "bigquery_success", BigQuerySuccessEvent
+                )
         self.temporary_table = await manager.create_publisher(
             "temporary_table", TemporaryTableUploadEvent
         )
