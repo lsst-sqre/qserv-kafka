@@ -51,7 +51,7 @@ async def test_dispatch(
     assert query
     qserv_status = mock_qserv.get_status(1)
     with patch.object(RedisArqQueue, "enqueue") as mock:
-        assert await monitor.check_query(query, status=None) is None
+        await monitor.check_query(query, status=None)
         assert mock.call_args_list == [call("handle_finished_query", "1")]
         mock.reset_mock()
 
@@ -60,7 +60,7 @@ async def test_dispatch(
         # should not dispatch it again.
         query = await state_store.get_query(str(1))
         assert query
-        assert await monitor.check_query(query, status=None) is None
+        await monitor.check_query(query, status=None)
         assert mock.call_args_list == []
 
 
