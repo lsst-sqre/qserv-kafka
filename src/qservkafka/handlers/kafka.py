@@ -1,10 +1,4 @@
-"""Kafka router and consumers.
-
-The `kafka_router` symbol must be imported from this module, not from its true
-source at `~qservkafka.kafkarouters.kafka_router`, to ensure that the router
-is properly configured with its subscribers and publishers. Otherwise, the
-router will have no subscribers and no publishers and will thus do nothing.
-"""
+"""Kafka message handlers."""
 
 import asyncio
 from typing import Annotated
