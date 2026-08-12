@@ -6,13 +6,11 @@ from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.factory import Factory
 from qservkafka.models.kafka import JobRun, JobStatus
-from qservkafka.services.query import QueryService
 
 __all__ = ["start_and_complete_immediate"]
 
 
 async def start_and_complete_immediate(
-    query_service: QueryService,
     factory: Factory,
     job: JobRun,
     *,
@@ -22,13 +20,12 @@ async def start_and_complete_immediate(
 
     Queries found already complete on their first status check are
     dispatched to the result worker, so this also simulates that worker
-    running by calling the result processor directly, just like
-    ``handle_finished_query`` does.
+    running by calling the result processor directly while avoiding the arq
+    queue and workers, since there is no easy way to patch the arq workers to
+    not use Kafka.
 
     Parameters
     ----------
-    query_service
-        Query service to start the job with.
     factory
         Component factory to use.
     job
@@ -41,13 +38,16 @@ async def start_and_complete_immediate(
     JobStatus
         The completed status of the job.
     """
-    initial_status = await query_service.start_query(job, kafka_start)
-    assert initial_status.status == ExecutionPhase.EXECUTING
-    assert initial_status.execution_id
-
+    query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    query = await state_store.get_query(initial_status.execution_id)
+    processor = factory.create_result_processor()
+
+    status = await query_service.start_query(job, kafka_start)
+    assert status.status == ExecutionPhase.EXECUTING
+    assert status.execution_id
+    query = await state_store.get_query(status.execution_id)
     assert query
 
-    result_processor = factory.create_result_processor()
-    return await result_processor.handle_completed_query(query)
+    status = await processor.process_query(query)
+    await processor.delete_query_data(query)
+    return status

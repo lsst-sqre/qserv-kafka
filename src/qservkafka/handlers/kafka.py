@@ -36,7 +36,7 @@ async def job_cancel(
     context: Annotated[ConsumerContext, Depends(context_dependency)],
 ) -> None:
     query_service = context.factory.create_query_service()
-    await query_service.handle_cancel(message)
+    await query_service.cancel_query(message)
 
 
 def register_kafka_handlers(kafka_router: KafkaRouter) -> None:

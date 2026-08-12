@@ -12,6 +12,7 @@ from ..events import Events, TemporaryTableUploadEvent
 from ..exceptions import (
     BackendApiError,
     BackendApiFailedError,
+    QueryError,
     TableUploadWebError,
 )
 from ..models.kafka import (
@@ -77,24 +78,18 @@ class QueryService:
         self._results = result_processor
         self._rate_store = rate_limit_store
         self._gafaelfawr = gafaelfawr_storage
-        self._arq_queue = arq_queue
+        self._arq = arq_queue
         self._events = events
         self._slack_client = slack_client
         self._logger = logger
 
-    async def cancel_query(self, message: JobCancel) -> JobStatus | None:
+    async def cancel_query(self, message: JobCancel) -> None:
         """Cancel a running query.
 
         Parameters
         ----------
         message
             Request to cancel the query.
-
-        Returns
-        -------
-        JobStatus or None
-            New status of job, or `None` if there is no update or if the
-            cancel message is invalid.
         """
         logger = self._logger.bind(
             job_id=message.job_id, username=message.owner
@@ -104,7 +99,7 @@ class QueryService:
         query = await self._state.get_query(query_id)
         if not query:
             logger.warning("Cannot cancel unknown or completed job")
-            return None
+            return
 
         # Cancel the query. If this fails, check to see if it only failed
         # because the job finished and, if so, quietly do nothing and let
@@ -121,29 +116,11 @@ class QueryService:
             try:
                 status = await self._backend.get_query_status(query_id)
                 if status.status != AsyncQueryPhase.EXECUTING:
-                    return None
+                    return
             except BackendApiError:
                 pass
             await report_exception(e, self._slack_client)
             logger.exception("Failed to cancel query", error=str(e))
-            return None
-
-        # Return an appropriate status update for the job's current status.
-        return await self._results.build_query_status(query)
-
-    async def handle_cancel(self, message: JobCancel) -> None:
-        """Handle an incoming cancel request.
-
-        Cancel the running query if necessary and publish any status update.
-
-        Parameters
-        ----------
-        message
-            Request to cancel the query.
-        """
-        status = await self.cancel_query(message)
-        if status:
-            await self._results.publish_status(status)
 
     async def handle_query(
         self, job: JobRun, kafka_start: datetime | None
@@ -163,7 +140,7 @@ class QueryService:
             Time at which the Kafka message for the job was queued.
         """
         if job.upload_tables:
-            await self._arq_queue.enqueue(
+            await self._arq.enqueue(
                 "handle_upload_job",
                 job,
                 kafka_start,
@@ -230,10 +207,51 @@ class QueryService:
             await self._rate_store.end_query(job.owner)
             raise
 
-        # Update the query status and return the status message to send.
-        return await self._results.build_query_status(
-            started_query, initial=True
-        )
+        # Construct an initial status update to post to Kafka.
+        return await self._build_initial_status(started_query, logger)
+
+    async def _build_initial_status(
+        self, started_query: StartedQuery, logger: BoundLogger
+    ) -> JobStatus:
+        """Store the running query and construct the initial status.
+
+        Store the running query in Redis for further tracking and construct
+        the initial status update to return to Kafka.
+
+        Parameters
+        ----------
+        started_query
+            Started query.
+        logger
+            Logger to use.
+
+        Returns
+        -------
+        JobStatus
+            Initial status update to send to Kafka.
+        """
+        try:
+            query = await self._results.get_running_query(started_query)
+        except QueryError as e:
+            await self._results.delete_query_data(started_query)
+            job = started_query.job
+            error = e.to_job_error()
+            return JobStatus.from_error(job, error, started_query.query_id)
+
+        # If the query has already completed successfully, immediately
+        # dispatch it to the result worker and and send an executing status.
+        # Otherwise, let the result service build the status, which handles
+        # executing, aborted, and failed queries.
+        if query.status.status == AsyncQueryPhase.COMPLETED:
+            query.result_queued = True
+            await self._state.store_query(query)
+            await self._arq.enqueue("handle_finished_query", query.query_id)
+            logger.info("Dispatched immediately completed query to worker")
+            return query.to_job_status()
+        else:
+            if query.status.status == AsyncQueryPhase.EXECUTING:
+                await self._state.store_query(query)
+            return await self._results.process_query(query)
 
     def _build_invalid_request_status(
         self, job: JobRun, message: str

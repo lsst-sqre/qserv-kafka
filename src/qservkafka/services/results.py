@@ -96,90 +96,24 @@ class ResultProcessor(ABC):
         self._slack_client = slack_client
         self._logger = logger
 
-    def build_executing_status(self, query: RunningQuery) -> JobStatus:
-        """Build the status for a query that's still executing.
+    async def delete_query_data(self, query: StartedQuery) -> None:
+        """Delete stored information for the query.
+
+        Remove the query from the Kafka bridge state storage and delete
+        any uploaded temporary tables.
 
         Parameters
         ----------
         query
-            Metadata about the query.
-
-        Returns
-        -------
-        JobStatus
-            Job status to report to Kafka.
-        """
-        self._logger.debug("Query is executing", **query.to_logging_context())
-        return query.to_job_status()
-
-    async def build_query_status(
-        self, query: StartedQuery, *, initial: bool = False
-    ) -> JobStatus:
-        """Retrieve query status and convert it to a job status update.
-
-        If the query has already completed, retrieve the results if successful
-        and return an appropriate final status. Otherwise, return a status
-        message indicating that the job has started executing.
-
-        Parameters
-        ----------
-        query
-            Metadata about the query without the Qserv status.
-        initial
-            Whether this is the first status call immediately after starting
-            the job.
-
-        Returns
-        -------
-        JobStatus
-            Job status to report to Kafka.
+            Query metadata.
+        logger
+            Logger to use.
         """
         logger = self._logger.bind(**query.to_logging_context())
-
-        # Get the current query status.
-        try:
-            status = await self._backend.get_query_status(query.query_id)
-        except BackendApiError as e:
-            await report_exception(e, slack_client=self._slack_client)
-            logger.exception("Unable to get job status", error=str(e))
-            await self._delete_query_data(query, logger)
-            return JobStatus.from_error(
-                query.job, e.to_job_error(), query.query_id
-            )
-        full_query = RunningQuery.from_started_query(query, status)
-        logger = self._logger.bind(**full_query.to_logging_context())
-
-        # Based on the status, process the results.
-        match status.status:
-            case AsyncQueryPhase.ABORTED:
-                result = await self._build_aborted_status(full_query)
-            case AsyncQueryPhase.EXECUTING:
-                if initial:
-                    await self._state.store_query(full_query)
-                else:
-                    await self._state.update_status(query.query_id, status)
-                return self.build_executing_status(full_query)
-            case AsyncQueryPhase.COMPLETED if initial:
-                # The query was already completed on the first check.
-                # Dispatch to the worker pool and report the job as
-                # still executing.
-                full_query.result_queued = True
-                await self._state.store_query(full_query)
-                await self._arq.enqueue(
-                    "handle_finished_query", query.query_id
-                )
-                logger.info("Dispatched immediately completed query to worker")
-                return self.build_executing_status(full_query)
-            case AsyncQueryPhase.COMPLETED:
-                result = await self._build_completed_status(full_query)
-            case AsyncQueryPhase.FAILED:
-                result = await self._build_failed_status(full_query)
-
-        # Query was completed, either successfully or unsuccessfully. Delete
-        # any state storage needed for it, update rate limits, and return the
-        # resulting status.
-        await self._delete_query_data(query, logger)
-        return result
+        logger.debug("Cleaning up query data")
+        await self._state.delete_query(query.query_id)
+        await self._rate_store.end_query(query.job.owner)
+        await self.delete_uploaded_databases(query.job)
 
     async def delete_uploaded_databases(
         self,
@@ -217,27 +151,76 @@ class ResultProcessor(ABC):
                     database_name=database,
                 )
 
-    async def handle_completed_query(self, query: RunningQuery) -> JobStatus:
-        """Process a completed query.
-
-        This method should only be called when the caller already knows the
-        backend has indicated that the query has completed, such as from a
-        result processing worker.
+    async def get_running_query(self, query: StartedQuery) -> RunningQuery:
+        """Retrieve the query status and construct a running query record.
 
         Parameters
         ----------
         query
-            Query whose results should be processed.
+            Metadata about the query, possibly without the backend status.
+
+        Returns
+        -------
+        RunningQuery
+            Query enhanced with backend status.
+        """
+        try:
+            status = await self._backend.get_query_status(query.query_id)
+        except BackendApiError as e:
+            await report_exception(e, slack_client=self._slack_client)
+            logger = self._logger.bind(**query.to_logging_context())
+            logger.exception("Unable to get job status", error=str(e))
+            raise
+        return RunningQuery.from_started_query(query, status)
+
+    async def handle_query_exception(
+        self, query: StartedQuery, exc: QueryError
+    ) -> None:
+        """Handle a query that started but failed due to an exception.
+
+        Cleans up the job and publishes an appropriate status message to
+        Kafka.
+
+        Parameters
+        ----------
+        query
+            Failed query.
+        exc
+            Exception provoking the query failure.
+        """
+        error = exc.to_job_error()
+        status = JobStatus.from_error(query.job, error, query.query_id)
+        await self.publish_status(status)
+        await self.delete_query_data(query)
+
+    async def process_query(self, query: RunningQuery) -> JobStatus:
+        """Convert the query status to a Kafka update.
+
+        If the query has already completed, retrieve the results if successful
+        and return an appropriate final status. Otherwise, return a status
+        message indicating that the job is executing.
+
+        Parameters
+        ----------
+        query
+            Metadata about the query without the Qserv status.
 
         Returns
         -------
         JobStatus
-            Job status message to send to Kafka.
+            Job status to report to Kafka.
         """
-        logger = self._logger.bind(**query.to_logging_context())
-        status = await self._build_completed_status(query)
-        await self._delete_query_data(query, logger)
-        return status
+        match query.status.status:
+            case AsyncQueryPhase.ABORTED:
+                return await self._build_aborted_status(query)
+            case AsyncQueryPhase.EXECUTING:
+                logger = self._logger.bind(**query.to_logging_context())
+                logger.debug("Query is executing")
+                return query.to_job_status()
+            case AsyncQueryPhase.COMPLETED:
+                return await self._build_completed_status(query)
+            case AsyncQueryPhase.FAILED:
+                return await self._build_failed_status(query)
 
     async def publish_status(self, status: JobStatus) -> None:
         """Publish a status update to Kafka.
@@ -461,29 +444,6 @@ class ResultProcessor(ABC):
         await self._events.query_failure.publish(event)
         job_error = JobError(code=code, message=error)
         return query.to_job_status(ExecutionPhase.ERROR, job_error)
-
-    async def _delete_query_data(
-        self, query: StartedQuery, logger: BoundLogger
-    ) -> None:
-        """Delete stored information for the query.
-
-        Remove the query from the Kafka bridge state storage and delete
-        any uploaded temporary tables.
-
-        Parameters
-        ----------
-        query
-            Query metadata.
-        logger
-            Logger to use.
-        """
-        logger.debug(
-            "Cleaning up query data",
-            upload_table_count=len(query.job.upload_tables),
-        )
-        await self._state.delete_query(query.query_id)
-        await self._rate_store.end_query(query.job.owner)
-        await self.delete_uploaded_databases(query.job)
 
     async def _upload_results(self, query: RunningQuery) -> UploadStats:
         """Retrieve and upload the results.

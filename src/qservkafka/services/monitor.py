@@ -7,6 +7,7 @@ from structlog.stdlib import BoundLogger
 
 from ..config import config
 from ..events import BigQueryExecutingEvent, Events, QservExecutingEvent
+from ..exceptions import QueryError
 from ..models.kafka import JobStatus
 from ..models.query import AsyncQueryPhase, ProcessStatus
 from ..models.state import RunningQuery
@@ -117,25 +118,25 @@ class QueryMonitor:
             return None
 
         # Send updates to executing queries directly from the background
-        # monitoring task for faster updates, but make sure we do not
-        # accidentally process finished queries from the monitor task. We
-        # otherwise might send duplicate updates. Ensure all finished queries
-        # are dispatched to arq.
-        #
-        # Do not use build_query_status inside the first block, since it will
-        # re-retrieve the status from the backend and may at that point find
-        # that it is completed.
+        # monitoring task for faster updates, but dispatch any completed
+        # queries to a result worker.
         if status and status.status == AsyncQueryPhase.EXECUTING:
             if not query.status.is_different_than(status):
                 logger.debug("Running query has not changed state")
                 return None
             query.status.update_from(status)
-            update = self._results.build_executing_status(query)
             await self._state.update_status(query.query_id, query.status)
-            logger = self._logger.bind(**query.to_logging_context())
             logger.debug("Sending status update for running query")
-            return update
+            return query.to_job_status()
         else:
+            try:
+                query = await self._results.get_running_query(query)
+            except QueryError as e:
+                await self._results.handle_query_exception(query, e)
+                return None
+            await self._state.store_query(query)
+            if query.status.status == AsyncQueryPhase.EXECUTING:
+                return query.to_job_status()
             await self._arq.enqueue("handle_finished_query", query.query_id)
             await self._state.mark_queued_query(query.query_id)
             logger.info("Dispatched finished query to worker")

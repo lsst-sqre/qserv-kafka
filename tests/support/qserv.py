@@ -277,7 +277,7 @@ class MockQserv:
         """
         self._upload_delay = delay
 
-    def cancel(self, request: Request, *, query_id: str) -> Response:
+    async def cancel(self, request: Request, *, query_id: str) -> Response:
         """Cancel a running job.
 
         Parameters
@@ -311,6 +311,7 @@ class MockQserv:
             )
         status.status = QservQueryPhase.ABORTED
         status.last_update = datetime.now(tz=UTC)
+        await self.remove_running_query(int(query_id))
         return Response(200, json={"success": 1}, request=request)
 
     async def delete_results(

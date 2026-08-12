@@ -141,16 +141,13 @@ async def test_start_invalid(
 async def test_sql_failure(
     data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
 ) -> None:
-    query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
     job = data.read_pydantic(JobRun, "jobs/data")
 
     mock_qserv.set_immediate_success(job)
     results_sql = "SELECT * FROM nonexistent"
     with patch.object(qserv, "_query_results_sql", return_value=results_sql):
-        status = await start_and_complete_immediate(
-            query_service, factory, job
-        )
+        status = await start_and_complete_immediate(factory, job)
     data.assert_job_status_matches(status, "status/error-sql")
     assert status.error
     assert "SQL query error: " in status.error.message
@@ -171,14 +168,13 @@ async def test_upload_timeout(
 
     This should also cover a timeout in retrieving the data from SQL.
     """
-    query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
     job = data.read_pydantic(JobRun, "jobs/data")
 
     mock_qserv.set_immediate_success(job)
     mock_qserv.set_upload_delay(timedelta(seconds=2))
     monkeypatch.setattr(config, "result_timeout", timedelta(seconds=1))
-    status = await start_and_complete_immediate(query_service, factory, job)
+    status = await start_and_complete_immediate(factory, job)
     data.assert_job_status_matches(status, "status/error-upload-timeout")
     expected = "Timed out retrieving and uploading results after "
     assert status.error
@@ -190,8 +186,10 @@ async def test_upload_timeout(
 
 @pytest.mark.asyncio
 async def test_cancel_unknown(data: QservKafkaData, factory: Factory) -> None:
-    """Test canceling an unknown job."""
+    """Test canceling an unknown job.
+
+    This should quietly do nothing.
+    """
     query_service = factory.create_query_service()
     cancel = data.read_pydantic(JobCancel, "cancel/simple")
-
-    assert await query_service.cancel_query(cancel) is None
+    await query_service.cancel_query(cancel)

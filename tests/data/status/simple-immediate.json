@@ -1,0 +1,17 @@
+{
+  "executionID": "1",
+  "jobID": "uws123",
+  "metadata": {
+    "database": "dp1",
+    "query": "SELECT TOP 10 * FROM table"
+  },
+  "queryInfo": {
+    "progress": {
+      "completedChunks": 10,
+      "totalChunks": 10
+    },
+    "startTime": "<ANY>"
+  },
+  "status": "EXECUTING",
+  "timestamp": "<ANY>"
+}
