@@ -160,15 +160,6 @@ class QuerySuccessEvent(BaseQueryEvent):
         description="Number of uploaded tables provided as part of the query",
     )
 
-    immediate: bool = Field(
-        False,
-        title="Query finished immediately",
-        description=(
-            "Whether the query had already completed before its"
-            " status was first checked"
-        ),
-    )
-
     def to_logging_context(self) -> dict[str, Any]:
         """Convert relevant information to a dictionary for logging.
 

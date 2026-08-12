@@ -183,7 +183,6 @@ async def test_immediate_dispatch(
     query = await state_store.get_query("1")
     assert query
     assert query.result_queued
-    assert query.immediate
 
     result_processor = factory.create_result_processor()
     with patch.object(RedisArqQueue, "enqueue") as mock:

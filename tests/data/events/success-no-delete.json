@@ -2,7 +2,6 @@
   "delete_elapsed": null,
   "elapsed": "<ANY>",
   "encoded_size": 244,
-  "immediate": true,
   "job_id": "uws123",
   "kafka_elapsed": "<ANY>",
   "qserv_elapsed": "PT0S",

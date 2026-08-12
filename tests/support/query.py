@@ -50,4 +50,4 @@ async def start_and_complete_immediate(
     assert query
 
     result_processor = factory.create_result_processor()
-    return await result_processor.build_query_status(query)
+    return await result_processor.handle_completed_query(query)

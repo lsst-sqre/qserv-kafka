@@ -14,13 +14,12 @@ from .votable import UploadStats
 __all__ = [
     "Query",
     "RunningQuery",
+    "StartedQuery",
 ]
 
 
 class Query(BaseModel):
     """Represents a started query with no backend status."""
-
-    query_id: Annotated[str, Field(title="ID of query")]
 
     queued: Annotated[
         datetime | None, Field(title="Kafka queue time of query")
@@ -28,28 +27,56 @@ class Query(BaseModel):
 
     start: Annotated[datetime, Field(title="Receipt time of query")]
 
-    created: Annotated[datetime, Field(title="Creation time of query")]
-
     job: Annotated[JobRun, Field(title="Full job request")]
-
-    immediate: Annotated[
-        bool, Field(title="Whether query completed before first status check")
-    ] = False
 
     def to_logging_context(self) -> dict[str, str | float]:
         """Convert to variables for a structlog logging context."""
-        result: dict[str, str | float] = {
-            "job_id": self.job.job_id,
-            "backend_id": self.query_id,
-            "username": self.job.owner,
-            "start_time": format_datetime_for_logging(self.start),
-        }
+        result = self.job.to_logging_context()
         if self.queued:
             result["queued"] = format_datetime_for_logging(self.queued)
+        result["start_time"] = format_datetime_for_logging(self.start)
         return result
 
 
-class RunningQuery(Query):
+class StartedQuery(Query):
+    """Represents a query that has been dispatched to the backend."""
+
+    query_id: Annotated[str, Field(title="ID of query")]
+
+    created: Annotated[datetime, Field(title="Creation time of query")]
+
+    @classmethod
+    def from_query(cls, query: Query, query_id: str) -> Self:
+        """Convert a new query to a started query.
+
+        Parameters
+        ----------
+        query
+            New query.
+        query_id
+            Backend query ID.
+
+        Returns
+        -------
+        StartedQuery
+            Query state.
+        """
+        return cls(
+            query_id=query_id,
+            queued=query.queued,
+            start=query.start,
+            created=datetime.now(tz=UTC),
+            job=query.job,
+        )
+
+    @override
+    def to_logging_context(self) -> dict[str, str | float]:
+        results = super().to_logging_context()
+        results["backend_id"] = self.query_id
+        return results
+
+
+class RunningQuery(StartedQuery):
     """Represents a running query with a known status."""
 
     status: Annotated[QueryStatus, Field(title="Last known status")]
@@ -84,7 +111,9 @@ class RunningQuery(Query):
         return data
 
     @classmethod
-    def from_query(cls, query: Query, status: QueryStatus) -> Self:
+    def from_started_query(
+        cls, query: StartedQuery, status: QueryStatus
+    ) -> Self:
         """Convert a started query to full query state by recording status.
 
         Parameters
@@ -105,7 +134,6 @@ class RunningQuery(Query):
             start=query.start,
             created=query.created,
             job=query.job,
-            immediate=query.immediate,
             status=status,
             result_queued=False,
         )
@@ -167,10 +195,4 @@ class RunningQuery(Query):
     def to_logging_context(self) -> dict[str, Any]:
         result = super().to_logging_context()
         result.update(self.status.to_logging_context())
-        if self.status.collected_bytes:
-            match self.status.backend_type:
-                case "Qserv":
-                    result["qserv_size"] = self.status.collected_bytes
-                case "BigQuery":
-                    result["bigquery_size"] = self.status.collected_bytes
         return result

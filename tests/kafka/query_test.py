@@ -126,7 +126,7 @@ async def test_immediate(
     assert isinstance(factory.events.qserv_success, MockEventPublisher)
     events = factory.events.qserv_success.published
     assert len(events) == 1
-    assert events[0].immediate is True
+    data.assert_pydantic_matches(events[0], "events/success")
 
 
 @pytest.mark.asyncio

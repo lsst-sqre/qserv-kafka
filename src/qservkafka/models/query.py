@@ -65,6 +65,21 @@ class QueryStatusBase(BaseModel, ABC):
         ),
     ] = False
 
+    @property
+    @abstractmethod
+    def progress(self) -> ProgressMetrics | None:
+        """Backend-specific progress."""
+
+    @abstractmethod
+    def to_logging_context(self) -> dict[str, Any]:
+        """Get backend-specific fields for logging context.
+
+        Returns
+        -------
+        dict
+            Dictionary of field names to values for logging.
+        """
+
     def to_process_status(self) -> ProcessStatus:
         """Extract minimal process status for monitoring.
 
@@ -114,21 +129,6 @@ class QueryStatusBase(BaseModel, ABC):
     def update_progress_from(self, progress: ProgressMetrics | None) -> None:
         """Update progress from a `ProcessStatus`."""
 
-    @property
-    @abstractmethod
-    def progress(self) -> ProgressMetrics | None:
-        """Backend-specific progress."""
-
-    @abstractmethod
-    def to_logging_context(self) -> dict[str, Any]:
-        """Get backend-specific fields for logging context.
-
-        Returns
-        -------
-        dict
-            Dictionary of field names to values for logging.
-        """
-
 
 class QservQueryStatus(QueryStatusBase):
     """Query status for Qserv backend.
@@ -156,12 +156,6 @@ class QservQueryStatus(QueryStatusBase):
         """Chunk-based progress for Qserv queries."""
         return self.chunk_progress
 
-    @override
-    def update_progress_from(self, progress: ProgressMetrics | None) -> None:
-        """Update chunk progress from `ProcessStatus`."""
-        if isinstance(progress, ChunkProgress):
-            self.chunk_progress = progress
-
     def get_completion_percentage(self) -> float | None:
         """Get completion percentage from chunk progress.
 
@@ -179,9 +173,16 @@ class QservQueryStatus(QueryStatusBase):
         """Get Qserv-specific fields for logging context."""
         result: dict[str, Any] = {}
         if self.chunk_progress:
-            result["total_chunks"] = self.chunk_progress.total_chunks
-            result["completed_chunks"] = self.chunk_progress.completed_chunks
+            result.update(self.chunk_progress.to_logging_context())
+        if self.collected_bytes:
+            result["qserv_size"] = self.collected_bytes
         return result
+
+    @override
+    def update_progress_from(self, progress: ProgressMetrics | None) -> None:
+        """Update chunk progress from `ProcessStatus`."""
+        if isinstance(progress, ChunkProgress):
+            self.chunk_progress = progress
 
 
 class BigQueryQueryStatus(QueryStatusBase):
@@ -206,24 +207,20 @@ class BigQueryQueryStatus(QueryStatusBase):
         return self.byte_progress
 
     @override
-    def update_progress_from(self, progress: ProgressMetrics | None) -> None:
-        """Update byte progress from ProcessStatus."""
-        if isinstance(progress, ByteProgress):
-            self.byte_progress = progress
-
-    @override
     def to_logging_context(self) -> dict[str, Any]:
         """Get BigQuery-specific fields for logging context."""
         result: dict[str, Any] = {}
         if self.byte_progress:
-            result["bytes_processed"] = self.byte_progress.bytes_processed
-            result["bytes_processed_human"] = (
-                self.byte_progress.to_human_readable()
-            )
-            if self.byte_progress.bytes_billed is not None:
-                result["bytes_billed"] = self.byte_progress.bytes_billed
-            result["cached"] = self.byte_progress.cached
+            result.update(self.byte_progress.to_logging_context())
+        if self.collected_bytes:
+            result["bigquery_size"] = self.collected_bytes
         return result
+
+    @override
+    def update_progress_from(self, progress: ProgressMetrics | None) -> None:
+        """Update byte progress from ProcessStatus."""
+        if isinstance(progress, ByteProgress):
+            self.byte_progress = progress
 
 
 type QueryStatus = Annotated[
