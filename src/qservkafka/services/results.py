@@ -34,7 +34,7 @@ from ..exceptions import (
 )
 from ..models.kafka import JobError, JobErrorCode, JobRun, JobStatus
 from ..models.query import AsyncQueryPhase
-from ..models.state import Query, RunningQuery
+from ..models.state import RunningQuery, StartedQuery
 from ..models.votable import UploadStats
 from ..storage.backend import DatabaseBackend
 from ..storage.rate import RateLimitStore
@@ -113,7 +113,7 @@ class ResultProcessor(ABC):
         return query.to_job_status()
 
     async def build_query_status(
-        self, query: Query, *, initial: bool = False
+        self, query: StartedQuery, *, initial: bool = False
     ) -> JobStatus:
         """Retrieve query status and convert it to a job status update.
 
@@ -146,7 +146,7 @@ class ResultProcessor(ABC):
             return JobStatus.from_error(
                 query.job, e.to_job_error(), query.query_id
             )
-        full_query = RunningQuery.from_query(query, status)
+        full_query = RunningQuery.from_started_query(query, status)
         logger = self._logger.bind(**full_query.to_logging_context())
 
         # Based on the status, process the results.
@@ -164,7 +164,6 @@ class ResultProcessor(ABC):
                 # Dispatch to the worker pool and report the job as
                 # still executing.
                 full_query.result_queued = True
-                full_query.immediate = True
                 await self._state.store_query(full_query)
                 await self._arq.enqueue(
                     "handle_finished_query", query.query_id
@@ -181,6 +180,64 @@ class ResultProcessor(ABC):
         # resulting status.
         await self._delete_query_data(query, logger)
         return result
+
+    async def delete_uploaded_databases(
+        self,
+        job: JobRun,
+        databases: set[str] | None = None,
+    ) -> None:
+        """Delete any temporary databases created for uploaded tables.
+
+        Parameters
+        ----------
+        job
+            Job metadata.
+        databases
+            If given, the databases to delete. Otherwise, all databases in the
+            list of tables to upload will be deleted.
+        """
+        logger = self._logger.bind(**job.to_logging_context())
+        if databases is None:
+            databases = {t.database for t in job.upload_tables}
+        logger.debug(
+            "Deleting upload databases",
+            upload_table_count=len(job.upload_tables),
+            upload_table_types=[type(t).__name__ for t in job.upload_tables],
+            databases=list(databases),
+        )
+        for database in databases:
+            try:
+                await self._backend.delete_database(database)
+                logger.debug("Deleted upload database", database_name=database)
+            except BackendApiError as e:
+                await report_exception(e, slack_client=self._slack_client)
+                logger.exception(
+                    "Unable to delete temporary database, orphaning it",
+                    error=str(e),
+                    database_name=database,
+                )
+
+    async def handle_completed_query(self, query: RunningQuery) -> JobStatus:
+        """Process a completed query.
+
+        This method should only be called when the caller already knows the
+        backend has indicated that the query has completed, such as from a
+        result processing worker.
+
+        Parameters
+        ----------
+        query
+            Query whose results should be processed.
+
+        Returns
+        -------
+        JobStatus
+            Job status message to send to Kafka.
+        """
+        logger = self._logger.bind(**query.to_logging_context())
+        status = await self._build_completed_status(query)
+        await self._delete_query_data(query, logger)
+        return status
 
     async def publish_status(self, status: JobStatus) -> None:
         """Publish a status update to Kafka.
@@ -381,7 +438,6 @@ class ResultProcessor(ABC):
         JobStatus
             Status for the query.
         """
-        metadata = query.job.to_job_metadata()
         if query.status.results_too_large:
             msg = "Query failed in backend because results were too large"
             code = JobErrorCode.backend_results_too_large
@@ -395,12 +451,7 @@ class ResultProcessor(ABC):
             error = "Query failed in backend"
         if query.status.error:
             error = f"{error}: {query.status.error}"
-        self._logger.warning(
-            msg,
-            **query.to_logging_context(),
-            query=metadata.model_dump(mode="json", exclude_none=True),
-            status=query.status.model_dump(mode="json", exclude_none=True),
-        )
+        self._logger.warning(msg, **query.to_logging_context())
         event = QueryFailureEvent(
             job_id=query.job.job_id,
             username=query.job.owner,
@@ -411,46 +462,8 @@ class ResultProcessor(ABC):
         job_error = JobError(code=code, message=error)
         return query.to_job_status(ExecutionPhase.ERROR, job_error)
 
-    async def delete_upload_databases(
-        self,
-        job: JobRun,
-        logger: BoundLogger,
-        databases: set[str] | None = None,
-    ) -> None:
-        """Delete any temporary databases created for uploaded tables.
-
-        Parameters
-        ----------
-        job
-            Job metadata.
-        logger
-            Logger to use.
-        databases
-            If given, the databases to delete. Otherwise, all databases in the
-            list of tables to upload will be deleted.
-        """
-        if databases is None:
-            databases = {t.database for t in job.upload_tables}
-        logger.debug(
-            "Deleting upload databases",
-            upload_table_count=len(job.upload_tables),
-            upload_table_types=[type(t).__name__ for t in job.upload_tables],
-            databases=list(databases),
-        )
-        for database in databases:
-            try:
-                await self._backend.delete_database(database)
-                logger.debug("Deleted upload database", database_name=database)
-            except BackendApiError as e:
-                await report_exception(e, slack_client=self._slack_client)
-                logger.exception(
-                    "Unable to delete temporary database, orphaning it",
-                    error=str(e),
-                    database_name=database,
-                )
-
     async def _delete_query_data(
-        self, query: Query, logger: BoundLogger
+        self, query: StartedQuery, logger: BoundLogger
     ) -> None:
         """Delete stored information for the query.
 
@@ -470,7 +483,7 @@ class ResultProcessor(ABC):
         )
         await self._state.delete_query(query.query_id)
         await self._rate_store.end_query(query.job.owner)
-        await self.delete_upload_databases(query.job, logger)
+        await self.delete_uploaded_databases(query.job)
 
     async def _upload_results(self, query: RunningQuery) -> UploadStats:
         """Retrieve and upload the results.
@@ -605,7 +618,6 @@ class QservResultProcessor(ResultProcessor):
             qserv_rate=backend_rate,
             result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
             upload_tables=len(query.job.upload_tables),
-            immediate=query.immediate,
         )
         await self._events.qserv_success.publish(event)
         return event
@@ -650,7 +662,6 @@ class BigQueryResultProcessor(ResultProcessor):
             rate=stats.data_bytes / elapsed.total_seconds(),
             result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
             upload_tables=len(query.job.upload_tables),
-            immediate=query.immediate,
         )
         await self._events.bigquery_success.publish(event)
         return event

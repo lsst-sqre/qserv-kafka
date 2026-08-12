@@ -152,14 +152,10 @@ class QservAsyncStatusData(BaseModel):
         QservQueryStatus
             Query status for Qserv backend.
         """
-        qserv_phase = QservQueryPhase(self.status)
-        generic_phase = qserv_phase.to_generic_phase()
-        results_too_large = qserv_phase == QservQueryPhase.FAILED_LR
-
         return QservQueryStatus(
             backend_type="Qserv",
             query_id=str(self.query_id),
-            status=generic_phase,
+            status=self.status.to_generic_phase(),
             query_begin=self.query_begin,
             last_update=self.last_update,
             error=self.error,
@@ -171,7 +167,7 @@ class QservAsyncStatusData(BaseModel):
             ),
             czar_id=self.czar_id,
             czar_type=self.czar_type,
-            results_too_large=results_too_large,
+            results_too_large=self.status == QservQueryPhase.FAILED_LR,
         )
 
 

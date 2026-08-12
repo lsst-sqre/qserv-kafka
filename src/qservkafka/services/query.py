@@ -24,7 +24,7 @@ from ..models.kafka import (
     JobStatus,
 )
 from ..models.query import AsyncQueryPhase
-from ..models.state import Query
+from ..models.state import Query, StartedQuery
 from ..storage.backend import DatabaseBackend
 from ..storage.gafaelfawr import GafaelfawrStorage
 from ..storage.rate import RateLimitStore
@@ -212,19 +212,28 @@ class QueryService:
             await self._rate_store.end_query(job.owner)
             return self._build_quota_status(job, count - 1, quota.concurrent)
 
-        # Set up the logger for the query.
+        # Create the query and set up the logger for it.
+        query = Query(queued=kafka_start, job=job, start=datetime.now(tz=UTC))
         logger = self._logger.bind(
             quota=quota.to_logging_context() if quota else None,
             running=count,
-            **job.to_logging_context(),
+            **query.to_logging_context(),
         )
 
         # Start the query.
         try:
-            return await self._start_query_internal(job, kafka_start, logger)
+            started_query = await self._start_query_internal(query, logger)
+        except (BackendApiError, TableUploadWebError) as e:
+            await self._rate_store.end_query(job.owner)
+            return JobStatus.from_error(query.job, e.to_job_error())
         except Exception:
             await self._rate_store.end_query(job.owner)
             raise
+
+        # Update the query status and return the status message to send.
+        return await self._results.build_query_status(
+            started_query, initial=True
+        )
 
     def _build_invalid_request_status(
         self, job: JobRun, message: str
@@ -276,77 +285,62 @@ class QueryService:
         return JobStatus.from_error(job, error)
 
     async def _start_query_internal(
-        self, job: JobRun, kafka_start: datetime | None, logger: BoundLogger
-    ) -> JobStatus:
-        """Start a query after verification and rate limiting.
+        self, query: Query, logger: BoundLogger
+    ) -> StartedQuery:
+        """Start a query by dispatching it to the backend.
 
         Parameters
         ----------
-        job
-            Query job to start.
-        kafka_start
-            Time at which the Kafka message for the job was queued.
+        query
+            Query to start.
         logger
             Logger to use for any messages.
 
         Returns
         -------
-        JobStatus
-            Initial status of the job.
+        StartedQuery
+            Started query with backend job ID.
         """
-        start = datetime.now(tz=UTC)
-
         # Upload any tables.
         uploaded = set()
         try:
-            for upload in job.upload_tables:
+            for upload in query.job.upload_tables:
                 stats = await self._backend.upload_table(upload)
                 uploaded.add(upload.database)
                 logger.info("Uploaded table", table_name=upload.table_name)
                 event = TemporaryTableUploadEvent(
-                    job_id=job.job_id,
-                    username=job.owner,
+                    job_id=query.job.job_id,
+                    username=query.job.owner,
                     size=stats.size,
                     elapsed=stats.elapsed,
                 )
                 await self._events.temporary_table.publish(event)
         except (BackendApiError, TableUploadWebError) as e:
-            await self._rate_store.end_query(job.owner)
+            await self._rate_store.end_query(query.job.owner)
             if isinstance(e, TableUploadWebError):
                 msg = "Unable to retrieve table to upload"
             else:
                 msg = "Unable to upload table"
             await report_exception(e, self._slack_client)
             logger.exception(msg, error=str(e))
-            await self._results.delete_upload_databases(job, logger, uploaded)
-            return JobStatus.from_error(job, e.to_job_error())
+            await self._results.delete_uploaded_databases(query.job, uploaded)
+            raise
 
         # Start the query.
         query_id = None
         try:
-            query_id = await self._backend.submit_query(job)
+            query_id = await self._backend.submit_query(query.job)
         except BackendApiError as e:
-            await self._rate_store.end_query(job.owner)
+            await self._rate_store.end_query(query.job.owner)
             if isinstance(e, BackendApiFailedError):
-                logger.info(
-                    "Query rejected by backend", **e.to_logging_context()
-                )
+                logger = logger.bind(**e.to_logging_context())
+                logger.info("Query rejected by backend")
             else:
                 await report_exception(e, self._slack_client)
                 logger.exception("Unable to start query", error=str(e))
-            await self._results.delete_upload_databases(job, logger)
-            return JobStatus.from_error(job, e.to_job_error())
+            await self._results.delete_uploaded_databases(query.job)
+            raise
 
-        # Record the time at which the query was started.
-        created = datetime.now(tz=UTC)
+        # Return the corresponding StartedQuery object.
         logger.info("Started query", backend_id=query_id)
-
-        # Analyze the initial status and return it.
-        query = Query(
-            query_id=query_id,
-            queued=kafka_start,
-            job=job,
-            start=start,
-            created=created,
-        )
-        return await self._results.build_query_status(query, initial=True)
+        return StartedQuery.from_query(query, query_id)

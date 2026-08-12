@@ -80,6 +80,19 @@ class ChunkProgress(BaseModel):
             or self.completed_chunks != other.completed_chunks
         )
 
+    def to_logging_context(self) -> dict[str, str | float]:
+        """Get progress fields for logging context.
+
+        Returns
+        -------
+        dict
+            Dictionary of field names to values for logging.
+        """
+        return {
+            "total_chunks": self.total_chunks,
+            "completed_chunks": self.completed_chunks,
+        }
+
 
 class ByteProgress(BaseModel):
     """BigQuery-style byte-based progress reporting.
@@ -128,6 +141,23 @@ class ByteProgress(BaseModel):
 
     def to_human_readable(self) -> str:
         return humanize.naturalsize(self.bytes_processed, binary=True)
+
+    def to_logging_context(self) -> dict[str, str | float]:
+        """Get progress fields for logging context.
+
+        Returns
+        -------
+        dict
+            Dictionary of field names to values for logging.
+        """
+        result: dict[str, str | float] = {
+            "bytes_processed": self.bytes_processed,
+            "bytes_processed_human": self.to_human_readable(),
+        }
+        if self.bytes_billed is not None:
+            result["bytes_billed"] = self.bytes_billed
+        result["cached"] = self.cached
+        return result
 
     def is_different_than(self, other: ProgressMetrics) -> bool:
         """Check if progress has changed.
