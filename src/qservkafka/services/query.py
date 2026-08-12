@@ -83,33 +83,25 @@ class QueryService:
         self._slack_client = slack_client
         self._logger = logger
 
-    async def cancel_query(self, message: JobCancel) -> None:
+    async def cancel_query(self, cancel: JobCancel) -> None:
         """Cancel a running query.
 
         Parameters
         ----------
-        message
+        cancel
             Request to cancel the query.
         """
-        logger = self._logger.bind(
-            job_id=message.job_id, username=message.owner
-        )
-        query_id = message.execution_id
-        logger = logger.bind(backend_id=query_id)
+        logger = self._logger.bind(**cancel.to_logging_context())
+        query_id = cancel.execution_id
         query = await self._state.get_query(query_id)
         if not query:
-            logger.warning("Cannot cancel unknown or completed job")
+            logger.info("Ignoring cancel of unknown or completed job")
             return
 
         # Cancel the query. If this fails, check to see if it only failed
-        # because the job finished and, if so, quietly do nothing and let
-        # normal result processing pick up the completion since it's too late
-        # to cancel.
-        #
-        # There's not much we can do with exceptions other than log them,
-        # since we don't have a way of returning a cancelation error to the
-        # TAP server, so we send a status update matching the last known
-        # status in that case.
+        # because the job finished and, if so, quietly do nothing. Otherwise,
+        # log an exception, which is the best we can do since we don't have a
+        # way of returning a cancelation error to the TAP server.
         try:
             await self._backend.cancel_query(query_id)
         except BackendApiError as e:

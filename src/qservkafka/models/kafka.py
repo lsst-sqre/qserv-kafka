@@ -1,4 +1,9 @@
-"""Models for Kafka messages."""
+"""Models for Kafka messages.
+
+The models starting with ``Job`` are used to serialize and deserialize Kafka
+messages. Internally, they are converted or wrapped in models starting with
+``Query``.
+"""
 
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
@@ -90,6 +95,14 @@ class JobCancel(BaseModel):
             validation_alias="ownerID",
         ),
     ]
+
+    def to_logging_context(self) -> dict[str, Any]:
+        """Convert job status details to a logging context."""
+        return {
+            "job_id": self.job_id,
+            "username": self.owner,
+            "backend_id": self.execution_id,
+        }
 
 
 class JobResultEnvelope(BaseModel):
