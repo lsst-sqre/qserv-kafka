@@ -8,7 +8,7 @@ from safir.datetime import format_datetime_for_logging
 from vo_models.uws.types import ExecutionPhase
 
 from .kafka import JobError, JobQueryInfo, JobResultInfo, JobRun, JobStatus
-from .query import QueryStatus
+from .query import AsyncQueryPhase, QueryStatus
 from .votable import UploadStats
 
 __all__ = [
@@ -68,6 +68,10 @@ class StartedQuery(Query):
             created=datetime.now(tz=UTC),
             job=query.job,
         )
+
+    def has_results(self) -> bool:
+        """Whether this query has results that may need to be deleted."""
+        return False
 
     @override
     def to_logging_context(self) -> dict[str, str | float]:
@@ -137,6 +141,11 @@ class RunningQuery(StartedQuery):
             status=status,
             result_queued=False,
         )
+
+    @override
+    def has_results(self) -> bool:
+        """Whether this query has results that may need to be deleted."""
+        return self.status.status == AsyncQueryPhase.COMPLETED
 
     def to_completed_job_status(self, stats: UploadStats) -> JobStatus:
         """Construct a Kafka job status message for a completed query."""

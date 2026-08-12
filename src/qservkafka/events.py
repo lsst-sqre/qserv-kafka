@@ -117,15 +117,6 @@ class QuerySuccessEvent(BaseQueryEvent):
         ),
     )
 
-    delete_elapsed: timedelta | None = Field(
-        None,
-        title="Job deletion time",
-        description=(
-            "How long it took to delete the query from the backend after"
-            " successful completion"
-        ),
-    )
-
     rows: int = Field(
         ..., title="Row count", description="Number of rows in the output"
     )
@@ -176,8 +167,6 @@ class QuerySuccessEvent(BaseQueryEvent):
             result["kafka_elapsed"] = self._to_seconds(self.kafka_elapsed)
         result["result_elapsed"] = self._to_seconds(self.result_elapsed)
         result["submit_elapsed"] = self._to_seconds(self.submit_elapsed)
-        if self.delete_elapsed:
-            result["delete_elapsed"] = self._to_seconds(self.delete_elapsed)
         return result
 
     @staticmethod
