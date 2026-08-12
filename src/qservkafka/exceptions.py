@@ -145,10 +145,7 @@ class BackendNotImplementedError(BackendApiError):
 
 
 class QservApiError(BackendApiError):
-    """Base class for failures talking to the Qserv API.
-
-    Deprecated: Use BackendApiError for generic handling.
-    """
+    """Base class for failures talking to the Qserv API."""
 
 
 class BigQueryApiError(BackendApiError):
@@ -166,6 +163,26 @@ class BigQueryApiError(BackendApiError):
     error
         Error message.
     """
+
+    @classmethod
+    def from_exception(
+        cls,
+        method: str,
+        project: str,
+        exc: Exception,
+    ) -> Self:
+        """Create an exception from a caught exception.
+
+        Parameters
+        ----------
+        method
+            BigQuery method name.
+        project
+            GCP project ID.
+        exc
+            Underlying exception.
+        """
+        return cls(method=method, project=project, error=str(exc))
 
     def __init__(self, method: str, project: str, error: str) -> None:
         super().__init__(f"BigQuery error: {error}")
@@ -192,26 +209,6 @@ class BigQueryApiError(BackendApiError):
         result["method"] = self.method
         result["project"] = self.project
         return result
-
-    @classmethod
-    def from_exception(
-        cls,
-        method: str,
-        project: str,
-        exc: Exception,
-    ) -> Self:
-        """Create an exception from a caught exception.
-
-        Parameters
-        ----------
-        method
-            BigQuery method name.
-        project
-            GCP project ID.
-        exc
-            Underlying exception.
-        """
-        return cls(method=method, project=project, error=str(exc))
 
 
 class BigQueryApiFailedError(BigQueryApiError, BackendApiFailedError):

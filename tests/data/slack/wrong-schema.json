@@ -22,6 +22,11 @@
             "verbatim": true
           },
           {
+            "text": "*User*\nusername",
+            "type": "mrkdwn",
+            "verbatim": true
+          },
+          {
             "text": "*Column*\nh",
             "type": "mrkdwn",
             "verbatim": true
