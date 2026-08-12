@@ -111,9 +111,20 @@ class ResultProcessor(ABC):
         """
         logger = self._logger.bind(**query.to_logging_context())
         logger.debug("Cleaning up query data")
-        await self._state.delete_query(query.query_id)
+
+        # Remove internal tracking. Everything after this point will not be
+        # retried on failure, just orphaned.
         await self._rate_store.end_query(query.job.owner)
+        await self._state.delete_query(query.query_id)
+
+        # Delete the uploaded tables and the results if configured to do so.
         await self.delete_uploaded_databases(query.job)
+        if query.has_results() and config.qserv_delete_queries:
+            try:
+                await self._backend.delete_result(query.query_id)
+            except BackendApiError as e:
+                await report_exception(e, slack_client=self._slack_client)
+                logger.exception("Cannot delete results")
 
     async def delete_uploaded_databases(
         self,
@@ -245,7 +256,6 @@ class ResultProcessor(ABC):
         elapsed: timedelta,
         backend_elapsed: timedelta,
         backend_rate: float | None,
-        delete_elapsed: timedelta | None,
     ) -> QuerySuccessEvent:
         """Publish backend-specific success event.
 
@@ -261,8 +271,6 @@ class ResultProcessor(ABC):
             Time spent in backend.
         backend_rate
             Backend processing rate (bytes/sec).
-        delete_elapsed
-            Time spent deleting results.
 
         Returns
         -------
@@ -323,19 +331,6 @@ class ResultProcessor(ABC):
         except QueryError as e:
             return await self._build_exception_status(query, e)
 
-        # Delete the results if configured to do so.
-        delete_elapsed = None
-        if config.qserv_delete_queries:
-            delete_start = datetime.now(tz=UTC)
-            try:
-                await self._backend.delete_result(query.query_id)
-                delete_elapsed = datetime.now(tz=UTC) - delete_start
-            except BackendApiError as e:
-                delete_elapsed = None
-                await report_exception(e, slack_client=self._slack_client)
-                logger.exception("Cannot delete results")
-            delete_elapsed = datetime.now(tz=UTC) - delete_start
-
         # Send a metrics event for the job completion and log it.
         now = datetime.now(tz=UTC)
         backend_end = query.status.last_update or now
@@ -352,7 +347,6 @@ class ResultProcessor(ABC):
             elapsed=elapsed,
             backend_elapsed=backend_elapsed,
             backend_rate=backend_rate,
-            delete_elapsed=delete_elapsed,
         )
         logger.info(
             "Job complete and results uploaded", **event.to_logging_context()
@@ -559,7 +553,6 @@ class QservResultProcessor(ResultProcessor):
         elapsed: timedelta,
         backend_elapsed: timedelta,
         backend_rate: float | None,
-        delete_elapsed: timedelta | None,
     ) -> QservSuccessEvent:
         event = QservSuccessEvent(
             job_id=query.job.job_id,
@@ -569,7 +562,6 @@ class QservResultProcessor(ResultProcessor):
             qserv_elapsed=backend_elapsed,
             result_elapsed=stats.elapsed,
             submit_elapsed=query.created - query.start,
-            delete_elapsed=delete_elapsed,
             rows=stats.rows,
             qserv_size=query.status.collected_bytes,
             encoded_size=stats.data_bytes,
@@ -603,7 +595,6 @@ class BigQueryResultProcessor(ResultProcessor):
         elapsed: timedelta,
         backend_elapsed: timedelta,
         backend_rate: float | None,
-        delete_elapsed: timedelta | None,
     ) -> BigQuerySuccessEvent:
         event = BigQuerySuccessEvent(
             job_id=query.job.job_id,
@@ -613,7 +604,6 @@ class BigQueryResultProcessor(ResultProcessor):
             bigquery_elapsed=backend_elapsed,
             result_elapsed=stats.elapsed,
             submit_elapsed=query.created - query.start,
-            delete_elapsed=delete_elapsed,
             rows=stats.rows,
             bigquery_size=query.status.collected_bytes,
             bigquery_rate=backend_rate,
