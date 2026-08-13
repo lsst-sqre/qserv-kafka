@@ -67,7 +67,7 @@ async def test_status_errors(
     job = data.read_pydantic(JobRun, "jobs/simple")
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    now = datetime.now(tz=UTC).replace(microsecond=0)
+    start = datetime.now(tz=UTC).replace(microsecond=0)
 
     # HTTP failure getting the job status.
     mock_qserv.set_status_response(Response(500))
@@ -98,30 +98,32 @@ async def test_status_errors(
 
     # Return a normal reply from the status endpoint but mark the job as being
     # in an error state.
-    start = datetime.now(tz=UTC).replace(microsecond=0)
+    now = datetime.now(tz=UTC).replace(microsecond=0)
     error_json = data.read_json("qserv/error-status")
-    error_json["query_begin"] = now.isoformat(timespec="seconds")
-    error_json["last_update"] = start.isoformat(timespec="seconds")
+    error_json["query_begin"] = start.isoformat(timespec="seconds")
+    error_json["last_update"] = now.isoformat(timespec="seconds")
     mock_qserv.set_status_response(Response(200, json=error_json))
     await query_service.handle_query(job)
     status = read_status_message(factory)
-    now = datetime.now(tz=UTC)
     data.assert_job_status_matches(
         status, "status/error-status-partial", execution_id="4"
     )
+    now = datetime.now(tz=UTC)
     assert status.query_info
     assert status.query_info.start_time <= now
     assert status.query_info.end_time
     assert start <= status.query_info.end_time <= now
 
-    # This last case is the only case where a metrics event should have been
-    # published. We do not publish metrics events (at least at present) when
-    # starting the query fails.
+    # Each of these should have published a metrics event for the job failure.
     assert isinstance(factory.events.query_failure, MockEventPublisher)
     events = factory.events.query_failure.published
-    assert len(events) == 1
-    data.assert_pydantic_matches(events[0], "events/error")
-    assert timedelta(seconds=0) < events[0].elapsed <= (now - start)
+    assert len(events) == 4
+    data.assert_pydantic_matches(events[0], "events/error-http")
+    data.assert_pydantic_matches(events[1], "events/error-invalid")
+    data.assert_pydantic_matches(events[2], "events/error-backend")
+    data.assert_pydantic_matches(events[3], "events/error-failed")
+    for event in events:
+        assert timedelta(seconds=0) < event.elapsed <= (now - start)
 
     assert await state_store.get_active_queries() == set()
 

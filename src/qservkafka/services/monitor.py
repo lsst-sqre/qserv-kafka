@@ -14,6 +14,7 @@ from ..storage.backend import DatabaseBackend
 from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from .results import ResultProcessor
+from .status import StatusPublisher
 
 __all__ = ["QueryMonitor"]
 
@@ -23,6 +24,8 @@ class QueryMonitor:
 
     Parameters
     ----------
+    status_publisher
+        Publisher for status events and Kafka messages.
     result_processor
         Service used to process results.
     backend
@@ -42,6 +45,7 @@ class QueryMonitor:
     def __init__(
         self,
         *,
+        status_publisher: StatusPublisher,
         result_processor: ResultProcessor,
         backend: DatabaseBackend,
         arq_queue: ArqQueue,
@@ -50,6 +54,7 @@ class QueryMonitor:
         events: Events,
         logger: BoundLogger,
     ) -> None:
+        self._status = status_publisher
         self._results = result_processor
         self._backend = backend
         self._arq = arq_queue
@@ -119,16 +124,17 @@ class QueryMonitor:
             query.status.update_from(status)
             await self._state.update_status(query.query_id, query.status)
             logger.debug("Sending status update for running query")
-            await self._results.publish_status(query.to_job_status())
+            await self._status.publish_executing(query)
         else:
             try:
                 query = await self._results.get_running_query(query)
             except QueryError as e:
-                await self._results.handle_query_exception(query, e)
+                await self._status.publish_exception(query, e)
+                await self._results.delete_query_data(query)
                 return
             await self._state.store_query(query)
             if query.status.status == AsyncQueryPhase.EXECUTING:
-                await self._results.publish_status(query.to_job_status())
+                await self._status.publish_executing(query)
                 return
             await self._arq.enqueue("finish_query", query.query_id)
             await self._state.mark_queued_query(query.query_id)

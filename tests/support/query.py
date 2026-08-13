@@ -52,6 +52,5 @@ async def start_and_complete_immediate(
     query = await state_store.get_query(status.execution_id)
     assert query
 
-    status = await processor.process_query(query)
-    await processor.delete_query_data(query)
-    return status
+    await processor.process_query(query)
+    return read_status_message(factory)
