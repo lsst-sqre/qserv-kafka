@@ -27,5 +27,5 @@ async def finish_query(ctx: dict[Any, Any], query_id: str) -> None:
     if not query:
         logger.warning("Query state not found, skipping", query_id=query_id)
         return
-    processor = factory.create_result_processor()
-    await processor.process_query(query)
+    query_service = factory.create_query_service()
+    await query_service.update_query(query)
