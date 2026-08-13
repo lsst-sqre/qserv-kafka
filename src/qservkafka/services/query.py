@@ -16,12 +16,9 @@ from ..exceptions import (
 )
 from ..models.kafka import (
     JobCancel,
-    JobError,
-    JobErrorCode,
     JobResultSerialization,
     JobResultType,
     JobRun,
-    JobStatus,
 )
 from ..models.query import AsyncQueryPhase
 from ..models.state import Query, StartedQuery
@@ -30,6 +27,7 @@ from ..storage.gafaelfawr import GafaelfawrStorage
 from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from .results import ResultProcessor
+from .status import StatusPublisher
 
 __all__ = ["QueryService"]
 
@@ -39,6 +37,8 @@ class QueryService:
 
     Parameters
     ----------
+    status_publisher
+        Publisher for status events and Kafka messages.
     backend
         Database backend client (Qserv, BigQuery, etc.).
     state_store
@@ -65,6 +65,7 @@ class QueryService:
     def __init__(
         self,
         *,
+        status_publisher: StatusPublisher,
         backend: DatabaseBackend,
         state_store: QueryStateStore,
         result_processor: ResultProcessor,
@@ -76,6 +77,7 @@ class QueryService:
         slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
     ) -> None:
+        self._status = status_publisher
         self._backend = backend
         self._state = state_store
         self._results = result_processor
@@ -142,16 +144,16 @@ class QueryService:
         if result_type == JobResultType.VOTable:
             if not serialization:
                 msg = "VOTable format requires serialization"
-                await self._publish_invalid_request_status(job, msg)
+                await self._status.publish_invalid_request(job, msg)
                 return
             if serialization != JobResultSerialization.BINARY2:
                 msg = f"{serialization} serialization not supported"
-                await self._publish_invalid_request_status(job, msg)
+                await self._status.publish_invalid_request(job, msg)
                 return
         for column in job.result_format.column_types:
             if not column.is_string() and column.arraysize is not None:
                 m = "arraysize only supported for char and unicodeChar fields"
-                await self._publish_invalid_request_status(job, m)
+                await self._status.publish_invalid_request(job, m)
                 return
 
         # Jobs with table uploads are dispatched to an arq worker instead,
@@ -179,7 +181,7 @@ class QueryService:
         count = await self._rate_store.start_query(job.owner)
         if quota and quota.concurrent < count:
             await self._rate_store.end_query(job.owner)
-            await self._publish_quota_status(job, count - 1, quota.concurrent)
+            await self._status.publish_quota_exceeded(job, count - 1, quota)
             return
 
         # Set up the logger.
@@ -192,10 +194,9 @@ class QueryService:
         # Start the query.
         try:
             started_query = await self._start_query_internal(query, logger)
-        except (BackendApiError, TableUploadWebError) as e:
+        except QueryError as e:
             await self._rate_store.end_query(job.owner)
-            status = JobStatus.from_error(job, e.to_job_error())
-            await self._results.publish_status(status)
+            await self._status.publish_start_exception(query, e)
             return
         except Exception:
             await self._rate_store.end_query(job.owner)
@@ -223,10 +224,7 @@ class QueryService:
             query = await self._results.get_running_query(started_query)
         except QueryError as e:
             await self._results.delete_query_data(started_query)
-            job = started_query.job
-            error = e.to_job_error()
-            status = JobStatus.from_error(job, error, started_query.query_id)
-            await self._results.publish_status(status)
+            await self._status.publish_exception(started_query, e)
             return
 
         # If the query has already completed successfully, immediately
@@ -238,53 +236,11 @@ class QueryService:
             await self._state.store_query(query)
             await self._arq_slow.enqueue("finish_query", query.query_id)
             logger.info("Dispatched immediately completed query to worker")
-            status = query.to_job_status()
+            await self._status.publish_executing(query)
         else:
             if query.status.status == AsyncQueryPhase.EXECUTING:
                 await self._state.store_query(query)
-            status = await self._results.process_query(query)
-        await self._results.publish_status(status)
-
-    async def _publish_invalid_request_status(
-        self, job: JobRun, message: str
-    ) -> None:
-        """Build a status reply for an invalid request.
-
-        Parameters
-        ----------
-        job
-            Initial query request.
-        message
-            Error message.
-        """
-        self._logger.warning(message, **job.to_logging_context())
-        error = JobError(code=JobErrorCode.invalid_request, message=message)
-        status = JobStatus.from_error(job, error)
-        await self._results.publish_status(status)
-
-    async def _publish_quota_status(
-        self, job: JobRun, running: int, quota: int
-    ) -> None:
-        """Build a status reply for an over-quota request.
-
-        Parameters
-        ----------
-        job
-            Initial query request.
-        running
-            Number of running queries.
-        quota
-            Maximum allowed number of concurrent running queries.
-        """
-        self._logger.info(
-            "Query rejected due to quota",
-            quota={"concurrent": quota},
-            running=running,
-            **job.to_logging_context(),
-        )
-        error = JobError.for_quota_exceeded(running, quota)
-        status = JobStatus.from_error(job, error)
-        await self._results.publish_status(status)
+            await self._results.process_query(query)
 
     async def _start_query_internal(
         self, query: Query, logger: BoundLogger

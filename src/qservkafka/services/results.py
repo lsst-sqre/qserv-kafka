@@ -4,20 +4,12 @@ import asyncio
 from dataclasses import asdict
 from datetime import UTC, datetime
 
-from faststream.kafka.publisher import DefaultPublisher
 from safir.sentry import report_exception
 from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
-from vo_models.uws.types import ExecutionPhase
 
-from ..config import BackendType, config
-from ..events import (
-    BigQuerySuccessEvent,
-    Events,
-    QservSuccessEvent,
-    QueryAbortEvent,
-    QueryFailureEvent,
-)
+from ..config import config
+from ..events import Events
 from ..exceptions import (
     BackendApiError,
     BackendApiTransientError,
@@ -25,7 +17,7 @@ from ..exceptions import (
     UploadTimeoutError,
     UploadWebError,
 )
-from ..models.kafka import JobError, JobErrorCode, JobRun, JobStatus
+from ..models.kafka import JobRun
 from ..models.query import AsyncQueryPhase
 from ..models.state import RunningQuery, StartedQuery
 from ..models.votable import UploadStats
@@ -33,6 +25,7 @@ from ..storage.backend import DatabaseBackend
 from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from ..storage.votable import VOTableWriter
+from .status import StatusPublisher
 
 __all__ = ["ResultProcessor"]
 
@@ -42,14 +35,14 @@ class ResultProcessor:
 
     Parameters
     ----------
+    status_publisher
+        Publisher for status events and Kafka messages.
     backend
         Database backend client (Qserv, BigQuery, etc.).
     state_store
         Storage for query state.
     votable_writer
         Writer for VOTable output.
-    kafka_publisher
-        Broker to use to publish status messages.
     rate_limit_store
         Storage for rate limiting.
     events
@@ -63,32 +56,23 @@ class ResultProcessor:
     def __init__(
         self,
         *,
+        status_publisher: StatusPublisher,
         backend: DatabaseBackend,
         state_store: QueryStateStore,
         votable_writer: VOTableWriter,
-        kafka_publisher: DefaultPublisher,
         rate_limit_store: RateLimitStore,
         events: Events,
         slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
     ) -> None:
+        self._status = status_publisher
         self._backend = backend
         self._state = state_store
         self._votable = votable_writer
-        self._kafka = kafka_publisher
         self._rate_store = rate_limit_store
         self._events = events
         self._slack_client = slack_client
         self._logger = logger
-
-        self._success_event_class: type[
-            BigQuerySuccessEvent | QservSuccessEvent
-        ]
-        match config.backend:
-            case BackendType.QSERV:
-                self._success_event_class = QservSuccessEvent
-            case BackendType.BIGQUERY:
-                self._success_event_class = BigQuerySuccessEvent
 
     async def delete_query_data(self, query: StartedQuery) -> None:
         """Delete stored information for the query.
@@ -181,28 +165,8 @@ class ResultProcessor:
             raise
         return RunningQuery.from_started_query(query, status)
 
-    async def handle_query_exception(
-        self, query: StartedQuery, exc: QueryError
-    ) -> None:
-        """Handle a query that started but failed due to an exception.
-
-        Cleans up the job and publishes an appropriate status message to
-        Kafka.
-
-        Parameters
-        ----------
-        query
-            Failed query.
-        exc
-            Exception provoking the query failure.
-        """
-        error = exc.to_job_error()
-        status = JobStatus.from_error(query.job, error, query.query_id)
-        await self.publish_status(status)
-        await self.delete_query_data(query)
-
-    async def process_query(self, query: RunningQuery) -> JobStatus:
-        """Convert the query status to a Kafka update.
+    async def process_query(self, query: RunningQuery) -> None:
+        """Publish a Kafka status message for the query.
 
         If the query has already completed, retrieve the results if successful
         and return an appropriate final status. Otherwise, return a status
@@ -218,198 +182,28 @@ class ResultProcessor:
         JobStatus
             Job status to report to Kafka.
         """
+        logger = self._logger.bind(**query.to_logging_context())
         match query.status.status:
             case AsyncQueryPhase.ABORTED:
-                return await self._build_aborted_status(query)
+                await self._status.publish_aborted(query)
             case AsyncQueryPhase.EXECUTING:
-                logger = self._logger.bind(**query.to_logging_context())
-                logger.debug("Query is executing")
-                return query.to_job_status()
+                await self._status.publish_executing(query)
+                return
             case AsyncQueryPhase.COMPLETED:
-                return await self._build_completed_status(query)
+                try:
+                    stats = await self._upload_results_retry(query, logger)
+                except QueryError as e:
+                    await report_exception(e, slack_client=self._slack_client)
+                    logger.exception(e.description, **e.to_logging_context())
+                    await self._status.publish_exception(query, e)
+                else:
+                    await self._status.publish_completed(query, stats)
             case AsyncQueryPhase.FAILED:
-                return await self._build_failed_status(query)
+                await self._status.publish_failed(query)
 
-    async def publish_status(self, status: JobStatus) -> None:
-        """Publish a status update to Kafka.
-
-        Parameters
-        ----------
-        status
-            Status update to publish.
-        """
-        await self._kafka.publish(
-            status.model_dump(mode="json"),
-            headers={"Content-Type": "application/json"},
-        )
-
-    async def _build_aborted_status(self, query: RunningQuery) -> JobStatus:
-        """Construct the status for an aborted job.
-
-        Parameters
-        ----------
-        query
-            Metadata about query.
-
-        Returns
-        -------
-        JobStatus
-            Status for the query.
-        """
-        self._logger.info("Job aborted", **query.to_logging_context())
-        timestamp = query.status.last_update or datetime.now(tz=UTC)
-        event = QueryAbortEvent(
-            job_id=query.job.job_id,
-            username=query.job.owner,
-            elapsed=timestamp - query.start,
-        )
-        await self._events.query_abort.publish(event)
-        return query.to_job_status(ExecutionPhase.ABORTED)
-
-    async def _build_completed_status(self, query: RunningQuery) -> JobStatus:
-        """Retrieve results and construct status for a completed job.
-
-        This method is responsible for retrieving the results from the backend,
-        encoding them, and uploading the resulting VOTable to the provided
-        URL, as well as constructing the status response.
-
-        Parameters
-        ----------
-        query
-            Metadata about the query.
-
-        Returns
-        -------
-        JobStatus
-            Status for the query.
-        """
-        logger = self._logger.bind(**query.to_logging_context())
-        logger.debug("Processing job completion")
-
-        # Retrieve and upload the results.
-        try:
-            stats = await self._upload_results_with_retry(query, logger)
-        except QueryError as e:
-            e.user = query.job.owner
-            return await self._build_exception_status(query, e)
-
-        # Send a metrics event for the job completion and log it.
-        now = datetime.now(tz=UTC)
-        backend_end = query.status.last_update or now
-        backend_elapsed = backend_end - query.status.query_begin
-        backend_elapsed_sec = backend_elapsed.total_seconds()
-        if backend_elapsed_sec > 0:
-            backend_rate = query.status.collected_bytes / backend_elapsed_sec
-        else:
-            backend_rate = None
-        elapsed = now - (query.queued or query.start)
-        event = self._success_event_class(
-            job_id=query.job.job_id,
-            username=query.job.owner,
-            elapsed=elapsed,
-            kafka_elapsed=query.start - query.queued if query.queued else None,
-            result_elapsed=stats.elapsed,
-            submit_elapsed=query.created - query.start,
-            rows=stats.rows,
-            encoded_size=stats.data_bytes,
-            result_size=stats.total_bytes,
-            rate=stats.data_bytes / elapsed.total_seconds(),
-            result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
-            upload_tables=len(query.job.upload_tables),
-            backend_elapsed=backend_elapsed,
-            backend_size=query.status.collected_bytes,
-            backend_rate=backend_rate,
-        )
-        await self._events.query_success.publish(event)
-        logger = logger.bind(**event.to_logging_context())
-        logger.info("Job complete and results uploaded")
-
-        # Return the resulting status.
-        return query.to_completed_job_status(stats)
-
-    async def _build_exception_status(
-        self, query: RunningQuery, exc: QueryError
-    ) -> JobStatus:
-        """Construct the job status for an exception.
-
-        This method may only be called from inside an exception handler.
-
-        Parameters
-        ----------
-        query
-            Query metadata.
-        exc
-            Exception that caused the job to fail.
-
-        Returns
-        -------
-        JobStatus
-            Status for the query.
-        """
-        logger = self._logger.bind(
-            **query.to_logging_context(), **exc.to_logging_context()
-        )
-        now = datetime.now(tz=UTC)
-        elapsed = now - query.start
-
-        # Analyze the exception. _build_exception_status is only called inside
-        # an exception handler, so suppress the Ruff diagnostics since Ruff
-        # has no way of knowing that.
-        await report_exception(exc, slack_client=self._slack_client)
-        logger.exception(exc.description)  # noqa: LOG004
-        error = exc.to_job_error()
-
-        # Send a metrics event for the failure.
-        event = QueryFailureEvent(
-            job_id=query.job.job_id,
-            username=query.job.owner,
-            error=error.code,
-            elapsed=elapsed,
-        )
-        await self._events.query_failure.publish(event)
-
-        # Return the job status to send to Kafka.
-        return JobStatus.from_error(query.job, error, query.query_id)
-
-    async def _build_failed_status(self, query: RunningQuery) -> JobStatus:
-        """Build the status for a failed job.
-
-        Currently, Qserv has no way of reporting an error, so we have to
-        synthesize an error.
-
-        Parameters
-        ----------
-        query
-            Query metadata.
-
-        Returns
-        -------
-        JobStatus
-            Status for the query.
-        """
-        if query.status.results_too_large:
-            msg = "Query failed in backend because results were too large"
-            code = JobErrorCode.backend_results_too_large
-            error = (
-                "Query results are too large to return; please narrow your"
-                " query and try again"
-            )
-        else:
-            msg = "Backend reported query failure"
-            code = JobErrorCode.backend_error
-            error = "Query failed in backend"
-        if query.status.error:
-            error = f"{error}: {query.status.error}"
-        self._logger.warning(msg, **query.to_logging_context())
-        event = QueryFailureEvent(
-            job_id=query.job.job_id,
-            username=query.job.owner,
-            error=code,
-            elapsed=datetime.now(tz=UTC) - query.start,
-        )
-        await self._events.query_failure.publish(event)
-        job_error = JobError(code=code, message=error)
-        return query.to_job_status(ExecutionPhase.ERROR, job_error)
+        # If the query was still executing, the code above returned early, so
+        # the query completed in some fashion and can be cleaned up.
+        await self.delete_query_data(query)
 
     async def _upload_results(self, query: RunningQuery) -> UploadStats:
         """Retrieve and upload the results.
@@ -452,7 +246,7 @@ class ResultProcessor:
             elapsed = datetime.now(tz=UTC) - start
             raise UploadTimeoutError(elapsed) from e
 
-    async def _upload_results_with_retry(
+    async def _upload_results_retry(
         self, query: RunningQuery, logger: BoundLogger
     ) -> UploadStats:
         """Retrieve and upload the results, with retries.
@@ -485,6 +279,7 @@ class ResultProcessor:
             Raised if the processing and upload did not complete within the
             configured timeout.
         """
+        logger.debug("Processing job completion")
         for _ in range(1, config.backend_retry_count):
             try:
                 return await self._upload_results(query)
@@ -506,7 +301,8 @@ class ResultProcessor:
         # re-raising the exception.
         try:
             return await self._upload_results(query)
-        except BackendApiTransientError:
+        except BackendApiTransientError as e:
+            e.user = query.job.owner
             event = self._backend.result_api_failure_event()
             await self._events.query_api_failure.publish(event)
             raise

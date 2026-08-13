@@ -36,6 +36,7 @@ from .models.state import RunningQuery
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
 from .services.results import ResultProcessor
+from .services.status import StatusPublisher
 from .storage.backend import DatabaseBackend
 from .storage.bigquery import BigQueryClient
 from .storage.gafaelfawr import GafaelfawrStorage
@@ -485,6 +486,7 @@ class Factory(metaclass=ABCMeta):
             New service to monitor query status.
         """
         return QueryMonitor(
+            status_publisher=self.create_status_publisher(),
             result_processor=self.create_result_processor(),
             backend=self.create_backend_client(),
             arq_queue=self._context.arq_queue_slow,
@@ -503,6 +505,7 @@ class Factory(metaclass=ABCMeta):
             New service to start queries.
         """
         return QueryService(
+            status_publisher=self.create_status_publisher(),
             backend=self.create_backend_client(),
             state_store=self.create_query_state_store(),
             result_processor=self.create_result_processor(),
@@ -524,6 +527,7 @@ class Factory(metaclass=ABCMeta):
             New service to process a completed query.
         """
         return ResultProcessor(
+            status_publisher=self.create_status_publisher(),
             backend=self.create_backend_client(),
             state_store=self.create_query_state_store(),
             votable_writer=VOTableWriter(
@@ -531,7 +535,6 @@ class Factory(metaclass=ABCMeta):
                 self._context.discovery_client,
                 self._logger,
             ),
-            kafka_publisher=self._context.status_publisher,
             rate_limit_store=self.create_rate_limit_store(),
             events=self._context.events,
             slack_client=self._context.slack_client,
@@ -547,6 +550,18 @@ class Factory(metaclass=ABCMeta):
             Storage for rate limit information.
         """
         return RateLimitStore(self._context.redis)
+
+    def create_status_publisher(self) -> StatusPublisher:
+        """Create a query status publisher.
+
+        Returns
+        -------
+        StatusPublisher
+            Publisher for query status.
+        """
+        return StatusPublisher(
+            self._context.status_publisher, self._context.events, self._logger
+        )
 
 
 class BigQueryFactory(Factory):

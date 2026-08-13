@@ -20,6 +20,7 @@ from pydantic import (
     PlainSerializer,
     Tag,
 )
+from rubin.gafaelfawr import GafaelfawrTapQuota
 from safir.pydantic import SecondsTimedelta
 from vo_models.uws.types import ExecutionPhase
 
@@ -667,7 +668,7 @@ class JobError(BaseModel):
     ]
 
     @classmethod
-    def for_quota_exceeded(cls, used: int, quota: int) -> Self:
+    def for_quota_exceeded(cls, used: int, quota: GafaelfawrTapQuota) -> Self:
         """Generate an error object for a quota exceeded error.
 
         Parameters
@@ -675,7 +676,7 @@ class JobError(BaseModel):
         used
             Number of running queries.
         quota
-            Maximum allowed number of concurrent running queries.
+            Quota for the user.
 
         Returns
         -------
@@ -684,8 +685,8 @@ class JobError(BaseModel):
         """
         error = (
             f"Maximum running queries reached ({used} running, maximum"
-            f" {quota}); wait for a query to finish or cancel one of your"
-            " running queries"
+            f" {quota.concurrent}); wait for a query to finish or cancel one"
+            " of your running queries"
         )
         return cls(code=JobErrorCode.quota_exceeded, message=error)
 

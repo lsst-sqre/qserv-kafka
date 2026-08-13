@@ -1,6 +1,6 @@
 """Models for tracking the state of running queries."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Self, override
 
 from pydantic import BaseModel, Field
@@ -31,6 +31,12 @@ class Query(BaseModel):
     )
 
     job: Annotated[JobRun, Field(title="Full job request")]
+
+    @property
+    def elapsed(self) -> timedelta:
+        """Elapsed time since query was submitted."""
+        start = self.queued or self.start
+        return datetime.now(tz=UTC) - start
 
     def to_logging_context(self) -> dict[str, str | float]:
         """Convert to variables for a structlog logging context."""
