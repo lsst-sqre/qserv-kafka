@@ -28,7 +28,7 @@ from testcontainers.mysql import MySqlContainer
 from testcontainers.redis import RedisContainer
 
 from qservkafka.config import config
-from qservkafka.factory import Factory, ProcessContext
+from qservkafka.factory import Factory, build_process_context
 from qservkafka.main import create_app
 
 from .support.constants import REDIS_IMAGE
@@ -119,9 +119,9 @@ async def factory(
     monkeypatch.setattr(config, "redis_url", redis_url)
     kafka_broker = KafkaBroker(**config.kafka.to_faststream_params())
     async with TestKafkaBroker(kafka_broker) as mock_broker:
-        context = await ProcessContext.create(mock_broker)
+        context = await build_process_context(mock_broker)
         async with aclosing(context):
-            yield Factory(context, logger)
+            yield context.build_factory(logger)
     await kafka_broker.stop()
 
 

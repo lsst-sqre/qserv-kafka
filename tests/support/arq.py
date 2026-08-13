@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+from copy import copy
 from datetime import timedelta
 from typing import Any
 
@@ -37,7 +38,7 @@ def create_arq_worker(
     Worker
         arq worker.
     """
-    ctx = {}
+    ctx = copy(settings.ctx)
     if context:
         ctx["context"] = context
     settings.redis_settings = config.arq_redis_settings
@@ -45,7 +46,11 @@ def create_arq_worker(
     return Worker(
         burst=True,
         ctx=ctx,
-        **{k: v for k, v in vars(settings).items() if k in worker_args},
+        **{
+            k: v
+            for k, v in vars(settings).items()
+            if k in worker_args and k != "ctx"
+        },
     )
 
 
