@@ -101,6 +101,7 @@ class ContextDependency:
     async def initialize(self) -> None:
         """Initialize the process-wide shared context."""
         self._context = await build_process_context()
+        await self._context.connect()
 
 
 context_dependency = ContextDependency()

@@ -12,6 +12,7 @@ from qservkafka.factory import Factory
 from qservkafka.models.kafka import JobRun
 
 from ..support.data import QservKafkaData
+from ..support.kafka import read_status_message
 from ..support.qserv import MockQserv
 
 
@@ -27,7 +28,8 @@ async def test_dispatch(
     monitor = await factory.create_query_monitor()
     job = data.read_pydantic(JobRun, "jobs/simple")
 
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     data.assert_job_status_matches(status, "status/simple-started")
 
     # Check running query status and see if the count of running queries is
@@ -52,7 +54,7 @@ async def test_dispatch(
     qserv_status = mock_qserv.get_status(1)
     with patch.object(RedisArqQueue, "enqueue") as mock:
         await monitor.check_query(query, status=None)
-        assert mock.call_args_list == [call("handle_finished_query", "1")]
+        assert mock.call_args_list == [call("finish_query", "1")]
         mock.reset_mock()
 
         # Running a second check on the query should notice that the query was
@@ -79,9 +81,11 @@ async def test_quota(
     redis_key = f"rate:{job.owner}"
 
     # Start a couple of jobs.
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     data.assert_job_status_matches(status, "status/simple-started")
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     data.assert_job_status_matches(
         status, "status/simple-started", execution_id="2"
     )

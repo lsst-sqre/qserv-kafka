@@ -8,6 +8,7 @@ from qservkafka.models.progress import ChunkProgress
 from qservkafka.models.query import AsyncQueryPhase, ProcessStatus
 
 from ..support.data import QservKafkaData
+from ..support.kafka import read_status_message
 from ..support.qserv import MockQserv
 
 
@@ -25,8 +26,10 @@ async def test_list_running_queries(
     processes = await qserv.list_running_queries()
     assert processes == {}
 
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     data.assert_job_status_matches(status, "status/simple-started")
+
     processes = await qserv.list_running_queries()
     qserv_status = mock_qserv.get_status(1)
     expected_process_status = ProcessStatus(

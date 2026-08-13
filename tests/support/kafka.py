@@ -7,12 +7,37 @@ from faststream.kafka import KafkaBroker
 from pydantic import ValidationError
 
 from qservkafka.config import config
+from qservkafka.factory import Factory
 from qservkafka.models.kafka import JobRun, JobStatus
 
 from ..support.data import QservKafkaData
 from ..support.datetime import assert_approximately_now
 
-__all__ = ["KafkaTestManager"]
+__all__ = ["KafkaTestManager", "read_status_message"]
+
+
+def read_status_message(factory: Factory) -> JobStatus:
+    """Read a JobStatus message posted to a mock Kafka broker.
+
+    Raises an assertion error if more than one status message was posted, and
+    clears the mock before returning.
+
+    Parameters
+    ----------
+    factory
+        Factory whose mock Kafka broker to use.
+
+    Returns
+    -------
+    JobStatus
+        Status message posted to a test Kafka broker.
+    """
+    mock = factory._context.status_publisher.mock
+    calls = mock.call_args_list
+    assert len(calls) == 1
+    status = JobStatus.model_validate(calls[0][0][0])
+    mock.reset_mock()
+    return status
 
 
 class KafkaTestManager:

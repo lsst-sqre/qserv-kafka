@@ -6,6 +6,9 @@ from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.factory import Factory
 from qservkafka.models.kafka import JobRun, JobStatus
+from qservkafka.models.state import Query
+
+from .kafka import read_status_message
 
 __all__ = ["start_and_complete_immediate"]
 
@@ -42,7 +45,8 @@ async def start_and_complete_immediate(
     state_store = factory.create_query_state_store()
     processor = factory.create_result_processor()
 
-    status = await query_service.start_query(job, kafka_start)
+    await query_service.start_query(Query(job=job, queued=kafka_start))
+    status = read_status_message(factory)
     assert status.status == ExecutionPhase.EXECUTING
     assert status.execution_id
     query = await state_store.get_query(status.execution_id)
