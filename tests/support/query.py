@@ -43,7 +43,6 @@ async def start_and_complete_immediate(
     """
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
-    processor = factory.create_result_processor()
 
     await query_service.start_query(Query(job=job, queued=kafka_start))
     status = read_status_message(factory)
@@ -52,5 +51,5 @@ async def start_and_complete_immediate(
     query = await state_store.get_query(status.execution_id)
     assert query
 
-    await processor.process_query(query)
+    await query_service.update_query(query)
     return read_status_message(factory)

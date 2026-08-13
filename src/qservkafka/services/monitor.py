@@ -13,7 +13,7 @@ from ..models.state import RunningQuery
 from ..storage.backend import DatabaseBackend
 from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
-from .results import ResultProcessor
+from .query import QueryService
 from .status import StatusPublisher
 
 __all__ = ["QueryMonitor"]
@@ -26,8 +26,8 @@ class QueryMonitor:
     ----------
     status_publisher
         Publisher for status events and Kafka messages.
-    result_processor
-        Service used to process results.
+    query_service
+        Query management service.
     backend
         Database backend client (Qserv, BigQuery, etc.).
     arq_queue
@@ -46,7 +46,7 @@ class QueryMonitor:
         self,
         *,
         status_publisher: StatusPublisher,
-        result_processor: ResultProcessor,
+        query_service: QueryService,
         backend: DatabaseBackend,
         arq_queue: ArqQueue,
         state_store: QueryStateStore,
@@ -55,7 +55,7 @@ class QueryMonitor:
         logger: BoundLogger,
     ) -> None:
         self._status = status_publisher
-        self._results = result_processor
+        self._query = query_service
         self._backend = backend
         self._arq = arq_queue
         self._state = state_store
@@ -127,10 +127,10 @@ class QueryMonitor:
             await self._status.publish_executing(query)
         else:
             try:
-                query = await self._results.get_running_query(query)
+                query = await self._query.get_running_query(query)
             except QueryError as e:
                 await self._status.publish_exception(query, e)
-                await self._results.delete_query_data(query)
+                await self._query.delete_query_data(query)
                 return
             await self._state.store_query(query)
             if query.status.status == AsyncQueryPhase.EXECUTING:

@@ -35,7 +35,6 @@ from .events import Events
 from .models.state import RunningQuery
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
-from .services.results import ResultProcessor
 from .services.status import StatusPublisher
 from .storage.backend import DatabaseBackend
 from .storage.bigquery import BigQueryClient
@@ -432,11 +431,6 @@ class Factory(metaclass=ABCMeta):
         """Global shared metrics events publishers, used by the test suite."""
         return self._context.events
 
-    @property
-    def gafaelfawr(self) -> GafaelfawrStorage:
-        """Global shared caching Gafaelfawr client."""
-        return self._context.gafaelfawr
-
     @abstractmethod
     def create_backend_client(self) -> DatabaseBackend:
         """Create a client for the configured database backend.
@@ -487,7 +481,7 @@ class Factory(metaclass=ABCMeta):
         """
         return QueryMonitor(
             status_publisher=self.create_status_publisher(),
-            result_processor=self.create_result_processor(),
+            query_service=self.create_query_service(),
             backend=self.create_backend_client(),
             arq_queue=self._context.arq_queue_slow,
             state_store=self.create_query_state_store(),
@@ -507,35 +501,16 @@ class Factory(metaclass=ABCMeta):
         return QueryService(
             status_publisher=self.create_status_publisher(),
             backend=self.create_backend_client(),
-            state_store=self.create_query_state_store(),
-            result_processor=self.create_result_processor(),
-            rate_limit_store=self.create_rate_limit_store(),
-            gafaelfawr_storage=self.gafaelfawr,
-            arq_queue_fast=self._context.arq_queue_fast,
-            arq_queue_slow=self._context.arq_queue_slow,
-            events=self._context.events,
-            slack_client=self._context.slack_client,
-            logger=self._logger,
-        )
-
-    def create_result_processor(self) -> ResultProcessor:
-        """Create a new service for processing results.
-
-        Returns
-        -------
-        ResultProcessor
-            New service to process a completed query.
-        """
-        return ResultProcessor(
-            status_publisher=self.create_status_publisher(),
-            backend=self.create_backend_client(),
-            state_store=self.create_query_state_store(),
             votable_writer=VOTableWriter(
                 self._context.http_client,
                 self._context.discovery_client,
                 self._logger,
             ),
+            state_store=self.create_query_state_store(),
             rate_limit_store=self.create_rate_limit_store(),
+            gafaelfawr_storage=self._context.gafaelfawr,
+            arq_queue_fast=self._context.arq_queue_fast,
+            arq_queue_slow=self._context.arq_queue_slow,
             events=self._context.events,
             slack_client=self._context.slack_client,
             logger=self._logger,
