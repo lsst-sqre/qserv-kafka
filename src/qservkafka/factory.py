@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Self, override
 
 from faststream.kafka import KafkaBroker
+from faststream.kafka.publisher import DefaultPublisher
 from httpx import AsyncClient, Limits
 from redis.asyncio import BlockingConnectionPool, Redis
 from redis.asyncio.retry import Retry
@@ -66,11 +67,17 @@ class ProcessContext(metaclass=ABCMeta):
     redis: Redis
     """Connection pool for state-tracking Redis."""
 
-    arq_queue: ArqQueue
-    """Queue to which to dispatch work to arq workers."""
+    arq_queue_fast: ArqQueue
+    """Queue for arq workers for short tasks."""
+
+    arq_queue_slow: ArqQueue
+    """Queue for arq workers for slow tasks such as result processing."""
 
     kafka_broker: KafkaBroker
     """Kafka broker to use for publishing messages from background jobs."""
+
+    status_publisher: DefaultPublisher
+    """Kafka publisher for the status topic, built from the Kafka broker."""
 
     slack_client: SlackWebhookClient | None
     """Client for sending Slack error notifications."""
@@ -114,8 +121,9 @@ class ProcessContext(metaclass=ABCMeta):
         # store that stores job state in Redis.
         redis_client = cls._create_redis_client()
 
-        # Create the arq queues with their underlying Redis clients.
-        arq_queue = await cls._create_arq_queue()
+        # Create the arq queues.
+        arq_queue_fast = await cls._create_arq_queue(config.arq_queue_fast)
+        arq_queue_slow = await cls._create_arq_queue(config.arq_queue_slow)
 
         # Create a Kafka broker used for background tasks. This needs to be a
         # separate broker from the one used by handlers, since the one used by
@@ -123,10 +131,9 @@ class ProcessContext(metaclass=ABCMeta):
         # preventing the Qserv Kafka bridge from completing any result
         # processing that is still running.
         if not kafka_broker:
-            kafka_broker = KafkaBroker(
-                client_id="qserv-kafka", **config.kafka.to_faststream_params()
-            )
-        await kafka_broker.connect()
+            params = config.kafka.to_faststream_params()
+            kafka_broker = KafkaBroker(client_id="qserv-kafka", **params)
+        status_publisher = kafka_broker.publisher(config.job_status_topic)
 
         # Create the HTTP, Slack, service discovery, and Gafaelfawr clients,
         # all using the same HTTP connection pool.
@@ -150,9 +157,11 @@ class ProcessContext(metaclass=ABCMeta):
         return {
             "http_client": http_client,
             "redis": redis_client,
-            "arq_queue": arq_queue,
+            "arq_queue_fast": arq_queue_fast,
+            "arq_queue_slow": arq_queue_slow,
             "discovery_client": discovery_client,
             "kafka_broker": kafka_broker,
+            "status_publisher": status_publisher,
             "gafaelfawr": gafaelfawr,
             "event_manager": event_manager,
             "events": events,
@@ -160,12 +169,11 @@ class ProcessContext(metaclass=ABCMeta):
         }
 
     @staticmethod
-    async def _create_arq_queue() -> ArqQueue:
+    async def _create_arq_queue(queue_name: str) -> ArqQueue:
         """Create the queue used to dispatch work to arq workers."""
         if config.arq_mode == ArqMode.production:
-            settings = config.arq_redis_settings
             return await RedisArqQueue.initialize(
-                settings, default_queue_name=config.arq_queue
+                config.arq_redis_settings, default_queue_name=queue_name
             )
         else:
             return MockArqQueue()
@@ -227,7 +235,8 @@ class ProcessContext(metaclass=ABCMeta):
         a different configuration.
         """
         await self.redis.aclose()
-        await self.arq_queue.aclose()
+        await self.arq_queue_fast.aclose()
+        await self.arq_queue_slow.aclose()
         await self.kafka_broker.stop()
         await self.event_manager.aclose()
 
@@ -245,6 +254,16 @@ class ProcessContext(metaclass=ABCMeta):
         Factory
             An appropriate factory for the configured backend.
         """
+
+    async def connect(self) -> None:
+        """Connect the Kafka broker.
+
+        Must be called before using the process context or factories created
+        from it. This has to be broken into a separate call because the Kafka
+        status publisher must be created before wrapping the Kafka broker in a
+        `~faststream.kafka.TestKafkaBroker` or it won't be patched properly.
+        """
+        await self.kafka_broker.connect()
 
 
 @dataclass(kw_only=True, slots=True)
@@ -468,7 +487,7 @@ class Factory(metaclass=ABCMeta):
         return QueryMonitor(
             result_processor=self.create_result_processor(),
             backend=self.create_backend_client(),
-            arq_queue=self._context.arq_queue,
+            arq_queue=self._context.arq_queue_slow,
             state_store=self.create_query_state_store(),
             rate_limit_store=self.create_rate_limit_store(),
             events=self._context.events,
@@ -489,7 +508,8 @@ class Factory(metaclass=ABCMeta):
             result_processor=self.create_result_processor(),
             rate_limit_store=self.create_rate_limit_store(),
             gafaelfawr_storage=self.gafaelfawr,
-            arq_queue=self._context.arq_queue,
+            arq_queue_fast=self._context.arq_queue_fast,
+            arq_queue_slow=self._context.arq_queue_slow,
             events=self._context.events,
             slack_client=self._context.slack_client,
             logger=self._logger,
@@ -511,9 +531,8 @@ class Factory(metaclass=ABCMeta):
                 self._context.discovery_client,
                 self._logger,
             ),
-            kafka_broker=self._context.kafka_broker,
+            kafka_publisher=self._context.status_publisher,
             rate_limit_store=self.create_rate_limit_store(),
-            arq_queue=self._context.arq_queue,
             events=self._context.events,
             slack_client=self._context.slack_client,
             logger=self._logger,

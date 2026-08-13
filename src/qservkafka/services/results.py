@@ -4,8 +4,7 @@ import asyncio
 from dataclasses import asdict
 from datetime import UTC, datetime
 
-from faststream.kafka import KafkaBroker
-from safir.arq import ArqQueue
+from faststream.kafka.publisher import DefaultPublisher
 from safir.sentry import report_exception
 from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
@@ -49,12 +48,10 @@ class ResultProcessor:
         Storage for query state.
     votable_writer
         Writer for VOTable output.
-    kafka_broker
+    kafka_publisher
         Broker to use to publish status messages.
     rate_limit_store
         Storage for rate limiting.
-    arq_queue
-        Shared client used to dispatch jobs to arq workers.
     events
         Metrics events publishers.
     slack_client
@@ -69,9 +66,8 @@ class ResultProcessor:
         backend: DatabaseBackend,
         state_store: QueryStateStore,
         votable_writer: VOTableWriter,
-        kafka_broker: KafkaBroker,
+        kafka_publisher: DefaultPublisher,
         rate_limit_store: RateLimitStore,
-        arq_queue: ArqQueue,
         events: Events,
         slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
@@ -79,9 +75,8 @@ class ResultProcessor:
         self._backend = backend
         self._state = state_store
         self._votable = votable_writer
-        self._kafka = kafka_broker
+        self._kafka = kafka_publisher
         self._rate_store = rate_limit_store
-        self._arq = arq_queue
         self._events = events
         self._slack_client = slack_client
         self._logger = logger
@@ -245,7 +240,6 @@ class ResultProcessor:
         """
         await self._kafka.publish(
             status.model_dump(mode="json"),
-            config.job_status_topic,
             headers={"Content-Type": "application/json"},
         )
 

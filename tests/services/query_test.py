@@ -4,20 +4,20 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import call, patch
 
 import pytest
-from httpx import Response
 from pydantic import SecretStr
 from safir.arq import RedisArqQueue
 from safir.metrics import MockEventPublisher
 from safir.testing.slack import MockSlackWebhook
-from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.config import config
 from qservkafka.factory import Factory
-from qservkafka.models.kafka import JobCancel, JobErrorCode, JobRun
+from qservkafka.models.kafka import JobCancel, JobRun
+from qservkafka.models.state import Query
 from qservkafka.services.query import QueryService
 
 from ..support.data import QservKafkaData
 from ..support.datetime import assert_approximately_now
+from ..support.kafka import read_status_message
 from ..support.qserv import MockQserv
 from ..support.query import start_and_complete_immediate
 
@@ -72,7 +72,8 @@ async def test_start(data: QservKafkaData, factory: Factory) -> None:
     query_service = factory.create_query_service()
     state_store = factory.create_query_state_store()
 
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     data.assert_job_status_matches(status, "status/simple-started")
     assert_approximately_now(status.timestamp)
     assert status.query_info
@@ -171,9 +172,10 @@ async def test_immediate_dispatch(
     mock_qserv.set_immediate_success(job)
 
     with patch.object(RedisArqQueue, "enqueue") as mock:
-        status = await query_service.start_query(job)
-        assert mock.call_args_list == [call("handle_finished_query", "1")]
+        await query_service.handle_query(job)
+        assert mock.call_args_list == [call("finish_query", "1")]
 
+    status = read_status_message(factory)
     data.assert_job_status_matches(status, "status/simple-immediate")
     query = await state_store.get_query("1")
     assert query
@@ -232,7 +234,8 @@ async def test_cancel_completed(
 
     # Start the query.
     start_time = datetime.now(tz=UTC).replace(microsecond=0)
-    start_status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    start_status = read_status_message(factory)
     data.assert_job_status_matches(start_status, "status/simple-started")
 
     # Mark the query complete in the mock behind the back of the bridge.
@@ -323,9 +326,9 @@ async def test_no_api_version(
     # Also test starting a job with table upload, since that tests an
     # additional API endpoint.
     job = data.read_pydantic(JobRun, "jobs/upload")
-
     mock_qserv.set_immediate_success(None)
-    status = await query_service.start_query(job)
+    await query_service.start_query(Query(job=job))
+    status = read_status_message(factory)
     data.assert_job_status_matches(
         status, "status/upload-started", execution_id="2"
     )
@@ -367,7 +370,8 @@ async def test_auth(
     # additional API endpoint.
     job = data.read_pydantic(JobRun, "jobs/upload")
     mock_qserv.set_immediate_success(None)
-    status = await query_service.start_query(job)
+    await query_service.start_query(Query(job=job))
+    status = read_status_message(factory)
     data.assert_job_status_matches(
         status, "status/upload-started", execution_id="2"
     )
@@ -418,7 +422,8 @@ async def test_upload(
     # immediately. In this case, the uploaded table should still be present
     # (not yet deleted) since the query is still running.
     mock_qserv.set_immediate_success(None)
-    status = await query_service.start_query(job)
+    await query_service.start_query(Query(job=job))
+    status = read_status_message(factory)
     data.assert_job_status_matches(
         status, "status/upload-started", execution_id="2"
     )
@@ -467,26 +472,3 @@ async def test_upload_dependent(
     )
     assert mock_qserv.get_uploaded_table() is None
     assert mock_qserv.get_uploaded_database() is None
-
-
-@pytest.mark.asyncio
-async def test_upload_submit_failure(
-    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
-) -> None:
-    """Test that a rejected submission cleans up any uploaded tables."""
-    query_service = factory.create_query_service()
-    state_store = factory.create_query_state_store()
-    job = data.read_pydantic(JobRun, "jobs/upload")
-
-    mock_qserv.set_submit_response(
-        Response(200, json={"success": 0, "error": "Some error"})
-    )
-    status = await query_service.start_query(job)
-
-    assert status.status == ExecutionPhase.ERROR
-    assert status.error
-    assert status.error.code == JobErrorCode.backend_error
-    assert mock_qserv.get_uploaded_table() is None
-    assert mock_qserv.get_uploaded_database() is None
-
-    assert await state_store.get_active_queries() == set()

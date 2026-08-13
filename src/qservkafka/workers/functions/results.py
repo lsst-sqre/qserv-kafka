@@ -6,8 +6,10 @@ from structlog.stdlib import BoundLogger
 
 from ...factory import Factory
 
+__all__ = ["finish_query"]
 
-async def handle_finished_query(ctx: dict[Any, Any], query_id: str) -> None:
+
+async def finish_query(ctx: dict[Any, Any], query_id: str) -> None:
     """Process a completed query.
 
     Parameters

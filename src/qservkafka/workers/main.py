@@ -16,8 +16,8 @@ from .. import __version__
 from ..config import config
 from ..constants import ARQ_TIMEOUT_GRACE
 from ..factory import ProcessContext, build_process_context
-from .functions.results import handle_finished_query
-from .functions.upload import handle_upload_job
+from .functions.results import finish_query
+from .functions.upload import start_query
 
 
 async def startup(ctx: dict[Any, Any]) -> None:
@@ -44,6 +44,7 @@ async def startup(ctx: dict[Any, Any]) -> None:
     context = ctx.get("context")
     if not context:
         context = await build_process_context(worker_max_jobs=ctx["max_jobs"])
+        await context.connect()
     factory = context.build_factory(logger)
 
     # Metrics initialization must be done exactly once. If not done at all,
@@ -75,12 +76,12 @@ async def shutdown(ctx: dict[Any, Any]) -> None:
 class WorkerSettings:
     """Configuration for the arq worker that processes completed queries."""
 
-    functions: ClassVar[list[Callable]] = [handle_finished_query]
-    queue_name = config.arq_queue
+    functions: ClassVar[list[Callable]] = [finish_query]
+    queue_name = config.arq_queue_slow
     redis_settings = config.arq_redis_settings
     on_startup = startup
     on_shutdown = shutdown
-    on_job_start = make_on_job_start(config.arq_queue)
+    on_job_start = make_on_job_start(config.arq_queue_slow)
     job_completion_wait = int(
         (config.result_timeout + ARQ_TIMEOUT_GRACE).total_seconds()
     )
@@ -98,15 +99,15 @@ class UploadWorkerSettings:
 
     functions: ClassVar[list[Callable | Function]] = [
         func(
-            handle_upload_job,
+            start_query,
             timeout=config.upload_worker_timeout + ARQ_TIMEOUT_GRACE,
         ),
     ]
-    queue_name = config.upload_queue
+    queue_name = config.arq_queue_fast
     redis_settings = config.arq_redis_settings
     on_startup = startup
     on_shutdown = shutdown
-    on_job_start = make_on_job_start(config.upload_queue)
+    on_job_start = make_on_job_start(config.arq_queue_fast)
     job_completion_wait = int(
         (config.upload_worker_timeout + ARQ_TIMEOUT_GRACE).total_seconds()
     )

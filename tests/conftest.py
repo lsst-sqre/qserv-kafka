@@ -118,11 +118,11 @@ async def factory(
     redis_url = RedisDsn(f"redis://{redis_host}:{redis_port}/0")
     monkeypatch.setattr(config, "redis_url", redis_url)
     kafka_broker = KafkaBroker(**config.kafka.to_faststream_params())
-    async with TestKafkaBroker(kafka_broker) as mock_broker:
-        context = await build_process_context(mock_broker)
+    context = await build_process_context(kafka_broker)
+    async with TestKafkaBroker(kafka_broker):
+        await context.connect()
         async with aclosing(context):
             yield context.build_factory(logger)
-    await kafka_broker.stop()
 
 
 @pytest.fixture(scope="session")

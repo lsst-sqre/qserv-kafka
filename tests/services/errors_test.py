@@ -6,14 +6,17 @@ from unittest.mock import patch
 import pytest
 from httpx import Response
 from safir.metrics import MockEventPublisher
+from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.config import config
 from qservkafka.factory import Factory
-from qservkafka.models.kafka import JobCancel, JobRun
+from qservkafka.models.kafka import JobCancel, JobErrorCode, JobRun
+from qservkafka.models.state import Query
 from qservkafka.storage import qserv
 
 from ..support.data import QservKafkaData
 from ..support.datetime import assert_approximately_now
+from ..support.kafka import read_status_message
 from ..support.qserv import MockQserv
 from ..support.query import start_and_complete_immediate
 
@@ -31,13 +34,15 @@ async def test_start_errors(
 
     # HTTP failure starting the job.
     mock_qserv.set_submit_response(Response(500))
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     data.assert_job_status_matches(status, "status/error-submit-http")
     assert_approximately_now(status.timestamp)
 
     # Invalid response from job creation endpoint.
     mock_qserv.set_submit_response(Response(200, json={"success": 1}))
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     data.assert_job_status_matches(status, "status/error-submit-invalid")
     assert status.error
     assert "Qserv request failed: " in status.error.message
@@ -45,7 +50,8 @@ async def test_start_errors(
     # Error response from job creation endpoint.
     error_json = data.read_json("qserv/error")
     mock_qserv.set_submit_response(Response(200, json=error_json))
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     data.assert_job_status_matches(status, "status/error-submit-failed")
 
     assert await state_store.get_active_queries() == set()
@@ -65,14 +71,16 @@ async def test_status_errors(
 
     # HTTP failure getting the job status.
     mock_qserv.set_status_response(Response(500))
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     data.assert_job_status_matches(status, "status/error-status-http")
     assert_approximately_now(status.timestamp)
 
     # Invalid response from the status endpoint.
     error_json = data.read_json("qserv/error-invalid")
     mock_qserv.set_status_response(Response(200, json=error_json))
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     data.assert_job_status_matches(
         status, "status/error-status-invalid", execution_id="2"
     )
@@ -82,7 +90,8 @@ async def test_status_errors(
     # Error returned from the status endpoint.
     error_json = data.read_json("qserv/error-ext")
     mock_qserv.set_status_response(Response(200, json=error_json))
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     data.assert_job_status_matches(
         status, "status/error-status-failed", execution_id="3"
     )
@@ -94,7 +103,8 @@ async def test_status_errors(
     error_json["query_begin"] = now.isoformat(timespec="seconds")
     error_json["last_update"] = start.isoformat(timespec="seconds")
     mock_qserv.set_status_response(Response(200, json=error_json))
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     now = datetime.now(tz=UTC)
     data.assert_job_status_matches(
         status, "status/error-status-partial", execution_id="4"
@@ -124,12 +134,38 @@ async def test_start_invalid(
     state_store = factory.create_query_state_store()
 
     job = data.read_pydantic(JobRun, "jobs/tabledata")
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     data.assert_job_status_matches(status, "status/error-tabledata")
 
     job = data.read_pydantic(JobRun, "jobs/arraysize")
-    status = await query_service.start_query(job)
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
     data.assert_job_status_matches(status, "status/error-arraysize")
+
+    assert await state_store.get_active_queries() == set()
+
+
+@pytest.mark.asyncio
+async def test_upload_submit_failure(
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
+) -> None:
+    """Test that a rejected submission cleans up any uploaded tables."""
+    query_service = factory.create_query_service()
+    state_store = factory.create_query_state_store()
+    job = data.read_pydantic(JobRun, "jobs/upload")
+
+    mock_qserv.set_submit_response(
+        Response(200, json={"success": 0, "error": "Some error"})
+    )
+    await query_service.start_query(Query(job=job))
+    status = read_status_message(factory)
+
+    assert status.status == ExecutionPhase.ERROR
+    assert status.error
+    assert status.error.code == JobErrorCode.backend_error
+    assert mock_qserv.get_uploaded_table() is None
+    assert mock_qserv.get_uploaded_database() is None
 
     assert await state_store.get_active_queries() == set()
 

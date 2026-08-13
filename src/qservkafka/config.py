@@ -103,10 +103,23 @@ class Config(BaseSettings):
         description="Used by the test suite to switch to a mock queue",
     )
 
-    arq_queue: str = Field(
+    arq_queue_fast: str = Field(
+        "arq:upload",
+        title="arq queue for fast actions",
+        description=(
+            "Separate arq queue for fast actions such as starting jobs with"
+            " table uploads. Jobs in this queue should take a couple of"
+            " minutes or less to run."
+        ),
+    )
+
+    arq_queue_slow: str = Field(
         default_queue_name,
-        title="arq queue",
-        description="The arq queue name that worker will listen on",
+        title="arq queue for slow actions",
+        description=(
+            "The arq queue name that handles slow, resource-intensive"
+            " operations such as result processing"
+        ),
     )
 
     backend: BackendType = Field(
@@ -395,16 +408,6 @@ class Config(BaseSettings):
         ...,
         title="TAP service name",
         description="Used to determine which TAP quota to apply",
-    )
-
-    upload_queue: str = Field(
-        "arq:upload",
-        title="arq queue for jobs with table uploads",
-        description=(
-            "Separate arq queue for jobs with table uploads, listened to by"
-            " UploadWorkerSettings instead of the default result-processing"
-            " worker pool"
-        ),
     )
 
     upload_worker_max_jobs: int = Field(

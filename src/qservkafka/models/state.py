@@ -25,7 +25,10 @@ class Query(BaseModel):
         datetime | None, Field(title="Kafka queue time of query")
     ] = None
 
-    start: Annotated[datetime, Field(title="Receipt time of query")]
+    start: datetime = Field(
+        default_factory=lambda: datetime.now(tz=UTC),
+        title="Receipt time of query",
+    )
 
     job: Annotated[JobRun, Field(title="Full job request")]
 

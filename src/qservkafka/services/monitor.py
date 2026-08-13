@@ -130,7 +130,7 @@ class QueryMonitor:
             if query.status.status == AsyncQueryPhase.EXECUTING:
                 await self._results.publish_status(query.to_job_status())
                 return
-            await self._arq.enqueue("handle_finished_query", query.query_id)
+            await self._arq.enqueue("finish_query", query.query_id)
             await self._state.mark_queued_query(query.query_id)
             logger.info("Dispatched finished query to worker")
 
