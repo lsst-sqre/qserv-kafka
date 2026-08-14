@@ -14,11 +14,12 @@ from structlog.stdlib import get_logger
 
 from .. import __version__
 from ..config import config
-from ..constants import ARQ_TIMEOUT_GRACE
 from ..factory import ProcessContext, build_process_context
 from .functions.cleanup import cleanup_query
 from .functions.results import finish_query
 from .functions.upload import start_query
+
+__all__ = ["FastWorkerSettings", "SlowWorkerSettings"]
 
 
 async def startup(ctx: dict[Any, Any]) -> None:
@@ -74,48 +75,39 @@ async def shutdown(ctx: dict[Any, Any]) -> None:
     await context.aclose()
 
 
-class WorkerSettings:
-    """Configuration for the arq worker that processes completed queries."""
+class FastWorkerSettings:
+    """Configuration for the arq worker for I/O-intensive jobs.
 
-    functions: ClassVar[list[Callable]] = [finish_query]
-    queue_name = config.arq_queue_slow
-    redis_settings = config.arq_redis_settings
-    on_startup = startup
-    on_shutdown = shutdown
-    on_job_start = make_on_job_start(config.arq_queue_slow)
-    job_completion_wait = int(
-        (config.result_timeout + ARQ_TIMEOUT_GRACE).total_seconds()
-    )
-    max_jobs = config.max_worker_jobs
-    job_timeout = config.result_timeout + ARQ_TIMEOUT_GRACE
-    ctx: ClassVar[dict[str, int]] = {"max_jobs": config.max_worker_jobs}
-
-
-class UploadWorkerSettings:
-    """Configuration for the arq worker that starts queries with uploads.
-
-    Runs on a separate queue from `WorkerSettings` so that a slow upload
-    can't starve result processing.
+    Runs on a separate queue so that a slow result upload can't starve user
+    table uploads or cleanup jobs.
     """
 
     functions: ClassVar[list[Callable | Function]] = [
-        func(
-            cleanup_query,
-            timeout=config.upload_worker_timeout + ARQ_TIMEOUT_GRACE,
-        ),
+        func(cleanup_query, timeout=config.api_worker_timeout),
         finish_query,
-        func(
-            start_query,
-            timeout=config.upload_worker_timeout + ARQ_TIMEOUT_GRACE,
-        ),
+        func(start_query, timeout=config.upload_worker_timeout),
     ]
-    queue_name = config.arq_queue_fast
+    queue_name = config.arq_fast_queue
     redis_settings = config.arq_redis_settings
     on_startup = startup
     on_shutdown = shutdown
-    on_job_start = make_on_job_start(config.arq_queue_fast)
-    job_completion_wait = int(
-        (config.result_timeout + ARQ_TIMEOUT_GRACE).total_seconds()
-    )
-    max_jobs = config.upload_worker_max_jobs
-    ctx: ClassVar[dict[str, int]] = {"max_jobs": config.upload_worker_max_jobs}
+    on_job_start = make_on_job_start(config.arq_fast_queue)
+    job_completion_wait = int(config.result_worker_timeout.total_seconds())
+    max_jobs = config.arq_fast_max_jobs
+    job_timeout = config.result_worker_timeout
+    ctx: ClassVar[dict[str, int]] = {"max_jobs": config.arq_fast_max_jobs}
+
+
+class SlowWorkerSettings:
+    """Configuration for the arq worker for CPU-intensive jobs."""
+
+    functions: ClassVar[list[Callable]] = [finish_query]
+    queue_name = config.arq_slow_queue
+    redis_settings = config.arq_redis_settings
+    on_startup = startup
+    on_shutdown = shutdown
+    on_job_start = make_on_job_start(config.arq_slow_queue)
+    job_completion_wait = int(config.result_worker_timeout.total_seconds())
+    max_jobs = config.arq_slow_max_jobs
+    job_timeout = config.result_worker_timeout
+    ctx: ClassVar[dict[str, int]] = {"max_jobs": config.arq_slow_max_jobs}

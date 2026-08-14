@@ -23,6 +23,8 @@ from safir.logging import LogLevel, Profile
 from safir.metrics import MetricsConfiguration, metrics_configuration_factory
 from safir.pydantic import EnvRedisDsn, HumanTimedelta
 
+from .constants import ARQ_TIMEOUT_GRACE
+
 __all__ = [
     "BackendType",
     "Config",
@@ -97,13 +99,16 @@ class Config(BaseSettings):
         env_prefix="QSERV_KAFKA_", case_sensitive=False
     )
 
-    arq_mode: ArqMode = Field(
-        ArqMode.production,
-        title="arq queue mode",
-        description="Used by the test suite to switch to a mock queue",
+    arq_fast_max_jobs: int = Field(
+        50,
+        title="Concurrent fast worker jobs per pod",
+        description=(
+            "Fast jobs are I/O-bound, so default to a higher default than"
+            " the slow queue for CPU-intensive workers"
+        ),
     )
 
-    arq_queue_fast: str = Field(
+    arq_fast_queue: str = Field(
         "arq:upload",
         title="arq queue for fast actions",
         description=(
@@ -113,7 +118,22 @@ class Config(BaseSettings):
         ),
     )
 
-    arq_queue_slow: str = Field(
+    arq_mode: ArqMode = Field(
+        ArqMode.production,
+        title="arq queue mode",
+        description="Used by the test suite to switch to a mock queue",
+    )
+
+    arq_slow_max_jobs: int = Field(
+        2,
+        title="Concurrent result worker jobs per pod",
+        description=(
+            "Result workers can only use one CPU and are CPU-bound, so setting"
+            " this value higher than 2 will normally not be helpful"
+        ),
+    )
+
+    arq_slow_queue: str = Field(
         default_queue_name,
         title="arq queue for slow actions",
         description=(
@@ -233,15 +253,6 @@ class Config(BaseSettings):
 
     log_profile: Profile = Field(
         Profile.production, title="Application logging profile"
-    )
-
-    max_worker_jobs: int = Field(
-        2,
-        title="Concurrent result worker jobs per pod",
-        description=(
-            "Result workers can only use one CPU and are CPU-bound, so setting"
-            " this value higher than 2 will normally not be helpful"
-        ),
     )
 
     metrics: MetricsConfiguration = Field(
@@ -410,24 +421,6 @@ class Config(BaseSettings):
         description="Used to determine which TAP quota to apply",
     )
 
-    upload_worker_max_jobs: int = Field(
-        10,
-        title="Concurrent upload worker jobs per pod",
-        description=(
-            "Table uploads are I/O-bound so we default to a higher "
-            " default than the result-processing worker pool"
-        ),
-    )
-
-    upload_worker_timeout: HumanTimedelta = Field(
-        timedelta(minutes=15),
-        title="Timeout for starting a query with table uploads",
-        description=(
-            "Maximum time allowed to upload tables and submit the query to"
-            " the backend"
-        ),
-    )
-
     @property
     def arq_redis_settings(self) -> RedisSettings:
         """Redis settings for arq."""
@@ -443,6 +436,21 @@ class Config(BaseSettings):
             )
         else:
             return USE_CLIENT_DEFAULT
+
+    @property
+    def api_worker_timeout(self) -> timedelta:
+        """Backend API timeout plus a grace period for arq workers."""
+        return self.backend_api_timeout + ARQ_TIMEOUT_GRACE
+
+    @property
+    def result_worker_timeout(self) -> timedelta:
+        """Result timeout plus a grace period for arq workers."""
+        return self.result_timeout + ARQ_TIMEOUT_GRACE
+
+    @property
+    def upload_worker_timeout(self) -> timedelta:
+        """Qserv upload timeout plus a grace period for arq workers."""
+        return self.qserv_upload_timeout + ARQ_TIMEOUT_GRACE
 
     @field_validator("qserv_database_url")
     @classmethod

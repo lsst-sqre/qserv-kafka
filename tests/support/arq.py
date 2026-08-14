@@ -11,7 +11,7 @@ from safir.metrics.arq import initialize_arq_metrics
 
 from qservkafka.config import config
 from qservkafka.factory import ProcessContext
-from qservkafka.workers.main import UploadWorkerSettings, WorkerSettings
+from qservkafka.workers.main import FastWorkerSettings, SlowWorkerSettings
 
 __all__ = ["ArqWorkers"]
 
@@ -28,8 +28,8 @@ class ArqWorkers:
     def __init__(self, context: ProcessContext) -> None:
         self._context = context
         self._metrics_initialized = False
-        self._fast_worker = self._create_worker(UploadWorkerSettings)
-        self._slow_worker = self._create_worker(WorkerSettings)
+        self._fast_worker = self._create_worker(FastWorkerSettings)
+        self._slow_worker = self._create_worker(SlowWorkerSettings)
 
         self._fast_count = 0
         self._slow_count = 0
@@ -100,7 +100,7 @@ class ArqWorkers:
                     return count
                 await asyncio.sleep(0.01)
 
-    def _create_worker(self, settings: type[Any] = WorkerSettings) -> Worker:
+    def _create_worker(self, settings: type[Any]) -> Worker:
         """Create an arq worker to run queued jobs.
 
         Parameters

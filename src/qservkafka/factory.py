@@ -122,8 +122,8 @@ class ProcessContext(metaclass=ABCMeta):
         redis_client = cls._create_redis_client()
 
         # Create the arq queues.
-        arq_queue_fast = await cls._create_arq_queue(config.arq_queue_fast)
-        arq_queue_slow = await cls._create_arq_queue(config.arq_queue_slow)
+        arq_queue_fast = await cls._create_arq_queue(config.arq_fast_queue)
+        arq_queue_slow = await cls._create_arq_queue(config.arq_slow_queue)
 
         # Create a Kafka broker used for background tasks. This needs to be a
         # separate broker from the one used by handlers, since the one used by
@@ -304,7 +304,7 @@ class QservProcessContext(ProcessContext):
         cls,
         kafka_broker: KafkaBroker | None = None,
         *,
-        qserv_database_pool_size: int | None = None,
+        worker_max_jobs: int | None = None,
     ) -> Self:
         """Create a new process context from a database engine.
 
@@ -312,10 +312,10 @@ class QservProcessContext(ProcessContext):
         ----------
         kafka_broker
             If not `None`, use this Kafka broker instead of making a new one.
-        qserv_database_pool_size
-            If not `None`, override the default database pool size. This is
-            used by result workers, since they only need one connection per
-            worker job.
+        worker_max_jobs
+            If not `None`, this process context is being created for an arq
+            worker with the given number of maximum simultaneous jobs. This
+            is used to size such settings as the database pool size.
 
         Returns
         -------
@@ -342,7 +342,10 @@ class QservProcessContext(ProcessContext):
         )
 
         # Create the database engine and sessionmaker.
-        pool_size = qserv_database_pool_size or config.qserv_database_pool_size
+        if worker_max_jobs:
+            pool_size = min(config.qserv_database_pool_size, worker_max_jobs)
+        else:
+            pool_size = config.qserv_database_pool_size
         connect_args = {
             "ssl": ssl_context,
             "connect_timeout": config.qserv_database_connect_timeout,
@@ -401,7 +404,7 @@ async def build_process_context(
         case BackendType.QSERV:
             if worker_max_jobs is not None:
                 return await QservProcessContext.create(
-                    kafka_broker, qserv_database_pool_size=worker_max_jobs
+                    kafka_broker, worker_max_jobs=worker_max_jobs
                 )
             else:
                 return await QservProcessContext.create(kafka_broker)
