@@ -146,7 +146,6 @@ class QueryService:
 
         # Remove internal tracking. Everything after this point will not be
         # retried on failure, just orphaned.
-        await self._rate_store.end_query(query.job.owner)
         await self._state.delete_query(query.query_id)
 
         # Delete the uploaded tables and the results if configured to do so.
@@ -304,7 +303,8 @@ class QueryService:
 
         # If the query was still executing, the code above returned early, so
         # the query completed in some fashion and can be cleaned up.
-        await self.delete_query_data(query)
+        await self._rate_store.end_query(query.job.owner)
+        await self._arq_fast.enqueue("cleanup_query", query)
 
     async def _delete_uploaded_databases(
         self,
@@ -361,7 +361,8 @@ class QueryService:
         try:
             query = await self.get_running_query(started_query)
         except QueryError as e:
-            await self.delete_query_data(started_query)
+            await self._rate_store.end_query(started_query.job.owner)
+            await self._arq_fast.enqueue("cleanup_query", started_query)
             await self._status.publish_exception(started_query, e)
             return
 
@@ -372,7 +373,7 @@ class QueryService:
         if query.status.status == AsyncQueryPhase.COMPLETED:
             query.result_queued = True
             await self._state.store_query(query)
-            await self._arq_slow.enqueue("finish_query", query.query_id)
+            await self._arq_fast.enqueue("finish_query", query.query_id)
             logger.info("Dispatched immediately completed query to worker")
             await self._status.publish_executing(query)
         else:

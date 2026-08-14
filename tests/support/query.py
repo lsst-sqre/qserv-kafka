@@ -52,4 +52,5 @@ async def start_and_complete_immediate(
     assert query
 
     await query_service.update_query(query)
+    await query_service.delete_query_data(query)
     return read_status_message(factory)

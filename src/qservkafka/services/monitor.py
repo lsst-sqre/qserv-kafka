@@ -30,8 +30,11 @@ class QueryMonitor:
         Query management service.
     backend
         Database backend client (Qserv, BigQuery, etc.).
-    arq_queue
-        Queue to which to dispatch result processing requests.
+    arq_queue_fast
+        Client to dispatch fast jobs to arq workers.
+    arq_queue_slow
+        Client to dispatch slow jobs, such as result processing, to arq
+        workers.
     state_store
         Storage for query state.
     rate_limit_store
@@ -48,7 +51,8 @@ class QueryMonitor:
         status_publisher: StatusPublisher,
         query_service: QueryService,
         backend: DatabaseBackend,
-        arq_queue: ArqQueue,
+        arq_queue_fast: ArqQueue,
+        arq_queue_slow: ArqQueue,
         state_store: QueryStateStore,
         rate_limit_store: RateLimitStore,
         events: Events,
@@ -57,7 +61,8 @@ class QueryMonitor:
         self._status = status_publisher
         self._query = query_service
         self._backend = backend
-        self._arq = arq_queue
+        self._arq_fast = arq_queue_fast
+        self._arq_slow = arq_queue_slow
         self._state = state_store
         self._rate_store = rate_limit_store
         self._events = events
@@ -130,13 +135,14 @@ class QueryMonitor:
                 query = await self._query.get_running_query(query)
             except QueryError as e:
                 await self._status.publish_exception(query, e)
-                await self._query.delete_query_data(query)
+                await self._rate_store.end_query(query.job.owner)
+                await self._arq_fast.enqueue("cleanup_query", query)
                 return
             await self._state.store_query(query)
             if query.status.status == AsyncQueryPhase.EXECUTING:
                 await self._status.publish_executing(query)
                 return
-            await self._arq.enqueue("finish_query", query.query_id)
+            await self._arq_slow.enqueue("finish_query", query.query_id)
             await self._state.mark_queued_query(query.query_id)
             logger.info("Dispatched finished query to worker")
 

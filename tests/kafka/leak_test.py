@@ -11,7 +11,6 @@ from datetime import UTC, datetime
 
 import pytest
 import respx
-from arq import Worker
 from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 from safir.logging import LogLevel
@@ -21,7 +20,7 @@ from qservkafka.config import config
 from qservkafka.dependencies.context import context_dependency
 from qservkafka.factory import Factory
 
-from ..support.arq import create_arq_worker, wait_for_dispatch
+from ..support.arq import ArqWorkers
 from ..support.data import QservKafkaData
 from ..support.kafka import KafkaTestManager
 from ..support.qserv import MockQserv
@@ -56,7 +55,7 @@ async def run_job(
     factory: Factory,
     kafka_manager: KafkaTestManager,
     mock_qserv: MockQserv,
-    arq_worker: Worker,
+    arq_workers: ArqWorkers,
     execution_id: int,
 ) -> None:
     """Run a single job end-to-end."""
@@ -74,15 +73,14 @@ async def run_job(
         last_update=datetime.now(tz=UTC),
     )
     await mock_qserv.update_status(execution_id, qserv_status)
-    await wait_for_dispatch(factory, execution_id)
-    assert await arq_worker.run_check() == execution_id
+    assert await arq_workers.run_workers(2) == 2
     await kafka_manager.wait_for_status(
         "status/data-completed", execution_id=str(execution_id)
     )
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 async def test_leak(
     *,
     data: QservKafkaData,
@@ -95,7 +93,7 @@ async def test_leak(
     """Test for memory leaks in a full end-to-end Kafka flow."""
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
-        arq_worker = create_arq_worker(factory._context)
+        arq_workers = ArqWorkers(factory._context)
 
         # Run a single job to force any memory allocations that only happen
         # once, during the first job.
@@ -104,7 +102,7 @@ async def test_leak(
             factory=factory,
             kafka_manager=kafka_manager,
             mock_qserv=mock_qserv,
-            arq_worker=arq_worker,
+            arq_workers=arq_workers,
             execution_id=1,
         )
 
@@ -120,13 +118,13 @@ async def test_leak(
                 factory=factory,
                 kafka_manager=kafka_manager,
                 mock_qserv=mock_qserv,
-                arq_worker=arq_worker,
+                arq_workers=arq_workers,
                 execution_id=i,
             )
 
         # Delete as much known stored data as possible, force garbage
         # collection, and then stop tracing memory and gather usage.
-        del arq_worker
+        del arq_workers
         mock_qserv.reset()
         respx_mock.reset()
         gc.collect()
