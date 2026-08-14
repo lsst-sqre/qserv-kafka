@@ -15,7 +15,7 @@ async def publish_arq_metrics() -> None:
         arq_events = ArqEvents()
         settings = config.arq_redis_settings
         await arq_events.initialize(manager)
-        await publish_queue_stats(config.arq_queue_slow, settings, arq_events)
-        await publish_queue_stats(config.arq_queue_fast, settings, arq_events)
+        await publish_queue_stats(config.arq_slow_queue, settings, arq_events)
+        await publish_queue_stats(config.arq_fast_queue, settings, arq_events)
     finally:
         await manager.aclose()
