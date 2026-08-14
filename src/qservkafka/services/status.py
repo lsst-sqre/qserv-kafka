@@ -73,13 +73,13 @@ class StatusPublisher:
             Status for the query.
         """
         self._logger.info("Job aborted", **query.to_logging_context())
+        await self._publish_status(query.to_job_status(ExecutionPhase.ABORTED))
         event = QueryAbortEvent(
             job_id=query.job.job_id,
             username=query.job.owner,
             elapsed=query.elapsed,
         )
         await self._events.query_abort.publish(event)
-        await self._publish_status(query.to_job_status(ExecutionPhase.ABORTED))
 
     async def publish_completed(
         self, query: RunningQuery, stats: UploadStats
@@ -95,6 +95,7 @@ class StatusPublisher:
         stats
             Statistics about the uploaded results.
         """
+        await self._publish_status(query.to_completed_job_status(stats))
         logger = self._logger.bind(**query.to_logging_context())
         now = datetime.now(tz=UTC)
         backend_end = query.status.last_update or now
@@ -125,7 +126,6 @@ class StatusPublisher:
         await self._events.query_success.publish(event)
         logger = logger.bind(**event.to_logging_context())
         logger.info("Job complete and results uploaded")
-        await self._publish_status(query.to_completed_job_status(stats))
 
     async def publish_exception(
         self, query: StartedQuery, exc: QueryError
@@ -143,9 +143,8 @@ class StatusPublisher:
         exc
             Exception provoking the query failure.
         """
-        query_id = query.query_id
         error = exc.to_job_error()
-        status = JobStatus.from_error(query.job, error, query_id)
+        status = JobStatus.from_error(query.job, error, query.query_id)
         await self._publish_status(status)
         event = QueryFailureEvent(
             job_id=query.job.job_id,
@@ -201,6 +200,9 @@ class StatusPublisher:
         if query.status.error:
             error = f"{error}: {query.status.error}"
         self._logger.warning(msg, **query.to_logging_context())
+        job_error = JobError(code=code, message=error)
+        status = query.to_job_status(ExecutionPhase.ERROR, job_error)
+        await self._publish_status(status)
         event = QueryFailureEvent(
             job_id=query.job.job_id,
             username=query.job.owner,
@@ -208,9 +210,6 @@ class StatusPublisher:
             elapsed=query.elapsed,
         )
         await self._events.query_failure.publish(event)
-        job_error = JobError(code=code, message=error)
-        status = query.to_job_status(ExecutionPhase.ERROR, job_error)
-        await self._publish_status(status)
 
     async def publish_invalid_request(self, job: JobRun, message: str) -> None:
         """Publish status for an invalid request.

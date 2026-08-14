@@ -22,13 +22,8 @@ from qservkafka.config import config
 from qservkafka.dependencies.context import context_dependency
 from qservkafka.models.kafka import JobRun
 from qservkafka.models.state import RunningQuery
-from qservkafka.workers.main import UploadWorkerSettings
 
-from ..support.arq import (
-    create_arq_worker,
-    run_worker_until_processed,
-    wait_for_dispatch,
-)
+from ..support.arq import ArqWorkers
 from ..support.data import QservKafkaData
 from ..support.datetime import assert_approximately_now
 from ..support.kafka import KafkaTestManager
@@ -50,7 +45,7 @@ async def test_success(
 ) -> None:
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
-        arq_worker = create_arq_worker(factory._context)
+        arq_workers = ArqWorkers(factory._context)
 
         start = datetime.now(tz=UTC)
         job = await kafka_manager.start_query("jobs/data")
@@ -65,15 +60,18 @@ async def test_success(
             last_update=datetime.now(tz=UTC).replace(microsecond=0),
         )
         await mock_qserv.update_status(1, qserv_status)
-        await wait_for_dispatch(factory, 1)
 
-        # Run the background task queue.
-        assert await arq_worker.run_check() == 1
+        # Run the background task queue. The results processing should go into
+        # the slow queue, and then the cleanup job should run from the fast
+        # queue. The completion status message should be sent before cleanup
+        # is done.
+        assert await arq_workers.run_workers(1, only_slow=True) == 1
         status = await kafka_manager.wait_for_status("status/data-completed")
         assert status.query_info
         assert status.query_info.start_time == start_time
         assert status.query_info.end_time
         assert status.query_info.end_time >= start_time
+        assert await arq_workers.run_workers(1, only_fast=True) == 1
 
     # Ensure all query state has been deleted.
     redis_client = redis.get_client()
@@ -104,7 +102,7 @@ async def test_immediate(
 
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
-        arq_worker = create_arq_worker(factory._context)
+        arq_workers = ArqWorkers(factory._context)
 
         await kafka_manager.start_query("jobs/data")
         status = await kafka_manager.wait_for_status(
@@ -113,9 +111,9 @@ async def test_immediate(
         assert status.query_info
         start_time = status.query_info.start_time
 
-        await wait_for_dispatch(factory, 1)
-
-        assert await arq_worker.run_check() == 1
+        # All jobs should be submitted to the fast queue because the query
+        # completed immediately.
+        assert await arq_workers.run_workers(2, only_fast=True) == 2
         status = await kafka_manager.wait_for_status("status/data-completed")
         assert status.query_info
         assert status.query_info.start_time == start_time
@@ -142,7 +140,7 @@ async def test_failure(
 ) -> None:
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
-        arq_worker = create_arq_worker(factory._context)
+        arq_workers = ArqWorkers(factory._context)
 
         await kafka_manager.start_query("jobs/simple")
         status = await kafka_manager.wait_for_status("status/simple-started")
@@ -164,10 +162,9 @@ async def test_failure(
             "qserv/simple-failed", query_begin=start_time, last_update=now
         )
         await mock_qserv.update_status(1, qserv_status)
-        await wait_for_dispatch(factory, 1)
 
-        # Run the background tsk queue.
-        assert await arq_worker.run_check() == 1
+        # Run the background task queue.
+        assert await arq_workers.run_workers(2) == 2
         status = await kafka_manager.wait_for_status("status/simple-failed")
         assert status.timestamp == now
         assert status.query_info
@@ -192,7 +189,7 @@ async def test_too_large(
 ) -> None:
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
-        arq_worker = create_arq_worker(factory._context)
+        arq_workers = ArqWorkers(factory._context)
 
         await kafka_manager.start_query("jobs/simple")
         status = await kafka_manager.wait_for_status("status/simple-started")
@@ -204,10 +201,9 @@ async def test_too_large(
             "qserv/simple-large", query_begin=start_time, last_update=now
         )
         await mock_qserv.update_status(1, qserv_status)
-        await wait_for_dispatch(factory, 1)
 
         # Run the background tsk queue.
-        assert await arq_worker.run_check() == 1
+        assert await arq_workers.run_workers(2) == 2
         status = await kafka_manager.wait_for_status("status/simple-large")
         assert status.timestamp == now
         assert status.query_info
@@ -236,6 +232,9 @@ async def test_qserv_error(
     processing when the API request failed.
     """
     async with LifespanManager(app):
+        factory = context_dependency.create_factory()
+        arq_workers = ArqWorkers(factory._context)
+
         await kafka_manager.start_query("jobs/simple")
         status = await kafka_manager.wait_for_status("status/simple-started")
         assert status.query_info
@@ -250,6 +249,8 @@ async def test_qserv_error(
         )
         await mock_qserv.update_status(1, qserv_status)
         status = await kafka_manager.wait_for_status("status/simple-error")
+
+        assert await arq_workers.run_workers(1) == 1
 
     # Ensure all query state has been deleted.
     redis_client = redis.get_client()
@@ -300,7 +301,7 @@ async def test_cancel(
 ) -> None:
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
-        arq_worker = create_arq_worker(factory._context)
+        arq_workers = ArqWorkers(factory._context)
 
         await kafka_manager.start_query("jobs/simple")
         status = await kafka_manager.wait_for_status("status/simple-started")
@@ -311,9 +312,7 @@ async def test_cancel(
         cancel = data.read_json("cancel/simple")
         await kafka_broker.publish(cancel, config.job_cancel_topic)
 
-        await wait_for_dispatch(factory, 1)
-        assert await arq_worker.run_check() == 1
-
+        assert await arq_workers.run_workers(2) == 2
         status = await kafka_manager.wait_for_status("status/simple-aborted")
         finish = datetime.now(tz=UTC)
         assert_approximately_now(status.timestamp)
@@ -346,44 +345,42 @@ async def test_upload(
 ) -> None:
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
-        upload_worker = create_arq_worker(
-            factory._context, settings=UploadWorkerSettings
-        )
+        arq_workers = ArqWorkers(factory._context)
 
         job = await kafka_manager.start_query("jobs/upload")
         table_name = job.upload_tables[0].table_name
         database_name = job.upload_tables[0].database
 
-        # Jobs with table uploads are dispatched to a separate arq worker
-        # pool so that worker has to run before the job is actually started.
-        assert await run_worker_until_processed(upload_worker) == 1
+        # Jobs with table uploads are dispatched to the fast arq worker pool,
+        # so that worker has to run before the job is actually started.
+        assert await arq_workers.run_workers(1, only_fast=True) == 1
         status = await kafka_manager.wait_for_status("status/upload-started")
         assert status.query_info
         start_time = status.query_info.start_time
         assert mock_qserv.get_uploaded_table() == table_name
         assert mock_qserv.get_uploaded_database() == database_name
 
+        # Mark the job as finished and run the results worker from the slow
+        # queue.
         qserv_status = data.read_qserv_status(
             "qserv/upload-failed",
             query_begin=start_time,
             last_update=datetime.now(tz=UTC).replace(microsecond=0),
         )
         await mock_qserv.update_status(1, qserv_status)
-        await wait_for_dispatch(factory, 1)
+        assert await arq_workers.run_workers(1, only_slow=True) == 1
 
-    # Before the backend worker runs, the database and table should still
-    # exist.
-    assert mock_qserv.get_uploaded_table() == table_name
-    assert mock_qserv.get_uploaded_database() == database_name
+        # Before the cleanup job in the fast backend worker runs, the database
+        # and table should still exist.
+        assert mock_qserv.get_uploaded_table() == table_name
+        assert mock_qserv.get_uploaded_database() == database_name
 
-    # Run the backend worker.
-    arq_worker = create_arq_worker()
-    assert await arq_worker.run_check() == 1
-    await kafka_manager.wait_for_status("status/upload-failed")
+        # Run the fast backend worker to clean up.
+        assert await arq_workers.run_workers(1, only_fast=True) == 1
 
-    # Now that results have been processed, the table should be deleted.
-    assert mock_qserv.get_uploaded_database() is None
-    assert mock_qserv.get_uploaded_table() is None
+        # Now that results have been processed, the table should be deleted.
+        assert mock_qserv.get_uploaded_database() is None
+        assert mock_qserv.get_uploaded_table() is None
 
     # Ensure all query state has been deleted.
     redis_client = redis.get_client()
@@ -411,7 +408,7 @@ async def test_quota(
 
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
-        arq_worker = create_arq_worker(factory._context)
+        arq_workers = ArqWorkers(factory._context)
 
         # Start a couple of queries.
         await kafka_manager.start_query("jobs/data")
@@ -440,10 +437,7 @@ async def test_quota(
             last_update=datetime.now(tz=UTC).replace(microsecond=0),
         )
         await mock_qserv.update_status(1, qserv_status)
-        await wait_for_dispatch(factory, 1)
-
-        # Run the background task queue.
-        assert await arq_worker.run_check() == 1
+        assert await arq_workers.run_workers(2) == 2
         await kafka_manager.wait_for_status("status/data-completed")
 
         # Now, it should be possible to start a new query.
@@ -467,7 +461,7 @@ async def test_wrong_schema(
 ) -> None:
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
-        arq_worker = create_arq_worker(factory._context)
+        arq_workers = ArqWorkers(factory._context)
 
         job = await kafka_manager.start_query("jobs/data-wrong-schema")
         status = await kafka_manager.wait_for_status("status/data-started")
@@ -481,10 +475,7 @@ async def test_wrong_schema(
             last_update=datetime.now(tz=UTC).replace(microsecond=0),
         )
         await mock_qserv.update_status(1, qserv_status)
-        await wait_for_dispatch(factory, 1)
-
-        # Run the background task queue.
-        assert await arq_worker.run_check() == 1
+        assert await arq_workers.run_workers(2) == 2
         await kafka_manager.wait_for_status("status/data-wrong-schema")
 
     # Ensure all query state has been deleted.

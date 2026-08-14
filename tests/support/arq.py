@@ -7,119 +7,117 @@ from datetime import timedelta
 from typing import Any
 
 from arq import Worker
+from safir.metrics.arq import initialize_arq_metrics
 
 from qservkafka.config import config
-from qservkafka.factory import Factory, ProcessContext
-from qservkafka.workers.main import WorkerSettings
+from qservkafka.factory import ProcessContext
+from qservkafka.workers.main import UploadWorkerSettings, WorkerSettings
 
-__all__ = [
-    "create_arq_worker",
-    "run_worker_until_processed",
-    "wait_for_dispatch",
-]
+__all__ = ["ArqWorkers"]
 
 
-def create_arq_worker(
-    context: ProcessContext | None = None,
-    *,
-    settings: type[Any] = WorkerSettings,
-) -> Worker:
-    """Create an arq worker to run queued jobs.
+class ArqWorkers:
+    """Container to manage qserv-kafka arq workers during tests.
 
     Parameters
     ----------
     context
         Process context to use, if given.
-    settings
-        arq worker settings class to use (default `WorkerSettings`).
-
-    Returns
-    -------
-    Worker
-        arq worker.
     """
-    ctx = copy(settings.ctx)
-    if context:
-        ctx["context"] = context
-    settings.redis_settings = config.arq_redis_settings
-    worker_args = set(inspect.signature(Worker).parameters.keys())
-    return Worker(
-        burst=True,
-        ctx=ctx,
-        **{
-            k: v
-            for k, v in vars(settings).items()
-            if k in worker_args and k != "ctx"
-        },
-    )
 
+    def __init__(self, context: ProcessContext) -> None:
+        self._context = context
+        self._metrics_initialized = False
+        self._fast_worker = self._create_worker(UploadWorkerSettings)
+        self._slow_worker = self._create_worker(WorkerSettings)
 
-async def run_worker_until_processed(
-    worker: Worker,
-    *,
-    timeout: timedelta = timedelta(seconds=5),
-) -> int:
-    """Run an arq worker repeatedly until it processes a job,
-    to handle the delay during upload jobs between the Kafka consumer
-    enqueuing a job and it becoming visible to the worker.
+        self._fast_count = 0
+        self._slow_count = 0
 
-    Parameters
-    ----------
-    worker
-        Worker to run.
-    timeout
-        How long to wait for a job to appear before giving up.
+    async def run_workers(
+        self,
+        expected: int,
+        *,
+        only_fast: bool = False,
+        only_slow: bool = False,
+        timeout: timedelta = timedelta(seconds=5),
+    ) -> int:
+        """Run the arq workers until the given number have completed.
 
-    Returns
-    -------
-    int
-        Number of jobs processed by the run that found at least one.
+        There is an unpredictable delay in dispatching the job to the user
+        through Redis, so poll both workers until at least the given expected
+        number of workers have run and return the total number.
 
-    Raises
-    ------
-    TimeoutError
-        Raised if no job was processed within the timeout.
-    """
-    async with asyncio.timeout(timeout.total_seconds()):
-        while True:
-            count = await worker.run_check()
-            if count:
-                return count
-            await asyncio.sleep(0.05)
+        Parameters
+        ----------
+        expected
+            How many total workers should complete.
+        only_fast
+            Only run the fast queue.
+        only_slow
+            Only run the slow queue.
+        timeout
+            How long to wait for the given number of workers to complete.
 
+        Returns
+        -------
+        int
+            Number of jobs processed by the run that found at least one.
 
-async def wait_for_dispatch(
-    factory: Factory,
-    query_id: int,
-    *,
-    timeout: timedelta = timedelta(seconds=1),
-) -> None:
-    """Wait for a job to be queued for the result worker.
+        Raises
+        ------
+        TimeoutError
+            Raised if no job was processed within the timeout.
+        """
+        assert not (only_fast and only_slow)
 
-    Parameters
-    ----------
-    factory
-        Component factory to use.
-    query_id
-        Qserv query ID.
-    timeout
-        How long to wait for the dispatch before giving up.
+        # This is an ugly hack to work around the assumption the Safir arq
+        # metrics makes that each worker runs in a separate process. If each
+        # worker initializes metrics separately, the metrics library complains
+        # about double initializations; if neither does, it complains about
+        # missing initializations. Initialize manually, once, and copy the
+        # resulting data into both worker contexts.
+        if not self._metrics_initialized:
+            ctx: dict[str, Any] = {}
+            await initialize_arq_metrics(self._context.event_manager, ctx)
+            self._fast_worker.ctx.update(ctx)
+            self._slow_worker.ctx.update(ctx)
+            self._metrics_initialized = True
 
-    Raises
-    ------
-    TimeoutError
-        Raised if it takes more than the timeout interval for the job to be
-        dispatched to the backend worker.
-    """
-    state_store = factory.create_query_state_store()
+        # Now, run the workers as needed.
+        async with asyncio.timeout(timeout.total_seconds()):
+            count = 0
+            while True:
+                if not only_slow:
+                    fast_count = await self._fast_worker.run_check()
+                    count += fast_count - self._fast_count
+                    self._fast_count = fast_count
+                if not only_fast:
+                    slow_count = await self._slow_worker.run_check()
+                    count += slow_count - self._slow_count
+                    self._slow_count = slow_count
+                if count >= expected:
+                    return count
+                await asyncio.sleep(0.01)
 
-    # Use polling of Redis, since subscribing to key updates in Redis is
-    # complicated enough that I don't feel like writing all that code.
-    poll_delay = config.backend_poll_interval.total_seconds() / 2
-    async with asyncio.timeout(timeout.total_seconds()):
-        while True:
-            query = await state_store.get_query(str(query_id))
-            assert query
-            if query.result_queued:
-                return
-            await asyncio.sleep(poll_delay)
+    def _create_worker(self, settings: type[Any] = WorkerSettings) -> Worker:
+        """Create an arq worker to run queued jobs.
+
+        Parameters
+        ----------
+        settings
+            arq worker settings class to use.
+
+        Returns
+        -------
+        Worker
+            arq worker.
+        """
+        ctx = copy(settings.ctx)
+        ctx["context"] = self._context
+        ctx["metrics_initialized"] = True
+        settings.redis_settings = config.arq_redis_settings
+        valid = set(inspect.signature(Worker).parameters.keys())
+        params = {k: v for k, v in vars(settings).items() if k in valid}
+        params.pop("ctx", None)
+        return Worker(burst=True, ctx=ctx, **params)
