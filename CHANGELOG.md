@@ -7,6 +7,30 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-6.0.0'></a>
+## 6.0.0 (2026-08-14)
+
+### Backwards-incompatible changes
+
+- Rename the worker pools to fast and slow and change the configuration settings accordingly. The maximum number of jobs is now configured with `arqFastMaxJobs` and `arqSlowMaxJobs`.
+- Remove the separate `uploadWorkerTimeout` setting. This is now configured based on the Qserv upload timeout.
+- Remove migration support from qserv-kafka versions prior to 4.3.0. Direct upgrades from earlier versions are not supported; first, update to an earlier version and then to the latest version after all in-progress queries have finished or expired.
+
+### New features
+
+- Clean up completed queries in an arq worker instead of potentially in the monitor thread or Kafka handler.
+- Do result processing of queries that finish immediately in the fast arq worker queue instead of the slow arq result worker queue so that they don't get stuck behind large results.
+
+### Bug fixes
+
+- After temporary table upload failure, only try to delete temporary databases that were successfully created.
+
+### Other changes
+
+- Drop the `immediate` and `delete_elapsed` fields from metrics events. `immediate` is no longer a meaningful concept since all queries are dispatched to result workers, and `delete_elapsed` is no longer tracked as part of query execution since it does not delay returning the results of the query.
+- Publish `QueryFailureEvent` metrics for all queries that were created and then failed, including for API errors attempting to retrieve their status.
+- Include the username running the failing query in exception reports to Sentry and Slack.
+
 <a id='changelog-5.0.1'></a>
 ## 5.0.1 (2026-08-06)
 
