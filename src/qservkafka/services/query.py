@@ -144,11 +144,10 @@ class QueryService:
         logger = self._logger.bind(**query.to_logging_context())
         logger.debug("Cleaning up query data")
 
-        # Remove internal tracking. Everything after this point will not be
-        # retried on failure, just orphaned.
+        # Remove internal tracking.
         await self._state.delete_query(query.query_id)
 
-        # Delete the uploaded tables and the results if configured to do so.
+        # Delete the uploaded tables, and the results if configured to do so.
         await self._delete_uploaded_databases(query.job)
         if query.has_results() and config.qserv_delete_queries:
             try:
