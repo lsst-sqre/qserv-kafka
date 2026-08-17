@@ -400,7 +400,7 @@ async def build_process_context(
     """
     match config.backend:
         case BackendType.BIGQUERY:
-            return await ProcessContext.create(kafka_broker)
+            return await BigQueryProcessContext.create(kafka_broker)
         case BackendType.QSERV:
             if worker_max_jobs is not None:
                 return await QservProcessContext.create(
