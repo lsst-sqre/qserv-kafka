@@ -2,7 +2,7 @@
 
 import asyncio
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from safir.arq import ArqQueue
 from safir.sentry import report_exception
@@ -110,7 +110,43 @@ class QueryService:
         if not query:
             logger.info("Ignoring cancel of unknown or completed job")
             return
+        await self._cancel_backend_query(query_id, query.job.owner, logger)
 
+    async def cancel_timed_out_query(
+        self, query: RunningQuery, timeout: timedelta
+    ) -> None:
+        """Cancel a query that exceeded its maximum execution duration.
+
+        Parameters
+        ----------
+        query
+            Running query that has exceeded its configured timeout.
+        timeout
+            The maximum execution duration that was exceeded.
+        """
+        logger = self._logger.bind(**query.to_logging_context())
+        logger.info(
+            "Cancelling query that exceeded maximum execution duration",
+            timeout=timeout.total_seconds(),
+        )
+        await self._cancel_backend_query(
+            query.query_id, query.job.owner, logger
+        )
+
+    async def _cancel_backend_query(
+        self, query_id: str, owner: str, logger: BoundLogger
+    ) -> None:
+        """Ask the backend to cancel a query, tolerating benign races.
+
+        Parameters
+        ----------
+        query_id
+            ID of the query to cancel.
+        owner
+            Username of the query owner, for error reporting.
+        logger
+            Logger to use.
+        """
         # Cancel the query. If this fails, check to see if it only failed
         # because the job finished and, if so, quietly do nothing. Otherwise,
         # log an exception, which is the best we can do since we don't have a
@@ -118,7 +154,7 @@ class QueryService:
         try:
             await self._backend.cancel_query(query_id)
         except BackendApiError as e:
-            e.user = cancel.owner
+            e.user = owner
             try:
                 status = await self._backend.get_query_status(query_id)
                 if status.status != AsyncQueryPhase.EXECUTING:

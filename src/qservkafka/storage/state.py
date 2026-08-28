@@ -70,6 +70,19 @@ class QueryStateStore:
         """
         return await self._storage.get(query_id)
 
+    async def mark_cancel_requested(self, query_id: str) -> None:
+        """Mark a query as having had cancellation requested.
+
+        Parameters
+        ----------
+        query_id
+            Backend query ID.
+        """
+        query = await self.get_query(query_id)
+        if query:
+            query.cancel_requested = True
+            await self.store_query(query)
+
     async def mark_queued_query(self, query_id: str) -> None:
         """Mark a query as queued.
 

@@ -1,19 +1,33 @@
 """Tests for the query status monitor."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import call, patch
 
 import pytest
+import respx
 from safir.arq import RedisArqQueue
 from safir.metrics import MockEventPublisher
 from testcontainers.redis import RedisContainer
 
 from qservkafka.factory import Factory
 from qservkafka.models.kafka import JobRun
+from qservkafka.models.qserv import QservQueryPhase
 
 from ..support.data import QservKafkaData
 from ..support.kafka import read_status_message
 from ..support.qserv import MockQserv
+
+
+def _cancel_call_count(respx_mock: respx.Router, query_id: int) -> int:
+    """Count how many times a query was cancelled in the backend."""
+    return len(
+        [
+            c
+            for c in respx_mock.calls
+            if c.request.method == "DELETE"
+            and c.request.url.path.endswith(f"/query-async/{query_id}")
+        ]
+    )
 
 
 @pytest.mark.asyncio
@@ -119,3 +133,42 @@ async def test_quota(
     redis_client.set("rate:other-user", b"1")
     await monitor.reconcile_rate_limits()
     assert redis_client.get("rate:other-user") is None
+
+
+@pytest.mark.asyncio
+async def test_execution_timeout(
+    *,
+    data: QservKafkaData,
+    factory: Factory,
+    mock_qserv: MockQserv,
+    respx_mock: respx.Router,
+) -> None:
+    query_service = factory.create_query_service()
+    state_store = factory.create_query_state_store()
+    monitor = await factory.create_query_monitor()
+    job = data.read_pydantic(JobRun, "jobs/timeout")
+
+    await query_service.handle_query(job)
+    read_status_message(factory)
+
+    await monitor.check_status()
+    assert mock_qserv.get_status(1).status == QservQueryPhase.EXECUTING
+    assert _cancel_call_count(respx_mock, 1) == 0
+
+    query = await state_store.get_query(str(1))
+    assert query
+    # Make query appear to have exceeded timeout of 60s
+    query.created -= timedelta(seconds=100)
+    await state_store.store_query(query)
+
+    # This should cause the query to be cancelled
+    await monitor.check_status()
+    assert mock_qserv.get_status(1).status == QservQueryPhase.ABORTED
+    assert _cancel_call_count(respx_mock, 1) == 1
+    query = await state_store.get_query(str(1))
+    assert query
+    assert query.cancel_requested is True
+
+    # Make sure we're only requesting cancellation once
+    await monitor.check_status()
+    assert _cancel_call_count(respx_mock, 1) == 1

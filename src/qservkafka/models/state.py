@@ -98,6 +98,17 @@ class RunningQuery(StartedQuery):
         bool, Field(title="Whether queued for result procesing")
     ]
 
+    cancel_requested: Annotated[
+        bool,
+        Field(
+            title="Whether cancellation was requested",
+            description=(
+                "Set once the bridge has asked the backend to cancel this"
+                " query because it exceeded its maximum execution duration."
+            ),
+        ),
+    ] = False
+
     @classmethod
     def from_started_query(
         cls, query: StartedQuery, status: QueryStatus
@@ -116,6 +127,9 @@ class RunningQuery(StartedQuery):
         Query
             Query state.
         """
+        cancel_requested = False
+        if isinstance(query, RunningQuery):
+            cancel_requested = query.cancel_requested
         return cls(
             query_id=query.query_id,
             queued=query.queued,
@@ -124,6 +138,7 @@ class RunningQuery(StartedQuery):
             job=query.job,
             status=status,
             result_queued=False,
+            cancel_requested=cancel_requested,
         )
 
     @override
