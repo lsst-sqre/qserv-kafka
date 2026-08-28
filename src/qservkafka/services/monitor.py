@@ -2,6 +2,7 @@
 
 import asyncio
 from collections import Counter
+from datetime import UTC, datetime, timedelta
 
 from safir.arq import ArqQueue
 from structlog.stdlib import BoundLogger
@@ -119,6 +120,12 @@ class QueryMonitor:
             logger.debug("Skipping already queued query")
             return
 
+        exceeded_timeout = self._exceeded_timeout(query)
+        if not query.cancel_requested and exceeded_timeout is not None:
+            await self._query.cancel_timed_out_query(query, exceeded_timeout)
+            query.cancel_requested = True
+            await self._state.mark_cancel_requested(query.query_id)
+
         # Send updates to executing queries directly from the background
         # monitoring task for faster updates, but dispatch any completed
         # queries to a result worker.
@@ -145,6 +152,28 @@ class QueryMonitor:
             await self._arq_slow.enqueue("finish_query", query.query_id)
             await self._state.mark_queued_query(query.query_id)
             logger.info("Dispatched finished query to worker")
+
+    def _exceeded_timeout(self, query: RunningQuery) -> timedelta | None:
+        """Return the timeout a query has exceeded (if any).
+
+        Parameters
+        ----------
+        query
+            Running query to check.
+
+        Returns
+        -------
+        timedelta or None
+            The configured maximum execution duration, if the query has run
+            longer than it and should be cancelled. `None` if the
+            query has no configured timeout, or has not yet exceeded it.
+        """
+        timeout = query.job.timeout
+        if timeout is None:
+            return None
+        if datetime.now(tz=UTC) - query.created > timeout:
+            return timeout
+        return None
 
     async def reconcile_rate_limits(self) -> None:
         """Reconcile rate limits against currently running queries."""
