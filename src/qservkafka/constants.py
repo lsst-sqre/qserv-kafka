@@ -5,6 +5,10 @@ from datetime import timedelta
 __all__ = [
     "ARQ_TIMEOUT_GRACE",
     "MAXIMUM_QUERY_LIFETIME",
+    "PARQUET_BATCH_MAX_ROWS",
+    "PARQUET_BATCH_MIN_ROWS",
+    "PARQUET_ROW_GROUP_MAX_ROWS",
+    "PARQUET_ROW_GROUP_MIN_ROWS",
     "RATE_LIMIT_RECONCILE_INTERVAL",
     "REDIS_BACKOFF_MAX",
     "REDIS_BACKOFF_START",
@@ -21,6 +25,18 @@ This should be long enough to allow for asking the REST API for the status,
 but still shorter than the additional grace period Kubernetes is configured
 to give the worker pod.
 """
+
+PARQUET_BATCH_MIN_ROWS = 100
+"""Lower bound on the derived VOParquet batch size (rows)."""
+
+PARQUET_BATCH_MAX_ROWS = 10000
+"""Upper bound on the derived VOParquet batch size (rows)."""
+
+PARQUET_ROW_GROUP_MIN_ROWS = 1000
+"""Lower bound on the derived VOParquet row group size (rows)."""
+
+PARQUET_ROW_GROUP_MAX_ROWS = 100000
+"""Upper bound on the derived VOParquet row group size (rows)."""
 
 MAXIMUM_QUERY_LIFETIME = timedelta(days=1)
 """How long before we forget about a query entirely.

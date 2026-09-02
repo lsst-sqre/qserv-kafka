@@ -19,7 +19,13 @@ from rubin.repertoire import DiscoveryClient
 from structlog.stdlib import BoundLogger
 
 from ..config import config as global_config
-from ..constants import UPLOAD_BUFFER_SIZE
+from ..constants import (
+    PARQUET_BATCH_MAX_ROWS,
+    PARQUET_BATCH_MIN_ROWS,
+    PARQUET_ROW_GROUP_MAX_ROWS,
+    PARQUET_ROW_GROUP_MIN_ROWS,
+    UPLOAD_BUFFER_SIZE,
+)
 from ..exceptions import EncodingError, UploadWebError
 from ..models.kafka import JobResultColumnType, JobResultConfig, JobResultType
 from ..models.votable import EncodedSize, VOTablePrimitive
@@ -36,6 +42,11 @@ __all__ = [
 
 # Set up the pyarrow memory pool.
 pa.set_memory_pool(pa.system_memory_pool())
+
+
+def _constrain(value: int, low: int, high: int) -> int:
+    """Constrain ``value`` to the inclusive range ``[low, high]``."""
+    return max(low, min(value, high))
 
 
 class StreamingAdapter:
@@ -618,11 +629,30 @@ class VOParquetEncoder(VOTableEncoder):
         super().__init__(config, discovery_client, logger)
         self._predetermined_overflow = overflow
 
-        self._batch_size = global_config.parquet_batch_size
         self._column_names = [col.name for col in config.column_types]
         self._arrow_schema = self._build_arrow_schema()
         self._schema_with_metadata = self._build_schema_with_metadata(
             overflow=self._predetermined_overflow
+        )
+
+        # Calculate the batch and row group sizes from a target number of
+        # cells (rows times columns). This is so that memory use stays
+        # roughly constant regardless of column size. The row group is
+        # assembled from those batches and is kept larger so the file footer
+        # stays relatively small.
+        columns = max(1, len(self._column_names))
+        self._batch_rows = _constrain(
+            global_config.parquet_batch_cells // columns,
+            PARQUET_BATCH_MIN_ROWS,
+            PARQUET_BATCH_MAX_ROWS,
+        )
+        self._row_group_rows = max(
+            self._batch_rows,
+            _constrain(
+                global_config.parquet_row_group_cells // columns,
+                PARQUET_ROW_GROUP_MIN_ROWS,
+                PARQUET_ROW_GROUP_MAX_ROWS,
+            ),
         )
 
     @property
@@ -662,46 +692,71 @@ class VOParquetEncoder(VOTableEncoder):
         )
 
         current_batch = []
-        batch = None
+        pending = []
+        pending_rows = 0
         try:
             async for row in results:
                 if maxrec is not None and self._total_rows >= maxrec:
                     break
 
-                processed_row = await self._process_row_for_parquet(row)
-                current_batch.append(processed_row)
+                current_batch.append(await self._process_row_for_parquet(row))
                 self._total_rows += 1
 
-                if len(current_batch) >= self._batch_size:
-                    batch = self._batch_to_arrow_record_batch(current_batch)
+                if len(current_batch) >= self._batch_rows:
+                    pending.append(
+                        self._batch_to_arrow_record_batch(current_batch)
+                    )
+                    pending_rows += len(current_batch)
                     current_batch.clear()
 
-                    writer.write_batch(
-                        batch=batch, row_group_size=self._batch_size
-                    )
-                    buffered_bytes = buffer.flush_buffer()
+                if pending_rows >= self._row_group_rows:
+                    yield self._write_row_group(writer, buffer, pending)
+                    pending_rows = 0
 
-                    if buffered_bytes:
-                        yield buffered_bytes
+                if self._total_rows % 100000 == 0:
+                    self._logger.info(f"Processed {self._total_rows:,} rows")
 
-                    if self._total_rows % 100000 == 0:
-                        self._logger.info(
-                            f"Processed {self._total_rows:,} rows"
-                        )
-
+            # Flush whatever is left as a final row group, then the footer.
             if current_batch:
-                batch = self._batch_to_arrow_record_batch(current_batch)
-                writer.write_batch(batch)
-
+                pending.append(
+                    self._batch_to_arrow_record_batch(current_batch)
+                )
+            if pending:
+                yield self._write_row_group(writer, buffer, pending)
             writer.close()
-            final_bytes = buffer.flush_buffer()
-
-            if final_bytes:
-                yield final_bytes
-
             self._encoded_size = buffer.written
+            yield buffer.flush_buffer()
         finally:
             await asyncio.shield(results.aclose())
+
+    def _write_row_group(
+        self,
+        writer: pq.ParquetWriter,
+        buffer: StreamingAdapter,
+        pending: list[pa.RecordBatch],
+    ) -> bytes:
+        """Write the accumulated record batches as one Parquet row group.
+
+        Parameters
+        ----------
+        writer
+            Open Parquet writer.
+        buffer
+            Streaming buffer the writer writes into.
+        pending
+            Record batches to write. Cleared in place.
+
+        Returns
+        -------
+        bytes
+            Encoded bytes the writer produced, drained from the streaming
+            buffer and ready to yield.
+        """
+        # zero-copy wrap
+        table = pa.Table.from_batches(pending, schema=self._arrow_schema)
+        writer.write_table(table)
+        pending.clear()
+        return buffer.flush_buffer()
 
     def _batch_to_arrow_record_batch(
         self, batch_data: list[dict[str, Any]]

@@ -262,11 +262,22 @@ class Config(BaseSettings):
 
     name: str = Field("qserv-kafka", title="Name of application")
 
-    parquet_batch_size: int = Field(
-        2000,
-        title="VOParquet encoding batch size",
+    parquet_batch_cells: int = Field(
+        250000,
+        title="VOParquet batch cell target",
         description=(
-            "Number of rows to batch together when encoding Parquet files."
+            "Target number of cells (rows times columns) to accumulate as"
+            " Python objects before converting them to an Arrow record batch"
+            " when encoding Parquet."
+        ),
+    )
+
+    parquet_row_group_cells: int = Field(
+        5000000,
+        title="VOParquet row group cell target",
+        description=(
+            "Target number of cells (rows times columns) per Parquet row"
+            " group."
         ),
     )
 
