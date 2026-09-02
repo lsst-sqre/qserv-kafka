@@ -631,9 +631,6 @@ class VOParquetEncoder(VOTableEncoder):
 
         self._column_names = [col.name for col in config.column_types]
         self._arrow_schema = self._build_arrow_schema()
-        self._schema_with_metadata = self._build_schema_with_metadata(
-            overflow=self._predetermined_overflow
-        )
 
         # Calculate the batch and row group sizes from a target number of
         # cells (rows times columns). This is so that memory use stays
@@ -686,7 +683,7 @@ class VOParquetEncoder(VOTableEncoder):
         buffer = StreamingAdapter()
         writer = pq.ParquetWriter(
             buffer,
-            self._schema_with_metadata,
+            self._arrow_schema,
             compression="snappy",
             use_dictionary=False,
         )
@@ -694,9 +691,11 @@ class VOParquetEncoder(VOTableEncoder):
         current_batch = []
         pending = []
         pending_rows = 0
+        overflow = self._predetermined_overflow
         try:
             async for row in results:
                 if maxrec is not None and self._total_rows >= maxrec:
+                    overflow = True
                     break
 
                 current_batch.append(await self._process_row_for_parquet(row))
@@ -723,6 +722,9 @@ class VOParquetEncoder(VOTableEncoder):
                 )
             if pending:
                 yield self._write_row_group(writer, buffer, pending)
+            writer.add_key_value_metadata(
+                self._votable_metadata(overflow=overflow)
+            )
             writer.close()
             self._encoded_size = buffer.written
             yield buffer.flush_buffer()
@@ -786,8 +788,8 @@ class VOParquetEncoder(VOTableEncoder):
 
         return pa.RecordBatch.from_arrays(arrays, names=self._column_names)
 
-    def _build_schema_with_metadata(self, *, overflow: bool) -> pa.Schema:
-        """Build Arrow schema with VOParquet metadata.
+    def _votable_metadata(self, *, overflow: bool) -> dict[str, str]:
+        """Build the VOParquet key/value metadata for the embedded VOTable.
 
         Parameters
         ----------
@@ -796,22 +798,18 @@ class VOParquetEncoder(VOTableEncoder):
 
         Returns
         -------
-        pa.Schema
-            Arrow schema with embedded VOTable metadata.
+        dict of str
+            Key/value metadata following the VOParquet 1.0 specification.
         """
         if overflow:
             footer = self._config.envelope.footer_overflow.encode().decode()
         else:
             footer = self._config.envelope.footer.encode().decode()
-
         votable_xml = self._config.envelope.header.encode().decode() + footer
-
-        metadata = {
+        return {
             "IVOA.VOTable-Parquet.version": "1.0",
             "IVOA.VOTable-Parquet.content": votable_xml,
         }
-
-        return self._arrow_schema.with_metadata(metadata)
 
     def _build_arrow_schema(self) -> pa.Schema:
         """Build Arrow schema with proper type mapping.
