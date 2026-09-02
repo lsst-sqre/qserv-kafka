@@ -702,6 +702,10 @@ class VOParquetEncoder(VOTableEncoder):
                 self._total_rows += 1
 
                 if len(current_batch) >= self._batch_rows:
+                    # When the batch is full, fold the Python rows into one
+                    # Arrow record batch (compact columnar form) and release
+                    # them. Batches collect in pending until they add up to
+                    # a row group.
                     pending.append(
                         self._batch_to_arrow_record_batch(current_batch)
                     )
@@ -756,7 +760,7 @@ class VOParquetEncoder(VOTableEncoder):
         """
         # zero-copy wrap
         table = pa.Table.from_batches(pending, schema=self._arrow_schema)
-        writer.write_table(table)
+        writer.write_table(table, row_group_size=table.num_rows)
         pending.clear()
         return buffer.flush_buffer()
 
