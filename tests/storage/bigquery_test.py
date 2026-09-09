@@ -5,8 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, Mock
 
-import google.cloud.bigquery as google_bigquery
-import google.cloud.bigquery_storage as google_bq_storage
 import pyarrow as pa
 import pytest
 from google.api_core.exceptions import GoogleAPIError
@@ -53,18 +51,8 @@ def bigquery_client(
     mock_bq_client: MagicMock,
     mock_storage_client: MagicMock,
     logger: BoundLogger,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> BigQueryClient:
     """Create a BigQueryClient with mocked dependencies."""
-    monkeypatch.setattr(
-        google_bigquery, "Client", MagicMock(return_value=mock_bq_client)
-    )
-    monkeypatch.setattr(
-        google_bq_storage,
-        "BigQueryReadClient",
-        MagicMock(return_value=mock_storage_client),
-    )
-
     http_client = Mock(spec=AsyncClient)
     events = Mock(spec=Events)
     slack_client = None
@@ -72,6 +60,8 @@ def bigquery_client(
     return BigQueryClient(
         project="test-project",
         location="US",
+        bigquery_client=mock_bq_client,
+        bigquery_read_client=mock_storage_client,
         http_client=http_client,
         events=events,
         slack_client=slack_client,
