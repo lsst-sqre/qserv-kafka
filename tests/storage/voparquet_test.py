@@ -21,7 +21,6 @@ from qservkafka.models.kafka import (
     JobResultSerialization,
     JobResultType,
 )
-from qservkafka.storage import votable as votable_module
 from qservkafka.storage.votable import VOParquetEncoder
 
 
@@ -44,14 +43,6 @@ def build_config(columns: list[dict[str, Any]]) -> JobResultConfig:
             "</RESOURCE></VOTABLE>",
         ),
     )
-
-
-def _tiny_sizes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Shrink the batch and row group bounds so small results span several."""
-    monkeypatch.setattr(votable_module, "PARQUET_BATCH_MIN_ROWS", 20)
-    monkeypatch.setattr(votable_module, "PARQUET_ROW_GROUP_MIN_ROWS", 60)
-    monkeypatch.setattr(config_module.config, "parquet_batch_cells", 20)
-    monkeypatch.setattr(config_module.config, "parquet_row_group_cells", 60)
 
 
 async def data_generator(
@@ -390,13 +381,7 @@ async def test_encoder_properties() -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_and_row_group_sizes_adapt_to_columns(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(config_module.config, "parquet_batch_cells", 250000)
-    monkeypatch.setattr(
-        config_module.config, "parquet_row_group_cells", 5000000
-    )
+async def test_batch_and_row_group_sizes_adapt_to_columns() -> None:
     logger = get_logger(__name__)
 
     def make(n_columns: int) -> VOParquetEncoder:
@@ -412,17 +397,18 @@ async def test_batch_and_row_group_sizes_adapt_to_columns(
     assert wide._row_group_rows == 20000
 
     very_wide = make(100000)
-    assert very_wide._batch_rows == 100
-    assert very_wide._row_group_rows == 1000
+    assert very_wide._batch_rows == 2
+    assert very_wide._row_group_rows == 50
 
     narrow = make(1)
-    assert narrow._batch_rows == 10000
-    assert narrow._row_group_rows == 100000
+    assert narrow._batch_rows == 250000
+    assert narrow._row_group_rows == 5000000
 
 
 @pytest.mark.asyncio
 async def test_multiple_row_groups(monkeypatch: pytest.MonkeyPatch) -> None:
-    _tiny_sizes(monkeypatch)
+    monkeypatch.setattr(config_module.config, "parquet_batch_cells", 40)
+    monkeypatch.setattr(config_module.config, "parquet_row_group_cells", 120)
     columns = [
         {"name": "id", "datatype": "int"},
         {"name": "value", "datatype": "double"},
@@ -457,7 +443,8 @@ async def test_multiple_row_groups(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_maxrec_across_row_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _tiny_sizes(monkeypatch)
+    monkeypatch.setattr(config_module.config, "parquet_batch_cells", 20)
+    monkeypatch.setattr(config_module.config, "parquet_row_group_cells", 60)
     columns = [{"name": "id", "datatype": "int"}]
     encoder = VOParquetEncoder(
         build_config(columns), DiscoveryClient(), get_logger(__name__)

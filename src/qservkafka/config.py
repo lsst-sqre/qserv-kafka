@@ -268,8 +268,11 @@ class Config(BaseSettings):
         description=(
             "Target number of cells (rows times columns) to accumulate as"
             " Python objects before converting them to an Arrow record batch"
-            " when encoding Parquet."
+            " when encoding Parquet. The per-result batch size in rows is"
+            " this value divided by the column count (at least one row)."
         ),
+        ge=1000,
+        le=10000000,
     )
 
     parquet_row_group_cells: int = Field(
@@ -277,8 +280,12 @@ class Config(BaseSettings):
         title="VOParquet row group cell target",
         description=(
             "Target number of cells (rows times columns) per Parquet row"
-            " group."
+            " group. The per-result row group size in rows is this value"
+            " divided by the column count, and never smaller than the batch"
+            " size."
         ),
+        ge=10000,
+        le=200000000,
     )
 
     qserv_database_overflow: int = Field(

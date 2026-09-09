@@ -19,13 +19,7 @@ from rubin.repertoire import DiscoveryClient
 from structlog.stdlib import BoundLogger
 
 from ..config import config as global_config
-from ..constants import (
-    PARQUET_BATCH_MAX_ROWS,
-    PARQUET_BATCH_MIN_ROWS,
-    PARQUET_ROW_GROUP_MAX_ROWS,
-    PARQUET_ROW_GROUP_MIN_ROWS,
-    UPLOAD_BUFFER_SIZE,
-)
+from ..constants import UPLOAD_BUFFER_SIZE
 from ..exceptions import EncodingError, UploadWebError
 from ..models.kafka import JobResultColumnType, JobResultConfig, JobResultType
 from ..models.votable import EncodedSize, VOTablePrimitive
@@ -42,11 +36,6 @@ __all__ = [
 
 # Set up the pyarrow memory pool.
 pa.set_memory_pool(pa.system_memory_pool())
-
-
-def _constrain(value: int, low: int, high: int) -> int:
-    """Constrain ``value`` to the inclusive range ``[low, high]``."""
-    return max(low, min(value, high))
 
 
 class StreamingAdapter:
@@ -638,18 +627,10 @@ class VOParquetEncoder(VOTableEncoder):
         # assembled from those batches and is kept larger so the file footer
         # stays relatively small.
         columns = max(1, len(self._column_names))
-        self._batch_rows = _constrain(
-            global_config.parquet_batch_cells // columns,
-            PARQUET_BATCH_MIN_ROWS,
-            PARQUET_BATCH_MAX_ROWS,
-        )
+        self._batch_rows = max(1, global_config.parquet_batch_cells // columns)
         self._row_group_rows = max(
             self._batch_rows,
-            _constrain(
-                global_config.parquet_row_group_cells // columns,
-                PARQUET_ROW_GROUP_MIN_ROWS,
-                PARQUET_ROW_GROUP_MAX_ROWS,
-            ),
+            global_config.parquet_row_group_cells // columns,
         )
 
     @property
