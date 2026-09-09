@@ -12,6 +12,7 @@ from rubin.repertoire import DiscoveryClient
 from sqlalchemy import Row
 from structlog.stdlib import get_logger
 
+from qservkafka import config as config_module
 from qservkafka.models.kafka import (
     JobResultColumnType,
     JobResultConfig,
@@ -21,6 +22,27 @@ from qservkafka.models.kafka import (
     JobResultType,
 )
 from qservkafka.storage.votable import VOParquetEncoder
+
+
+def build_config(columns: list[dict[str, Any]]) -> JobResultConfig:
+    """Build a `JobResultConfig` for the given column definitions."""
+    return JobResultConfig(
+        format=JobResultFormat(
+            type=JobResultType.VOTable,
+            serialization=JobResultSerialization.BINARY2,
+        ),
+        column_types=[
+            JobResultColumnType.model_validate(col) for col in columns
+        ],
+        envelope=JobResultEnvelope(
+            header='<?xml version="1.0"?><VOTABLE><RESOURCE><TABLE>'
+            '<FIELD name="test" datatype="int"/>',
+            footer="</TABLE></RESOURCE></VOTABLE>",
+            footer_overflow="</TABLE>"
+            '<INFO name="QUERY_STATUS" value="OVERFLOW"/>'
+            "</RESOURCE></VOTABLE>",
+        ),
+    )
 
 
 async def data_generator(
@@ -356,3 +378,88 @@ async def test_encoder_properties() -> None:
 
     total_size = sum(len(chunk) for chunk in chunks)
     assert encoder.encoded_size == total_size
+
+
+@pytest.mark.asyncio
+async def test_batch_and_row_group_sizes_adapt_to_columns() -> None:
+    logger = get_logger(__name__)
+
+    def make(n_columns: int) -> VOParquetEncoder:
+        columns = [
+            {"name": f"c{i}", "datatype": "double"} for i in range(n_columns)
+        ]
+        return VOParquetEncoder(
+            build_config(columns), DiscoveryClient(), logger
+        )
+
+    wide = make(250)
+    assert wide._batch_rows == 1000
+    assert wide._row_group_rows == 20000
+
+    very_wide = make(100000)
+    assert very_wide._batch_rows == 2
+    assert very_wide._row_group_rows == 50
+
+    narrow = make(1)
+    assert narrow._batch_rows == 250000
+    assert narrow._row_group_rows == 5000000
+
+
+@pytest.mark.asyncio
+async def test_multiple_row_groups(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config_module.config, "parquet_batch_cells", 40)
+    monkeypatch.setattr(config_module.config, "parquet_row_group_cells", 120)
+    columns = [
+        {"name": "id", "datatype": "int"},
+        {"name": "value", "datatype": "double"},
+    ]
+    encoder = VOParquetEncoder(
+        build_config(columns), DiscoveryClient(), get_logger(__name__)
+    )
+
+    assert encoder._batch_rows == 20
+    assert encoder._row_group_rows == 60
+
+    data = [(i, i * 1.5) for i in range(250)]
+    parquet_data = b""
+    async for chunk in encoder.encode(data_generator(data)):
+        parquet_data += chunk
+
+    with tempfile.NamedTemporaryFile(suffix=".parquet") as tmp:
+        tmp.write(parquet_data)
+        tmp.flush()
+        parquet_file = pq.ParquetFile(tmp.name)
+        assert parquet_file.metadata.num_row_groups == 5
+
+        table = pq.read_table(tmp.name)
+        assert len(table) == 250
+        assert table["id"].to_pylist() == list(range(250))
+        assert table["value"][249].as_py() == pytest.approx(249 * 1.5)
+
+    assert encoder.total_rows == 250
+
+
+@pytest.mark.asyncio
+async def test_maxrec_across_row_groups(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config_module.config, "parquet_batch_cells", 20)
+    monkeypatch.setattr(config_module.config, "parquet_row_group_cells", 60)
+    columns = [{"name": "id", "datatype": "int"}]
+    encoder = VOParquetEncoder(
+        build_config(columns), DiscoveryClient(), get_logger(__name__)
+    )
+
+    data = [(i,) for i in range(100)]
+    parquet_data = b""
+    async for chunk in encoder.encode(data_generator(data), maxrec=50):
+        parquet_data += chunk
+
+    with tempfile.NamedTemporaryFile(suffix=".parquet") as tmp:
+        tmp.write(parquet_data)
+        tmp.flush()
+        table = pq.read_table(tmp.name)
+
+    assert len(table) == 50
+    assert table["id"].to_pylist() == list(range(50))
+    assert encoder.total_rows == 50
