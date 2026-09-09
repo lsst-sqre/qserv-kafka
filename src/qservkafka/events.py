@@ -292,10 +292,10 @@ class QueryFailureEvent(BaseQueryEvent):
 class TemporaryTableUploadEvent(BaseQueryEvent):
     """Table uploaded for a query."""
 
-    size: int = Field(
-        ...,
+    size: int | None = Field(
+        None,
         title="Size of table",
-        description="Size of the CSV file holding the table data",
+        description="Size of the CSV file holding the table data, if known",
     )
 
     elapsed: timedelta = Field(

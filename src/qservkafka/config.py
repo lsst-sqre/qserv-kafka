@@ -393,7 +393,8 @@ class Config(BaseSettings):
         title="Qserv table upload timeout",
         description=(
             "Maximum timeout for a REST API call to Qserv to upload a table."
-            " This includes the time spent waiting for a free connection."
+            " This includes the time spent waiting for a free connection and"
+            " the time spent downloading the table and schema from its source."
         ),
     )
 

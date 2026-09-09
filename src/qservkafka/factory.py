@@ -5,6 +5,7 @@ from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Self, override
 
+from aiohttp import ClientSession, TCPConnector
 from faststream.kafka import KafkaBroker
 from faststream.kafka.publisher import DefaultPublisher
 from httpx import AsyncClient, Limits
@@ -298,6 +299,9 @@ class QservProcessContext(ProcessContext):
     qserv_http_client: AsyncClient
     """HTTP client for talking to Qserv."""
 
+    upload_http_client: ClientSession
+    """HTTP client for doing streaming user table uploads."""
+
     @override
     @classmethod
     async def create(
@@ -333,13 +337,18 @@ class QservProcessContext(ProcessContext):
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
 
-        # Qserv uses a self-signed certificate and has configuration settings
-        # for maximum simultaneous connections.
+        # Qserv has configuration settings for maximum simultaneous
+        # connections.
         qserv_http_client = AsyncClient(
             timeout=config.backend_api_timeout.total_seconds(),
             limits=Limits(max_connections=config.qserv_rest_max_connections),
             verify=False,  # noqa: S501
         )
+
+        # User table uploads have to be done with a separate aiohttp client
+        # since HTTPX doesn't support streaming multipart file uploads.
+        upload_connector = TCPConnector(ssl=ssl_context)
+        upload_http_client = ClientSession(connector=upload_connector)
 
         # Create the database engine and sessionmaker.
         if worker_max_jobs:
@@ -365,6 +374,7 @@ class QservProcessContext(ProcessContext):
             engine=engine,
             sessionmaker=sessionmaker,
             qserv_http_client=qserv_http_client,
+            upload_http_client=upload_http_client,
             **shared,
         )
 
@@ -373,6 +383,7 @@ class QservProcessContext(ProcessContext):
         await super().aclose()
         await self.engine.dispose()
         await self.qserv_http_client.aclose()
+        await self.upload_http_client.close()
 
     @override
     def build_factory(self, logger: BoundLogger) -> Factory:
@@ -594,6 +605,7 @@ class QservFactory(Factory):
         return QservClient(
             sessionmaker=self._context.sessionmaker,
             http_client=self._context.qserv_http_client,
+            upload_http_client=self._context.upload_http_client,
             events=self._context.events,
             slack_client=self._context.slack_client,
             logger=self._logger,
