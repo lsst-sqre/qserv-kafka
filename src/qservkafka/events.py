@@ -209,6 +209,14 @@ class QservSuccessEvent(QuerySuccessEvent):
 class BigQuerySuccessEvent(QuerySuccessEvent):
     """Successful end-to-end completion of a BigQuery query."""
 
+    bigquery_bytes_billed: int | None = Field(
+        None,
+        title="Bytes billed by BigQuery",
+        description=(
+            "Bytes billed by BigQuery for the query, or null if not reported"
+        ),
+    )
+
     bigquery_elapsed: timedelta = Field(
         ...,
         title="BigQuery processing time",
@@ -238,6 +246,8 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
         result = super().to_logging_context()
         result["bigquery_size"] = self.bigquery_size
         result["bigquery_elapsed"] = self._to_seconds(self.bigquery_elapsed)
+        if self.bigquery_bytes_billed is not None:
+            result["bigquery_bytes_billed"] = self.bigquery_bytes_billed
         return result
 
 

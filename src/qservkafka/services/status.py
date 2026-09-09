@@ -122,6 +122,7 @@ class StatusPublisher:
             backend_elapsed=backend_elapsed,
             backend_size=query.status.collected_bytes,
             backend_rate=backend_rate,
+            **query.status.to_success_event_fields(),
         )
         await self._events.query_success.publish(event)
         logger = logger.bind(**event.to_logging_context())
