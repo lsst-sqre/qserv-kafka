@@ -2,6 +2,7 @@
 
 import asyncio
 from collections import Counter
+from datetime import UTC, datetime
 
 from safir.arq import ArqQueue
 from structlog.stdlib import BoundLogger
@@ -138,6 +139,8 @@ class QueryMonitor:
                 await self._rate_store.end_query(query.job.owner)
                 await self._arq_fast.enqueue("cleanup_query", query)
                 return
+            if query.status.status != AsyncQueryPhase.EXECUTING:
+                query.completed = datetime.now(tz=UTC)
             await self._state.store_query(query)
             if query.status.status == AsyncQueryPhase.EXECUTING:
                 await self._status.publish_executing(query)

@@ -1,7 +1,5 @@
 """Query job status publisher."""
 
-from datetime import UTC, datetime
-
 from faststream.kafka.publisher import DefaultPublisher
 from rubin.gafaelfawr import GafaelfawrTapQuota
 from structlog.stdlib import BoundLogger
@@ -97,33 +95,7 @@ class StatusPublisher:
         """
         await self._publish_status(query.to_completed_job_status(stats))
         logger = self._logger.bind(**query.to_logging_context())
-        now = datetime.now(tz=UTC)
-        backend_end = query.status.last_update or now
-        backend_elapsed = backend_end - query.status.query_begin
-        backend_elapsed_sec = backend_elapsed.total_seconds()
-        if backend_elapsed_sec > 0:
-            backend_rate = query.status.collected_bytes / backend_elapsed_sec
-        else:
-            backend_rate = None
-        elapsed = now - (query.queued or query.start)
-        event = self._success_event_class(
-            job_id=query.job.job_id,
-            username=query.job.owner,
-            elapsed=elapsed,
-            kafka_elapsed=query.start - query.queued if query.queued else None,
-            result_elapsed=stats.elapsed,
-            submit_elapsed=query.created - query.start,
-            rows=stats.rows,
-            encoded_size=stats.data_bytes,
-            result_size=stats.total_bytes,
-            rate=stats.data_bytes / elapsed.total_seconds(),
-            result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
-            upload_tables=len(query.job.upload_tables),
-            backend_elapsed=backend_elapsed,
-            backend_size=query.status.collected_bytes,
-            backend_rate=backend_rate,
-            **query.status.to_success_event_fields(),
-        )
+        event = query.to_success_event(self._success_event_class, stats)
         await self._events.query_success.publish(event)
         logger = logger.bind(**event.to_logging_context())
         logger.info("Job complete and results uploaded")

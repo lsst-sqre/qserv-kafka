@@ -1,10 +1,11 @@
 {
+  "backend_elapsed": "<ANY>",
   "elapsed": "<ANY>",
   "encoded_size": 244,
   "job_id": "uws123",
   "kafka_elapsed": "<ANY>",
   "qserv_elapsed": "PT0S",
-  "qserv_rate": null,
+  "qserv_rate": "<ANY>",
   "qserv_size": 250,
   "rate": "<ANY>",
   "result_elapsed": "<ANY>",
