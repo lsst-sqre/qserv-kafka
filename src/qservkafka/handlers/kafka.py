@@ -4,7 +4,7 @@ import asyncio
 from typing import Annotated
 
 from fastapi import Depends
-from faststream.kafka.fastapi import KafkaRouter
+from faststream.kafka import KafkaBroker
 
 from ..config import config
 from ..dependencies.context import ConsumerContext, context_dependency
@@ -33,19 +33,19 @@ async def job_cancel(
     await query_service.cancel_query(message)
 
 
-def register_kafka_handlers(kafka_router: KafkaRouter) -> None:
+def register_kafka_handlers(kafka_broker: KafkaBroker) -> None:
     """Register the Kafka message handlers with the router.
 
     This is done dynamically via a function instead of statically with
-    decorators to allow the Kafka router to be constructed after the test
+    decorators to allow the Kafka broker to be constructed after the test
     suite has set up the Kafka configuration.
 
     Parameters
     ----------
-    kafka_router
-        Kafka router to register handlers with.
+    kafka_broker
+        Kafka broker to register handlers with.
     """
-    kafka_router.subscriber(
+    kafka_broker.subscriber(
         config.job_run_topic,
         auto_offset_reset="earliest",
         batch=True,
@@ -54,7 +54,7 @@ def register_kafka_handlers(kafka_router: KafkaRouter) -> None:
         group_id=config.consumer_group_id,
         max_records=config.job_run_batch_size,
     )(job_run)
-    kafka_router.subscriber(
+    kafka_broker.subscriber(
         config.job_cancel_topic,
         auto_offset_reset="earliest",
         group_id=config.consumer_group_id,

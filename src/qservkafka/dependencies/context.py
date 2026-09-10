@@ -1,19 +1,71 @@
 """Per-request context."""
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any, override
 
-from faststream.kafka.fastapi import KafkaMessage
-from structlog.stdlib import BoundLogger, get_logger
+from aiokafka import ConsumerRecord
+from faststream.message import StreamMessage
+from faststream.middlewares import BaseMiddleware
+from structlog import get_logger
+from structlog.stdlib import BoundLogger
 
 from ..factory import Factory, ProcessContext, build_process_context
 
 __all__ = [
     "ConsumerContext",
     "ContextDependency",
+    "MessageContextMiddleware",
     "context_dependency",
 ]
+
+
+type RawMessage = ConsumerRecord | tuple[ConsumerRecord, ...]
+"""Type of a raw message, which may contain a tuple of records."""
+
+
+_current_message: ContextVar[StreamMessage[Any] | None] = ContextVar(
+    "qserv_kafka_current_message", default=None
+)
+"""The FastStream message being consumed on the current task, if any.
+
+Set by `MessageContextMiddleware` for the duration of each message and read
+by `ConsumerContextDependency`.
+"""
+
+
+class MessageContextMiddleware(BaseMiddleware[Any, Any]):
+    """Expose the message being consumed to FastAPI-style dependencies.
+
+    FastStream stores the current message in its own context repository, which
+    ``faststream_fastapi.Context("message")`` used to read. Since faststream
+    0.7.5, an application-level ``FastDependsConfig`` merged into a broker
+    wraps the broker's context in a ``ContextRepoComposition`` and scopes the
+    per-message values inside that composition, while faststream-fastapi
+    (1.3.1) still hands its ``Context()`` dependencies the application-level
+    ``ContextRepo``, which no longer sees ``message`` and resolves it to
+    ``EMPTY``.
+
+    This middleware sidesteps that plumbing: the subscriber hands middlewares
+    the parsed message directly, so it is published on a
+    `contextvars.ContextVar` that the handler's dependencies, running on the
+    same task, can read.
+    """
+
+    @override
+    async def consume_scope(
+        self,
+        call_next: Callable[[Any], Awaitable[Any]],
+        msg: StreamMessage[Any],
+    ) -> Any:
+        """Publish the message to the current task while it is handled."""
+        token = _current_message.set(msg)
+        try:
+            return await call_next(msg)
+        finally:
+            _current_message.reset(token)
 
 
 @dataclass(kw_only=True, slots=True)
@@ -37,13 +89,26 @@ class ContextDependency:
     portions of the context that are shared by all requests are collected into
     the single process-global `~qservkafka.factory.ProcessContext` and reused
     with each request.
+
+    The message itself comes from `MessageContextMiddleware`, which must be
+    registered on the broker, rather than from a FastStream ``Context``
+    parameter (see the middleware for why).
     """
 
     def __init__(self) -> None:
         self._context: ProcessContext | None = None
 
-    async def __call__(self, message: KafkaMessage) -> ConsumerContext:
+    async def __call__(self) -> ConsumerContext:
         """Create a per-request context."""
+        message = _current_message.get()
+        if message is None:
+            msg = (
+                "No message is being consumed on this task; is"
+                " MessageContextMiddleware registered on the broker?"
+            )
+            raise RuntimeError(msg)
+        record: RawMessage = message.raw_message
+
         # The underlying Kafka messages can either be a single message or a
         # tuple of messages. Since we only are using them to extract some
         # metadata for logging purposes, use the first message if there are

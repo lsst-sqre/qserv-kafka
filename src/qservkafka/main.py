@@ -5,7 +5,8 @@ from contextlib import asynccontextmanager
 from importlib.metadata import metadata, version
 
 from fastapi import FastAPI
-from faststream.kafka.fastapi import KafkaRouter
+from faststream.kafka import KafkaBroker
+from faststream_fastapi import FastStreamAPI
 from safir.kafka import FastStreamErrorHandler
 from safir.logging import configure_logging, configure_uvicorn_logging
 from safir.sentry import initialize_sentry
@@ -15,14 +16,14 @@ from structlog.stdlib import get_logger
 
 from . import __version__
 from .config import config
-from .dependencies.context import context_dependency
+from .dependencies.context import MessageContextMiddleware, context_dependency
 from .handlers.internal import internal_router
 from .handlers.kafka import register_kafka_handlers
 
 __all__ = ["create_app"]
 
 
-def create_app() -> FastAPI:
+def create_app() -> FastStreamAPI:
     """Create the FastAPI application.
 
     This is a function rather than using a global variable (as is more typical
@@ -44,11 +45,17 @@ def create_app() -> FastAPI:
     # Create the Kafka router if one was not provided.
     faststream_error_handler = FastStreamErrorHandler()
     kafka_params = config.kafka.to_faststream_params()
-    kafka_router = KafkaRouter(
-        middlewares=[faststream_error_handler.make_middleware()],
+    kafka_broker = KafkaBroker(
+        middlewares=[
+            MessageContextMiddleware,
+            faststream_error_handler.make_middleware(),
+        ],
         **kafka_params,
         logger=logger,
     )
+
+    # Attach the handlers.
+    register_kafka_handlers(kafka_broker)
 
     # Configure Slack alerts.
     if config.slack.enabled:
@@ -83,16 +90,14 @@ def create_app() -> FastAPI:
             await background.stop()
             await context_dependency.aclose()
 
+    # Build the underlying FastAPI application.
     app = FastAPI(
         title="qserv-kafka",
         description=metadata("qserv-kafka")["Summary"],
         version=version("qserv-kafka"),
         lifespan=lifespan,
     )
-
-    # Attach the routers.
     app.include_router(internal_router)
-    register_kafka_handlers(kafka_router)
-    app.include_router(kafka_router)
 
-    return app
+    # Wrap it in a FastStreamAPI application.
+    return FastStreamAPI(kafka_broker, application=app)
