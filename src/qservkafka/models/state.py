@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from safir.datetime import format_datetime_for_logging
 from vo_models.uws.types import ExecutionPhase
 
+from ..events import BigQuerySuccessEvent, QservSuccessEvent
 from .kafka import JobError, JobQueryInfo, JobResultInfo, JobRun, JobStatus
 from .query import AsyncQueryPhase, QueryStatus
 from .votable import UploadStats
@@ -93,6 +94,19 @@ class RunningQuery(StartedQuery):
     """Represents a running query with a known status."""
 
     status: Annotated[QueryStatus, Field(title="Last known status")]
+
+    completed: Annotated[
+        datetime | None,
+        Field(
+            title="When query completion was seen",
+            description=(
+                "Records when the bridge became aware that the query"
+                " completed, as opposed to when the backend completed the"
+                " query completed. This includes delays from polling and"
+                " any backend delays not included in its elapsed query time."
+            ),
+        ),
+    ] = None
 
     result_queued: Annotated[
         bool, Field(title="Whether queued for result procesing")
@@ -182,6 +196,53 @@ class RunningQuery(StartedQuery):
             query_info=self.to_job_query_info(finished=finished),
             error=error,
             metadata=self.job.to_job_metadata(),
+        )
+
+    def to_success_event[T: QservSuccessEvent | BigQuerySuccessEvent](
+        self, event_class: type[T], stats: UploadStats
+    ) -> T:
+        """Construct the query success event for a completed query.
+
+        Parameters
+        ----------
+        backend
+            Type of the backend.
+        stats
+            Statistics from the uploaded results.
+
+        Returns
+        -------
+        QuerySuccessEvent
+            A query success event of the appropriate underlying type.
+        """
+        now = datetime.now(tz=UTC)
+        completed = self.completed or now
+        backend_elapsed = completed - self.start
+        backend_elapsed_sec = backend_elapsed.total_seconds()
+        if backend_elapsed_sec > 0:
+            backend_rate = self.status.collected_bytes / backend_elapsed_sec
+        else:
+            backend_rate = None
+        reported_end = self.status.last_update or completed
+        elapsed = now - (self.queued or self.start)
+        return event_class(
+            job_id=self.job.job_id,
+            username=self.job.owner,
+            elapsed=elapsed,
+            kafka_elapsed=self.start - self.queued if self.queued else None,
+            submit_elapsed=self.created - self.start,
+            backend_elapsed=backend_elapsed,
+            result_elapsed=stats.elapsed,
+            rows=stats.rows,
+            encoded_size=stats.data_bytes,
+            result_size=stats.total_bytes,
+            rate=stats.data_bytes / elapsed.total_seconds(),
+            result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
+            upload_tables=len(self.job.upload_tables),
+            backend_reported_elapsed=reported_end - self.status.query_begin,
+            backend_size=self.status.collected_bytes,
+            backend_rate=backend_rate,
+            **self.status.to_success_event_fields(),
         )
 
     @override

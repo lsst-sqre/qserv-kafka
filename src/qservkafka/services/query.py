@@ -370,6 +370,7 @@ class QueryService:
         # Otherwise, let the result service build the status, which handles
         # executing, aborted, and failed queries.
         if query.status.status == AsyncQueryPhase.COMPLETED:
+            query.completed = datetime.now(tz=UTC)
             query.result_queued = True
             await self._state.store_query(query)
             await self._arq_fast.enqueue("finish_query", query.query_id)

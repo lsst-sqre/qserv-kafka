@@ -96,20 +96,30 @@ class QuerySuccessEvent(BaseQueryEvent):
         description="Time from Kafka message queuing to start of processing",
     )
 
-    result_elapsed: timedelta = Field(
-        ...,
-        title="Result processing time",
-        description=(
-            "How long it took to retrieve, encode, and upload the results"
-        ),
-    )
-
     submit_elapsed: timedelta = Field(
         ...,
         title="Job submission time",
         description=(
             "How long it took from receipt of the Kafka message to successful"
             " creation of the query job in the backend"
+        ),
+    )
+
+    backend_elapsed: timedelta = Field(
+        ...,
+        title="Backend processing time",
+        description=(
+            "How long it took for the backend to process the query, including"
+            " the polling delay before the frontend noticed that the query"
+            " had finished."
+        ),
+    )
+
+    result_elapsed: timedelta = Field(
+        ...,
+        title="Result processing time",
+        description=(
+            "How long it took to retrieve, encode, and upload the results"
         ),
     )
 
@@ -161,8 +171,9 @@ class QuerySuccessEvent(BaseQueryEvent):
         }
         if self.kafka_elapsed:
             result["kafka_elapsed"] = self._to_seconds(self.kafka_elapsed)
-        result["result_elapsed"] = self._to_seconds(self.result_elapsed)
         result["submit_elapsed"] = self._to_seconds(self.submit_elapsed)
+        result["backend_elapsed"] = self._to_seconds(self.backend_elapsed)
+        result["result_elapsed"] = self._to_seconds(self.result_elapsed)
         return result
 
     @staticmethod
@@ -177,8 +188,14 @@ class QservSuccessEvent(QuerySuccessEvent):
     qserv_elapsed: timedelta = Field(
         ...,
         title="Qserv processing time",
-        description="How long it took for Qserv to process the query",
-        validation_alias=AliasChoices("qserv_elapsed", "backend_elapsed"),
+        description=(
+            "How long Qserv reported the query took, calculated from the"
+            " difference between queryBeginEpoch and lastUpdateEpoch in"
+            " the Qserv query status information"
+        ),
+        validation_alias=AliasChoices(
+            "qserv_elapsed", "backend_reported_elapsed"
+        ),
     )
 
     qserv_size: int = Field(
@@ -201,8 +218,8 @@ class QservSuccessEvent(QuerySuccessEvent):
     @override
     def to_logging_context(self) -> dict[str, Any]:
         result = super().to_logging_context()
-        result["qserv_size"] = self.qserv_size
         result["qserv_elapsed"] = self._to_seconds(self.qserv_elapsed)
+        result["qserv_size"] = self.qserv_size
         return result
 
 
@@ -244,8 +261,8 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
     @override
     def to_logging_context(self) -> dict[str, Any]:
         result = super().to_logging_context()
-        result["bigquery_size"] = self.bigquery_size
         result["bigquery_elapsed"] = self._to_seconds(self.bigquery_elapsed)
+        result["bigquery_size"] = self.bigquery_size
         if self.bigquery_bytes_billed is not None:
             result["bigquery_bytes_billed"] = self.bigquery_bytes_billed
         return result
