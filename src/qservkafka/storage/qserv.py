@@ -60,7 +60,7 @@ from ..models.qserv import (
 from ..models.query import AsyncQueryPhase, ProcessStatus, QservQueryStatus
 from .backend import DatabaseBackend
 
-API_VERSION = 55
+API_VERSION = 60
 """Version of the REST API that this client requests."""
 
 __all__ = ["API_VERSION", "QservClient"]
@@ -444,6 +444,9 @@ class QservClient(DatabaseBackend):
             r = await self._client.delete(
                 url, params=params, auth=config.rest_authentication
             )
+            if r.status_code == 404:
+                logger.info("Ignoring 404 from DELETE", result=r.json())
+                return
             r.raise_for_status()
             elapsed = round((datetime.now(tz=UTC) - start).total_seconds(), 2)
             logger.debug("Qserv API reply", result=r.json(), elapsed=elapsed)

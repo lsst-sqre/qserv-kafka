@@ -430,7 +430,7 @@ class MockQserv:
         self._check_auth(request)
         self._check_version(request)
         if not self._uploaded_database:
-            return Response(404)
+            return Response(404, json={"success": 0})
         assert database == self._uploaded_database
         self._uploaded_table = None
         return Response(200, json={"success": 1}, request=request)
