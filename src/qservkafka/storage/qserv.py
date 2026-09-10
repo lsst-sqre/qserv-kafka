@@ -289,17 +289,19 @@ class QservClient(DatabaseBackend):
         Notes
         -----
         We delete the entire user database for each job rather than deleting
-        individual tables because we've now moved to creating a new database
-        for each new job. This is because a failed upload can currently leave
-        Qserv in a state where the user can no longer upload tables to that
-        database. Also, if a user attempts two simultaneous uploads, that
-        could trigger a similar problem.
+        individual tables because we create a new database for each new job.
+        This is done because a failed upload or two simultaneous uploads can
+        currently leave Qserv in a state where the user can no longer upload
+        tables to that database.
 
         With a short lived database for each upload, we can delete the entire
         temporary database oncd the job is completed and not have to worry
         about interactions with other queries.
         """
-        await self._delete(f"/ingest/database/{database}")
+        await self._delete(
+            f"/ingest/database/{database}",
+            timeout=config.qserv_upload_delete_timeout,
+        )
 
     @override
     async def get_query_results_gen(
@@ -419,13 +421,17 @@ class QservClient(DatabaseBackend):
         return TableUploadStats(size=size, elapsed=elapsed)
 
     @_retry
-    async def _delete(self, route: str) -> None:
+    async def _delete(
+        self, route: str, *, timeout: timedelta | None = None
+    ) -> None:
         """Send a DELETE request to the Qserv REST API.
 
         Parameters
         ----------
         route
             Route to which to send the request.
+        timeout
+            Timeout for the request.
 
         Raises
         ------
@@ -437,12 +443,17 @@ class QservClient(DatabaseBackend):
         else:
             params = None
         url = str(config.qserv_rest_url).rstrip("/") + route
+        if not timeout:
+            timeout = config.backend_api_timeout
         logger = self.logger.bind(method="DELETE", url=url)
 
         start = datetime.now(tz=UTC)
         try:
             r = await self._client.delete(
-                url, params=params, auth=config.rest_authentication
+                url,
+                params=params,
+                auth=config.rest_authentication,
+                timeout=timeout.total_seconds(),
             )
             if r.status_code == 404:
                 logger.info("Ignoring 404 from DELETE", result=r.json())

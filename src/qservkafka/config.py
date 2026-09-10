@@ -388,6 +388,16 @@ class Config(BaseSettings):
         ),
     )
 
+    qserv_upload_delete_timeout: HumanTimedelta = Field(
+        timedelta(minutes=1),
+        title="Qserv table upload timeout",
+        description=(
+            "Maximum timeout for a REST API call to Qserv to delete an"
+            " uploaded table. This includes the time spent waiting for a free"
+            " connection."
+        ),
+    )
+
     qserv_upload_timeout: HumanTimedelta = Field(
         timedelta(minutes=5),
         title="Qserv table upload timeout",
@@ -423,10 +433,9 @@ class Config(BaseSettings):
         title="Timeout for result processing",
         description=(
             "How long to wait for result processing: retrieving the result"
-            " rows from Qserv, encoding them, and writing them to the upload"
-            " PUT URL. Qserv deletes results once retrieved, so aborting"
-            " result processing risks losing a result. This should be aligned"
-            " with the Kubernetes shutdown grace period."
+            " rows from the backend, encoding them, and writing them to the"
+            " upload PUT URL. This should be aligned with the Kubernetes"
+            " shutdown grace period."
         ),
     )
 
