@@ -238,7 +238,9 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
         ...,
         title="BigQuery processing time",
         description="How long it took for BigQuery to process the query",
-        validation_alias=AliasChoices("bigquery_elapsed", "backend_elapsed"),
+        validation_alias=AliasChoices(
+            "bigquery_elapsed", "backend_reported_elapsed"
+        ),
     )
 
     bigquery_size: int = Field(
