@@ -115,6 +115,15 @@ class QuerySuccessEvent(BaseQueryEvent):
         ),
     )
 
+    queue_elapsed: timedelta | None = Field(
+        None,
+        title="Queue wait time",
+        description=(
+            "How long the job sat in the arq queue waiting for a result"
+            " processing worker"
+        ),
+    )
+
     result_elapsed: timedelta = Field(
         ...,
         title="Result processing time",

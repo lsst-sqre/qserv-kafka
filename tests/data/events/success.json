@@ -7,6 +7,7 @@
   "qserv_elapsed": "PT0S",
   "qserv_rate": "<ANY>",
   "qserv_size": 250,
+  "queue_elapsed": "<ANY>",
   "rate": "<ANY>",
   "result_elapsed": "<ANY>",
   "result_rate": "<ANY>",
