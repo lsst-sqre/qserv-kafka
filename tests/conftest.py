@@ -10,8 +10,8 @@ import pytest_asyncio
 import respx
 from aiokafka import AIOKafkaConsumer
 from aioresponses import aioresponses
-from fastapi import FastAPI
 from faststream.kafka import KafkaBroker, TestKafkaBroker
+from faststream_fastapi import FastStreamAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import MySQLDsn, RedisDsn, SecretStr
 from rubin.gafaelfawr import MockGafaelfawr, register_mock_gafaelfawr
@@ -61,7 +61,7 @@ async def app(
     mock_slack: MockSlackWebhook,
     redis: RedisContainer,
     monkeypatch: pytest.MonkeyPatch,
-) -> FastAPI:
+) -> FastStreamAPI:
     redis_host = redis.get_container_host_ip()
     redis_port = redis.get_exposed_port(6379)
     redis_url = RedisDsn(f"redis://{redis_host}:{redis_port}/0")
@@ -74,7 +74,7 @@ async def app(
 
 
 @pytest_asyncio.fixture
-async def client(app: FastAPI) -> AsyncGenerator[AsyncClient]:
+async def client(app: FastStreamAPI) -> AsyncGenerator[AsyncClient]:
     """Return an ``httpx.AsyncClient`` configured to talk to the test app."""
     async with AsyncClient(
         base_url="https://example.com/", transport=ASGITransport(app=app)
