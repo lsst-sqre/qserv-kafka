@@ -3,16 +3,25 @@
 import asyncio
 from collections.abc import (
     AsyncGenerator,
+    AsyncIterator,
     Callable,
     Coroutine,
     Mapping,
     Sequence,
 )
 from copy import copy
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import wraps
 from typing import Any, Concatenate, Protocol, overload, override
 
+from aiohttp import (
+    ClientError,
+    ClientSession,
+    ClientTimeout,
+    MultipartWriter,
+    encode_basic_auth,
+)
 from httpx import AsyncClient, HTTPError, Response
 from pydantic import BaseModel, ValidationError
 from safir.database import datetime_from_db
@@ -31,9 +40,11 @@ from ..events import (
     QueryApiFailureEvent,
 )
 from ..exceptions import (
+    QservApiError,
     QservApiFailedError,
     QservApiProtocolError,
     QservApiSqlError,
+    QservApiUploadWebError,
     QservApiWebError,
     TableUploadWebError,
 )
@@ -84,6 +95,23 @@ def _query_results_sql() -> str:
         must be set to the query ID.
     """
     return "SELECT * FROM qserv_result(:id)"
+
+
+@dataclass
+class _UploadFile:
+    """Specification for a file in an upload request."""
+
+    field: str
+    """Name of the field in the form data."""
+
+    data: bytes | AsyncIterator[bytes]
+    """Bytes to upload, possibly as an iterator."""
+
+    mime_type: str
+    """MIME type of the file."""
+
+    filename: str
+    """Filename of the file."""
 
 
 class _QservClientProtocol(Protocol):
@@ -193,6 +221,8 @@ class QservClient(DatabaseBackend):
         Factory for database sessions.
     http_client
         HTTP client to use.
+    upload_http_client
+        HTTP client to use for uploads.
     events
         Metrics events publishers.
     slack_client
@@ -218,6 +248,7 @@ class QservClient(DatabaseBackend):
         *,
         sessionmaker: async_sessionmaker,
         http_client: AsyncClient,
+        upload_http_client: ClientSession,
         events: Events,
         slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
@@ -228,6 +259,7 @@ class QservClient(DatabaseBackend):
 
         self._sessionmaker = sessionmaker
         self._client = http_client
+        self._upload_client = upload_http_client
 
     @override
     async def cancel_query(self, query_id: str) -> None:
@@ -245,12 +277,14 @@ class QservClient(DatabaseBackend):
         """
         await self._delete(f"/query-async/result/{query_id}")
 
-    async def delete_table(self, database: str, table: str) -> None:
-        await self._delete(f"/ingest/table/{database}/{table}")
-
     @override
     async def delete_database(self, database: str) -> None:
         """Delete a user database.
+
+        Parameters
+        ----------
+        database
+            Name of the database to delete.
 
         Notes
         -----
@@ -323,30 +357,66 @@ class QservClient(DatabaseBackend):
         return str(result.query_id)
 
     @override
+    @_retry
     async def upload_table(self, upload: JobTableUpload) -> TableUploadStats:
-        schema = await self._get_table(upload.schema_url)
-        source = await self._get_table(upload.source_url)
         start = datetime.now(tz=UTC)
-        data: dict[str, str | int] = {
+        data = {
             "database": upload.database,
             "table": upload.table,
             "fields_terminated_by": ",",
             "charset_name": "utf8mb4",
             "collation_name": "utf8mb4_uca1400_ai_ci",
-            "timeout": int(config.qserv_upload_timeout.total_seconds()),
+            "timeout": str(int(config.qserv_upload_timeout.total_seconds())),
         }
         data.update(upload.to_ingest_fields())
-        await self._post_multipart(
-            "/ingest/csv",
-            data=data,
-            files=(
-                ("schema", ("schema.json", schema, "application/json")),
-                ("rows", ("table.csv", source, "text/csv")),
-            ),
-            timeout=config.qserv_upload_timeout + timedelta(seconds=1),
-        )
+
+        # Construct the table upload request.
+        try:
+            async with (
+                self._client.stream("GET", upload.schema_url) as schema,
+                self._client.stream("GET", upload.source_url) as source,
+            ):
+                schema.raise_for_status()
+                source.raise_for_status()
+                try:
+                    size = int(source.headers["Content-Length"])
+                except KeyError, ValueError:
+                    size = None
+
+                # Perform the upload.
+                await self._upload(
+                    "/ingest/csv",
+                    data=data,
+                    files=[
+                        _UploadFile(
+                            field="schema",
+                            data=schema.aiter_bytes(),
+                            mime_type="application/json",
+                            filename="schema.json",
+                        ),
+                        _UploadFile(
+                            field="rows",
+                            data=source.aiter_bytes(),
+                            mime_type="text/csv",
+                            filename="table.csv",
+                        ),
+                    ],
+                    timeout=config.qserv_upload_timeout + timedelta(seconds=1),
+                )
+        except HTTPError as e:
+            try:
+                await self._delete_table(upload.database, upload.table)
+            except QservApiError:
+                self.logger.exception(
+                    "Cannot delete failed table upload",
+                    database=upload.database,
+                    table=upload.table,
+                )
+            raise TableUploadWebError.from_exception(e) from e
+
+        # Return the statistics.
         elapsed = datetime.now(tz=UTC) - start
-        return TableUploadStats(size=len(source), elapsed=elapsed)
+        return TableUploadStats(size=size, elapsed=elapsed)
 
     @_retry
     async def _delete(self, route: str) -> None:
@@ -380,6 +450,18 @@ class QservClient(DatabaseBackend):
             self._parse_response("DELETE", url, r, BaseResponse)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
+
+    async def _delete_table(self, database: str, table: str) -> None:
+        """Delete a user table.
+
+        Parameters
+        ----------
+        database
+            Name of the database.
+        table
+            Name of the table to delete.
+        """
+        await self._delete(f"/ingest/table/{database}/{table}")
 
     @_retry
     async def _get[T: BaseResponse](
@@ -423,33 +505,6 @@ class QservClient(DatabaseBackend):
             return self._parse_response("GET", url, r, result_type)
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
-
-    @_retry(qserv=False)
-    async def _get_table(self, url: str) -> bytes:
-        """Retrieve user table upload data.
-
-        Parameters
-        ----------
-        url
-            Full URL to the data to retrieve.
-
-        Returns
-        -------
-        bytes
-            Contents of the file.
-
-        Raises
-        ------
-        TableUploadWebError
-            Raised if retrieving the file failed.
-        """
-        try:
-            r = await self._client.get(url)
-            r.raise_for_status()
-        except HTTPError as e:
-            raise TableUploadWebError.from_exception(e) from e
-        else:
-            return r.content
 
     async def _list_processes(
         self, session: AsyncSession
@@ -565,16 +620,15 @@ class QservClient(DatabaseBackend):
         except HTTPError as e:
             raise QservApiWebError.from_exception(e) from e
 
-    @_retry
-    async def _post_multipart(
+    async def _upload(
         self,
         route: str,
         *,
-        data: Mapping[str, str | int],
-        files: Sequence[tuple[str, tuple[str, bytes, str]]],
+        data: Mapping[str, str],
+        files: Sequence[_UploadFile],
         timeout: timedelta,
     ) -> None:
-        """Send a POST request to the Qserv REST API.
+        """Send a multipart file upload request to Qserv.
 
         Parameters
         ----------
@@ -592,25 +646,57 @@ class QservClient(DatabaseBackend):
         QservApiError
             Raised if something failed when submitting the POST request.
         """
+        start = datetime.now(tz=UTC)
         params = {}
         if config.qserv_rest_send_api_version:
             params["version"] = str(API_VERSION)
         url = str(config.qserv_rest_url).rstrip("/") + route
         logger = self.logger.bind(method="POST", url=url)
+        client_timeout = ClientTimeout(total=timeout.total_seconds())
 
-        start = datetime.now(tz=UTC)
-        try:
-            r = await self._client.post(
-                url,
-                params=params,
-                data=data,
-                files=files,
-                timeout=timeout.total_seconds(),
-                auth=config.rest_authentication,
-            )
-            r.raise_for_status()
-            elapsed = round((datetime.now(tz=UTC) - start).total_seconds(), 2)
-            logger.debug("Qserv API reply", result=r.json(), elapsed=elapsed)
-            self._parse_response("POST", url, r, BaseResponse)
-        except HTTPError as e:
-            raise QservApiWebError.from_exception(e) from e
+        # Construct the authentication headers.
+        headers = None
+        if config.qserv_rest_username and config.qserv_rest_password:
+            headers = {
+                "Authorization": encode_basic_auth(
+                    config.qserv_rest_username,
+                    config.qserv_rest_password.get_secret_value(),
+                )
+            }
+
+        # Construct the POST body.
+        with MultipartWriter("form-data") as mpwriter:
+            for key, value in data.items():
+                part = mpwriter.append(value)
+                part.set_content_disposition("form-data", name=key)
+            for upload in files:
+                upload_headers = {"Content-Type": upload.mime_type}
+                filename = upload.filename
+                part = mpwriter.append(upload.data, upload_headers)
+                part.set_content_disposition(
+                    "form-data", name=upload.field, filename=filename
+                )
+
+            # Make the request.
+            try:
+                async with self._upload_client.post(
+                    url,
+                    params=params,
+                    data=mpwriter,
+                    timeout=client_timeout,
+                    headers=headers,
+                    allow_redirects=False,
+                ) as r:
+                    r.raise_for_status()
+                    json_result = await r.json()
+                    base_result = BaseResponse.model_validate(json_result)
+                    if not base_result.is_success():
+                        raise QservApiFailedError("POST", url, base_result)
+            except ClientError as e:
+                raise QservApiUploadWebError.from_aiohttp_exception(e) from e
+            except ValidationError as e:
+                raise QservApiProtocolError("POST", url, str(e)) from e
+
+        # Upload succeeded. Log the results.
+        elapsed = round((datetime.now(tz=UTC) - start).total_seconds(), 2)
+        logger.debug("Qserv API reply", result=json_result, elapsed=elapsed)

@@ -3,6 +3,8 @@
 from datetime import timedelta
 from typing import Any, ClassVar, Self, override
 
+from aiohttp import ClientError, ClientResponseError
+from httpx import HTTPError, HTTPStatusError
 from safir.slack.blockkit import (
     SlackCodeBlock,
     SlackException,
@@ -35,6 +37,7 @@ __all__ = [
     "QservApiFailedError",
     "QservApiProtocolError",
     "QservApiSqlError",
+    "QservApiUploadWebError",
     "QservApiWebError",
     "QueryError",
     "TableUploadWebError",
@@ -467,10 +470,105 @@ class QservApiWebError(QservApiError, BackendApiWebError):
     error = JobErrorCode.backend_request_error
 
 
+class QservApiUploadWebError(QservApiWebError):
+    """An upload table request failed at the HTTP protocol level."""
+
+    @classmethod
+    def from_aiohttp_exception(
+        cls, exc: ClientError, user: str | None = None
+    ) -> Self:
+        """Create an exception from an aiohttp exception.
+
+        Parameters
+        ----------
+        exc
+            Exception from aiohttp.
+        user
+            User on whose behalf the request is being made, if known.
+
+        Returns
+        -------
+        QservApiUploadWebError
+            Newly-constructed exception.
+        """
+        if isinstance(exc, ClientResponseError):
+            url = str(exc.request_info.url)
+            method = exc.request_info.method
+            message = f"Status {exc.status} from {method} {url}"
+            return cls(
+                message,
+                method=method,
+                url=url,
+                user=user,
+                status=exc.status,
+            )
+        else:
+            exc_name = type(exc).__name__
+            message = f"{exc_name}: {exc!s}" if str(exc) else exc_name
+            return cls(message, user=user)
+
+
 class TableUploadWebError(SlackWebException, QueryError):
     """Retrieving an uploaded table failed."""
 
     error = JobErrorCode.table_read
+
+    @override
+    @classmethod
+    def from_exception(cls, exc: HTTPError, user: str | None = None) -> Self:
+        """Create an exception from an HTTPX_ exception.
+
+        Parameters
+        ----------
+        exc
+            Exception from HTTPX.
+        user
+            User on whose behalf the request is being made, if known.
+
+        Returns
+        -------
+        SlackWebException
+            Newly-constructed exception.
+
+        Notes
+        -----
+        This overrides the method provided by Safir because it attempts to
+        read the response body, which isn't valid for streaming responses.
+        This override can be removed once Safir has a way of detecting whether
+        the exception is from a streaming request and avoids looking at the
+        body in that case.
+        """
+        if isinstance(exc, HTTPStatusError):
+            status = exc.response.status_code
+            method = exc.request.method
+            message = f"Status {status} from {method} {exc.request.url}"
+            return cls(
+                message,
+                method=exc.request.method,
+                url=str(exc.request.url),
+                user=user,
+                status=status,
+            )
+        else:
+            exc_name = type(exc).__name__
+            message = f"{exc_name}: {exc!s}" if str(exc) else exc_name
+
+            # All httpx.HTTPError exceptions have a slot for the request,
+            # initialized to None and then sometimes added by child
+            # constructors or during exception processing. The request
+            # property is a property method that raises RuntimeError if
+            # request has not been set, so we can't just check for None. Hence
+            # this approach of attempting to use the request and falling back
+            # on reporting less data if that raised any exception.
+            try:
+                return cls(
+                    message,
+                    method=exc.request.method,
+                    url=str(exc.request.url),
+                    user=user,
+                )
+            except Exception:
+                return cls(message, user=user)
 
 
 class UploadTimeoutError(QueryError):

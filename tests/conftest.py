@@ -9,6 +9,7 @@ import pytest
 import pytest_asyncio
 import respx
 from aiokafka import AIOKafkaConsumer
+from aioresponses import aioresponses
 from fastapi import FastAPI
 from faststream.kafka import KafkaBroker, TestKafkaBroker
 from httpx import ASGITransport, AsyncClient
@@ -44,6 +45,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Overwrite expected test output with current results",
     )
+
+
+@pytest.fixture
+def aioresponses_mock() -> Iterator[aioresponses]:
+    with aioresponses() as mock:
+        yield mock
 
 
 @pytest_asyncio.fixture
@@ -235,6 +242,7 @@ async def mock_qserv(
     *,
     data: QservKafkaData,
     respx_mock: respx.Router,
+    aioresponses_mock: aioresponses,
     engine: AsyncEngine,
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
@@ -262,7 +270,8 @@ async def mock_qserv(
     async with register_mock_qserv(
         data,
         respx_mock,
-        engine,
+        aioresponses_mock,
+        engine=engine,
         base_url=str(config.qserv_rest_url),
         flaky=request.param,
     ) as mock_qserv:

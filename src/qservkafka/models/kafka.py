@@ -5,7 +5,7 @@ messages. Internally, they are converted or wrapped in models starting with
 ``Query``.
 """
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self, override
@@ -327,9 +327,9 @@ class UploadTableBase(BaseModel, ABC):
         """Name of the table."""
         return self.table_name.split(".", 1)[1]
 
-    @abstractmethod
-    def to_ingest_fields(self) -> dict[str, str | int]:
+    def to_ingest_fields(self) -> dict[str, str]:
         """Qserv ingest API fields specific to this partition strategy."""
+        return {}
 
 
 class ReplicatedTableUpload(UploadTableBase):
@@ -339,10 +339,6 @@ class ReplicatedTableUpload(UploadTableBase):
         Literal[UploadTablePartitionType.REPLICATED] | None,
         Field(validation_alias="partitionType"),
     ] = None
-
-    @override
-    def to_ingest_fields(self) -> dict[str, str | int]:
-        return {}
 
 
 class DirectorTableUpload(UploadTableBase):
@@ -368,10 +364,10 @@ class DirectorTableUpload(UploadTableBase):
     ]
 
     @override
-    def to_ingest_fields(self) -> dict[str, str | int]:
+    def to_ingest_fields(self) -> dict[str, str]:
         return {
-            "is_partitioned": 1,
-            "is_director": 1,
+            "is_partitioned": "1",
+            "is_director": "1",
             "longitude_col_name": self.longitude_col_name,
             "latitude_col_name": self.latitude_col_name,
         }
@@ -415,10 +411,10 @@ class DependentTableUpload(UploadTableBase):
     ]
 
     @override
-    def to_ingest_fields(self) -> dict[str, str | int]:
+    def to_ingest_fields(self) -> dict[str, str]:
         return {
-            "is_partitioned": 1,
-            "is_director": 0,
+            "is_partitioned": "1",
+            "is_director": "0",
             "id_col_name": self.id_col_name,
             "ref_director_database": self.ref_director_database,
             "ref_director_table": self.ref_director_table,

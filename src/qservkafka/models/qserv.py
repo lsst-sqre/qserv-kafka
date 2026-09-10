@@ -209,8 +209,8 @@ class AsyncSubmitResponse(BaseResponse):
 class TableUploadStats:
     """Statistics from a table upload to Qserv."""
 
-    size: int
-    """Size of the uploaded table in CSV format (bytes)."""
+    size: int | None
+    """Size of the uploaded table in CSV format (bytes), if known."""
 
     elapsed: timedelta
     """Time required to upload the table to Qserv.
