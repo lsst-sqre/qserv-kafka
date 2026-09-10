@@ -48,7 +48,7 @@ __all__ = [
 class QueryError(SlackException):
     """Base class for reportable query errors."""
 
-    description: ClassVar[str] = "Unable to retrieve results"
+    description: ClassVar[str] = "Failure running query"
     error: ClassVar[JobErrorCode] = JobErrorCode.backend_error
 
     def to_job_error(self) -> JobError:
@@ -95,6 +95,7 @@ class BackendApiProtocolError(BackendApiError):
     or was missing expected fields. We won't retry these.
     """
 
+    description = "Unexpected response from backend API"
     error = JobErrorCode.backend_internal_error
 
 
@@ -252,6 +253,7 @@ class BigQueryApiProtocolError(BigQueryApiError, BackendApiProtocolError):
     (e.g. malformed responses)
     """
 
+    description = "Unexpected response from BigQuery API"
     error = JobErrorCode.backend_internal_error
 
 
@@ -355,6 +357,7 @@ class QservApiProtocolError(QservApiError, BackendApiProtocolError):
         URL of request that failed.
     """
 
+    description = "Unexpected response from Qserv REST API"
     error = JobErrorCode.backend_internal_error
 
     def __init__(self, method: str, url: str, error: str) -> None:
@@ -380,6 +383,7 @@ class QservApiProtocolError(QservApiError, BackendApiProtocolError):
 class QservApiSqlError(QservApiError, BackendApiSqlError):
     """A SQL request to Qserv failed unexpectedly."""
 
+    description = "SQL request to Qserv failed"
     error = JobErrorCode.backend_sql_error
 
     @classmethod
@@ -511,6 +515,7 @@ class QservApiUploadWebError(QservApiWebError):
 class TableUploadWebError(SlackWebException, QueryError):
     """Retrieving an uploaded table failed."""
 
+    description = "Unable to retrieve table to upload"
     error = JobErrorCode.table_read
 
     @override
