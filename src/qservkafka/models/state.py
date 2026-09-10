@@ -108,6 +108,17 @@ class RunningQuery(StartedQuery):
         ),
     ] = None
 
+    queue_elapsed: Annotated[
+        timedelta | None,
+        Field(
+            title="Time spent in arq queue",
+            description=(
+                "Measures the time from when job completion was seen to when"
+                " results processing starts in the arq worker"
+            ),
+        ),
+    ] = None
+
     result_queued: Annotated[
         bool, Field(title="Whether queued for result procesing")
     ]
@@ -231,6 +242,7 @@ class RunningQuery(StartedQuery):
             kafka_elapsed=self.start - self.queued if self.queued else None,
             submit_elapsed=self.created - self.start,
             backend_elapsed=backend_elapsed,
+            queue_elapsed=self.queue_elapsed,
             result_elapsed=stats.elapsed,
             rows=stats.rows,
             encoded_size=stats.data_bytes,

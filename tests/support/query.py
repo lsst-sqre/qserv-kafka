@@ -1,6 +1,6 @@
 """Test support for driving queriess."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from vo_models.uws.types import ExecutionPhase
 
@@ -50,6 +50,7 @@ async def start_and_complete_immediate(
     assert status.execution_id
     query = await state_store.get_query(status.execution_id)
     assert query
+    query.queue_elapsed = timedelta(seconds=1)
 
     await query_service.update_query(query)
     await query_service.delete_query_data(query)
