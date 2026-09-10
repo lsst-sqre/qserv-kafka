@@ -25,7 +25,6 @@ from safir.pydantic import SecondsTimedelta
 from vo_models.uws.types import ExecutionPhase
 
 from .progress import ProgressMetrics
-from .query import QueryStatus
 from .votable import VOTableArraySize, VOTablePrimitive
 
 type DatetimeMillis = Annotated[
@@ -712,13 +711,11 @@ class JobStatus(BaseModel):
         ),
     ] = None
 
-    timestamp: Annotated[
-        DatetimeMillis,
-        Field(
-            title="Timestamp of update",
-            description="When this update was published",
-        ),
-    ]
+    timestamp: DatetimeMillis = Field(
+        default_factory=lambda: datetime.now(tz=UTC),
+        title="Timestamp of update",
+        description="When this update was published",
+    )
 
     status: Annotated[
         ExecutionPhase,
@@ -760,37 +757,6 @@ class JobStatus(BaseModel):
     metadata: Annotated[JobMetadata, Field(title="Job metadata")]
 
     @classmethod
-    def from_abort(
-        cls, job: JobRun, status: QueryStatus, start: datetime
-    ) -> Self:
-        """Construct from an underlying `QueryStatus`.
-
-        Parameters
-        ----------
-        job
-            Job for which to create a status message.
-        status
-            Underlying query status.
-        start
-            Start time of the query.
-
-        Returns
-        -------
-        JobStatus
-            Job status message for Kafka.
-        """
-        return cls(
-            job_id=job.job_id,
-            execution_id=status.query_id,
-            timestamp=status.last_update or datetime.now(tz=UTC),
-            status=ExecutionPhase.EXECUTING,
-            query_info=JobQueryInfo(
-                start_time=start, progress=status.progress
-            ),
-            metadata=job.to_job_metadata(),
-        )
-
-    @classmethod
     def from_error(
         cls, job: JobRun, error: JobError, execution_id: str | None = None
     ) -> Self:
@@ -813,7 +779,6 @@ class JobStatus(BaseModel):
         return cls(
             job_id=job.job_id,
             execution_id=execution_id,
-            timestamp=datetime.now(tz=UTC),
             status=ExecutionPhase.ERROR,
             error=error,
             metadata=job.to_job_metadata(),
