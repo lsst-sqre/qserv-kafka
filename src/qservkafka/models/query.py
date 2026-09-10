@@ -94,6 +94,10 @@ class QueryStatusBase(BaseModel, ABC):
             progress=self.progress,
         )
 
+    def to_success_event_fields(self) -> dict[str, Any]:
+        """Backend-specific fields for the query success event."""
+        return {}
+
     def is_different_than(self, other: ProcessStatus) -> bool:
         """Check if new process status represents a meaningful change.
 
@@ -215,6 +219,12 @@ class BigQueryQueryStatus(QueryStatusBase):
         if self.collected_bytes:
             result["bigquery_size"] = self.collected_bytes
         return result
+
+    @override
+    def to_success_event_fields(self) -> dict[str, Any]:
+        if self.byte_progress and self.byte_progress.bytes_billed is not None:
+            return {"bigquery_bytes_billed": self.byte_progress.bytes_billed}
+        return {}
 
     @override
     def update_progress_from(self, progress: ProgressMetrics | None) -> None:
