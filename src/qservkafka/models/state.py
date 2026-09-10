@@ -150,7 +150,6 @@ class RunningQuery(StartedQuery):
         return JobStatus(
             job_id=self.job.job_id,
             execution_id=self.query_id,
-            timestamp=datetime.now(tz=UTC),
             status=ExecutionPhase.COMPLETED,
             query_info=self.to_job_query_info(finished=True),
             result_info=JobResultInfo(
