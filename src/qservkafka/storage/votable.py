@@ -8,7 +8,7 @@ from collections.abc import AsyncGenerator, Sequence
 from datetime import datetime
 from io import BytesIO
 from typing import Any, override
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -187,8 +187,8 @@ class VOTableEncoder(metaclass=ABCMeta):
             if not datalink_url:
                 self._logger.warning("No DataLink service found in Repertoire")
                 return value_str
-            base_url = urlparse(datalink_url)
-            url = urlparse(value_str)
+            base_url = urlsplit(datalink_url)
+            url = urlsplit(value_str)
             return base_url._replace(query=url.query).geturl()
         except Exception as e:
             logger = self._logger.bind(column=column_name)
