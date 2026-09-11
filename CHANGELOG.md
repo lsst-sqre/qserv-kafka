@@ -7,6 +7,39 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-6.1.0'></a>
+## 6.1.0 (2026-09-11)
+
+### Backwards-incompatible changes
+
+- Replace the `parquetBatchSize` setting with `parquetBatchCells` and `parquetRowGroupCells`.  The Parquet batch and row group sizes are now derived from a target number of cells (rows times columns) and the column count of the result, so memory use during Parquet encoding stays roughly constant.
+
+- Request version 60 of the Qserv REST API instead of version 55. This only applies if the Qserv Kafka bridge is configured to send versions in REST API requests.
+
+### New features
+
+- Add new metric for number of bytes billed for bigquery queries.
+
+- Add a new configuration option, `config.qservUploadDeleteTimeout`, that controls the timeout for temporary user table deletion independent of other REST API calls.
+
+### Bug fixes
+
+- Decouple the Parquet row group size from the encoding batch size. Row groups are now assembled from several batches, which keeps the in-memory Parquet file footer small.
+- Mark VOParquet results as overflowed in the embedded VOTable metadata when the result is truncated by `maxrec`.
+
+- Create the BigQuery and BigQuery Storage clients once per process and reuse them. This fixes a slow memory leak in the BigQuery result worker.
+- Close the BigQuery Arrow result stream when streaming stops early or hits an error.
+
+- Stream the upload of user table schemas and data instead of downloading the entire user table into memory and then uploading it to Qserv. This will hopefully reduce memory consumption in fast workers when processing many large user table uploads.
+
+- If Qserv returns a 404 response to a DELETE request, consider the DELETE successful instead of reporting an error.
+
+### Other changes
+
+- Reintroduce a `backend_elapsed` metric in metrics success events. This tracks the full time between starting the query and noticing that it has finished, including any polling delays. It is distinct from `qserv_elapsed` and `bigquery_elapsed`, which report the elapsed time as recorded by the backend itself (if available).
+
+- Add `queue_elapsed` to the query success metrics, tracking how long the query spent waiting in the arq queue for a result worker.
+
 <a id='changelog-6.0.0'></a>
 ## 6.0.0 (2026-08-14)
 
