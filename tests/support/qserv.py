@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from itertools import cycle
 from typing import Any, override
 from unittest.mock import MagicMock, Mock, patch
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlsplit
 
 import respx
 from aiohttp import ClientResponse, ClientTimeout, MultipartWriter
@@ -763,7 +763,7 @@ class MockQserv:
 
     def _check_version(self, request: Request) -> None:
         """Check that the correct API version was added to the parameters."""
-        url = urlparse(str(request.url))
+        url = urlsplit(str(request.url))
         query = parse_qs(url.query)
         if config.qserv_rest_send_api_version:
             assert query["version"] == [str(API_VERSION)]

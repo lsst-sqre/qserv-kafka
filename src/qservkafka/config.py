@@ -389,7 +389,7 @@ class Config(BaseSettings):
     )
 
     qserv_upload_delete_timeout: HumanTimedelta = Field(
-        timedelta(minutes=1),
+        timedelta(minutes=5),
         title="Qserv table upload timeout",
         description=(
             "Maximum timeout for a REST API call to Qserv to delete an"
@@ -466,9 +466,9 @@ class Config(BaseSettings):
             return USE_CLIENT_DEFAULT
 
     @property
-    def api_worker_timeout(self) -> timedelta:
+    def cleanup_worker_timeout(self) -> timedelta:
         """Backend API timeout plus a grace period for arq workers."""
-        return self.backend_api_timeout + ARQ_TIMEOUT_GRACE
+        return self.qserv_upload_delete_timeout + ARQ_TIMEOUT_GRACE
 
     @property
     def result_worker_timeout(self) -> timedelta:
