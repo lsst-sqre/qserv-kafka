@@ -83,7 +83,7 @@ class FastWorkerSettings:
     """
 
     functions: ClassVar[list[Callable | Function]] = [
-        func(cleanup_query, timeout=config.api_worker_timeout),
+        func(cleanup_query, timeout=config.cleanup_worker_timeout),
         finish_query,
         func(start_query, timeout=config.upload_worker_timeout),
     ]
