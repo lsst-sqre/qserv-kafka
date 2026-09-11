@@ -1,5 +1,6 @@
 """Create Qserv Kafka bridge components."""
 
+import asyncio
 import ssl
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from typing import Any, Self, override
 from aiohttp import ClientSession, TCPConnector
 from faststream.kafka import KafkaBroker
 from faststream.kafka.publisher import DefaultPublisher
+from google.cloud import bigquery, bigquery_storage
 from httpx import AsyncClient, Limits
 from redis.asyncio import BlockingConnectionPool, Redis
 from redis.asyncio.retry import Retry
@@ -275,6 +277,45 @@ class BigQueryProcessContext(ProcessContext):
     for every incoming message and only need to be recreated if the
     application configuration changes.
     """
+
+    bigquery_client: bigquery.Client
+    """Shared synchronous BigQuery client (REST/jobs API)."""
+
+    bigquery_read_client: bigquery_storage.BigQueryReadClient
+    """Shared BigQuery Storage Read API gRPC client."""
+
+    @override
+    @classmethod
+    async def create(
+        cls,
+        kafka_broker: KafkaBroker | None = None,
+    ) -> Self:
+        shared = await cls.build_shared_context(kafka_broker)
+
+        def _make_clients() -> tuple[
+            bigquery.Client, bigquery_storage.BigQueryReadClient
+        ]:
+            bigquery_client = bigquery.Client(
+                project=config.bigquery_project,
+                location=config.bigquery_location,
+            )
+            bigquery_read_client = bigquery_storage.BigQueryReadClient()
+            return bigquery_client, bigquery_read_client
+
+        bigquery_client, bigquery_read_client = await asyncio.to_thread(
+            _make_clients
+        )
+        return cls(
+            bigquery_client=bigquery_client,
+            bigquery_read_client=bigquery_read_client,
+            **shared,
+        )
+
+    @override
+    async def aclose(self) -> None:
+        await super().aclose()
+        await asyncio.to_thread(self.bigquery_client.close)
+        await asyncio.to_thread(self.bigquery_read_client.transport.close)
 
     @override
     def build_factory(self, logger: BoundLogger) -> Factory:
@@ -568,11 +609,19 @@ class BigQueryFactory(Factory):
         Logger to use for errors.
     """
 
+    def __init__(
+        self, context: BigQueryProcessContext, logger: BoundLogger
+    ) -> None:
+        self._context: BigQueryProcessContext = context
+        self._logger = logger
+
     @override
     def create_backend_client(self) -> DatabaseBackend:
         return BigQueryClient(
             project=config.bigquery_project,
             location=config.bigquery_location,
+            bigquery_client=self._context.bigquery_client,
+            bigquery_read_client=self._context.bigquery_read_client,
             http_client=self._context.http_client,
             events=self._context.events,
             slack_client=self._context.slack_client,

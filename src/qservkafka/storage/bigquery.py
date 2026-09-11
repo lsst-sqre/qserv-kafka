@@ -7,12 +7,13 @@ from collections.abc import (
     AsyncGenerator,
     Callable,
     Coroutine,
+    Generator,
     Iterator,
     Sequence,
 )
 from datetime import UTC, datetime
 from functools import wraps
-from typing import Any, Concatenate, Protocol, override
+from typing import Any, Concatenate, Protocol, cast, override
 
 import pyarrow as pa
 from google.cloud import bigquery, bigquery_storage
@@ -111,6 +112,10 @@ class BigQueryClient(DatabaseBackend):
         GCP project ID containing the BigQuery datasets.
     location
         BigQuery processing location.
+    bigquery_client
+        Shared synchronous BigQuery client for the jobs/REST API.
+    bigquery_read_client
+        Shared BigQuery Storage Read API client used to stream results.
     http_client
         HTTP client for making API calls.
     events
@@ -142,6 +147,8 @@ class BigQueryClient(DatabaseBackend):
         *,
         project: str,
         location: str,
+        bigquery_client: bigquery.Client,
+        bigquery_read_client: bigquery_storage.BigQueryReadClient,
         http_client: AsyncClient,
         events: Events,
         slack_client: SlackWebhookClient | None,
@@ -154,8 +161,8 @@ class BigQueryClient(DatabaseBackend):
         self._project = project
         self._location = location
         self._http_client = http_client
-        self._client = bigquery.Client(project=project, location=location)
-        self._storage_client = bigquery_storage.BigQueryReadClient()
+        self._client = bigquery_client
+        self._storage_client = bigquery_read_client
 
     def _validate_query_job(self, job: Any, query_id: str) -> QueryJob:
         """Validate and return a `QueryJob`, raising errors for invalid states.
@@ -224,11 +231,18 @@ class BigQueryClient(DatabaseBackend):
     async def get_query_results_gen(
         self, query_id: str
     ) -> AsyncGenerator[Sequence[Any]]:
-        def _setup_stream() -> Iterator[pa.RecordBatch]:
+        def _setup_stream() -> Generator[pa.RecordBatch]:
             job = self._client.get_job(query_id)
             validated_job = self._validate_query_job(job, query_id)
-            return validated_job.result().to_arrow_iterable(
-                bqstorage_client=self._storage_client,
+
+            # to_arrow_iterable claims to return an Iterator, but it's a
+            # generator holding a thread pool and gRPC streams. Narrow the
+            # type so we can call close() on it.
+            return cast(
+                "Generator[pa.RecordBatch]",
+                validated_job.result().to_arrow_iterable(
+                    bqstorage_client=self._storage_client,
+                ),
             )
 
         try:
@@ -241,27 +255,37 @@ class BigQueryClient(DatabaseBackend):
             self.logger.exception(msg, **exc.to_logging_context())
             raise exc from e
 
-        while True:
+        try:
+            while True:
+                try:
+                    batch = await asyncio.to_thread(
+                        _next_record_batch, batch_iter
+                    )
+                except Exception as e:
+                    exc = BigQueryApiNetworkError.from_exception(
+                        "get_results", self._project, e
+                    )
+                    self.logger.exception(
+                        "Failed to stream BigQuery results",
+                        **exc.to_logging_context(),
+                    )
+                    raise exc from e
+                if batch is None:
+                    break
+                for offset in range(0, len(batch), _RESULT_BATCH_SIZE):
+                    length = min(_RESULT_BATCH_SIZE, len(batch) - offset)
+                    sliced = batch.slice(offset, length)
+                    columns = [col.to_pylist() for col in sliced.columns]
+                    if columns:
+                        for row in zip(*columns, strict=True):
+                            yield row
+        finally:
             try:
-                batch = await asyncio.to_thread(_next_record_batch, batch_iter)
-            except Exception as e:
-                exc = BigQueryApiNetworkError.from_exception(
-                    "get_results", self._project, e
+                await asyncio.to_thread(batch_iter.close)
+            except Exception:
+                self.logger.warning(
+                    "Failed to close BigQuery result stream", exc_info=True
                 )
-                self.logger.exception(
-                    "Failed to stream BigQuery results",
-                    **exc.to_logging_context(),
-                )
-                raise exc from e
-            if batch is None:
-                break
-            for offset in range(0, len(batch), _RESULT_BATCH_SIZE):
-                length = min(_RESULT_BATCH_SIZE, len(batch) - offset)
-                sliced = batch.slice(offset, length)
-                columns = [col.to_pylist() for col in sliced.columns]
-                if columns:
-                    for row in zip(*columns, strict=True):
-                        yield row
 
     @override
     @_retry
