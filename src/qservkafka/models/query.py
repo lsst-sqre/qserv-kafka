@@ -49,9 +49,16 @@ class QueryStatusBase(BaseModel, ABC):
 
     error: Annotated[str | None, Field(title="Error message")] = None
 
-    collected_bytes: Annotated[
-        int, Field(title="Bytes collected by backend")
-    ] = 0
+    result_bytes: Annotated[
+        int | None,
+        Field(
+            title="Result size",
+            description=(
+                "Size of the query result in bytes, or null if not yet"
+                " known or unavailable"
+            ),
+        ),
+    ] = None
 
     final_rows: Annotated[int | None, Field(title="Final row count")] = None
 
@@ -178,8 +185,8 @@ class QservQueryStatus(QueryStatusBase):
         result: dict[str, Any] = {}
         if self.chunk_progress:
             result.update(self.chunk_progress.to_logging_context())
-        if self.collected_bytes:
-            result["qserv_size"] = self.collected_bytes
+        if self.result_bytes is not None:
+            result["qserv_size"] = self.result_bytes
         return result
 
     @override
@@ -216,15 +223,21 @@ class BigQueryQueryStatus(QueryStatusBase):
         result: dict[str, Any] = {}
         if self.byte_progress:
             result.update(self.byte_progress.to_logging_context())
-        if self.collected_bytes:
-            result["bigquery_size"] = self.collected_bytes
+        if self.result_bytes is not None:
+            result["bigquery_size"] = self.result_bytes
         return result
 
     @override
     def to_success_event_fields(self) -> dict[str, Any]:
-        if self.byte_progress and self.byte_progress.bytes_billed is not None:
-            return {"bigquery_bytes_billed": self.byte_progress.bytes_billed}
-        return {}
+        fields: dict[str, Any] = {}
+        if self.byte_progress:
+            fields["bigquery_bytes_processed"] = (
+                self.byte_progress.bytes_processed
+            )
+            bytes_billed = self.byte_progress.bytes_billed
+            if bytes_billed is not None:
+                fields["bigquery_bytes_billed"] = bytes_billed
+        return fields
 
     @override
     def update_progress_from(self, progress: ProgressMetrics | None) -> None:

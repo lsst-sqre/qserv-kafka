@@ -331,6 +331,18 @@ class BigQueryClient(DatabaseBackend):
         else:
             phase = AsyncQueryPhase.EXECUTING
 
+        result_bytes = None
+        if phase == AsyncQueryPhase.COMPLETED and job.destination is not None:
+            try:
+                result_bytes = await asyncio.to_thread(
+                    lambda: self._client.get_table(job.destination).num_bytes
+                )
+            except Exception:
+                self.logger.warning(
+                    "Failed to retrieve BigQuery result table size",
+                    exc_info=True,
+                )
+
         return BigQueryQueryStatus(
             backend_type="BigQuery",
             query_id=query_id,
@@ -339,7 +351,7 @@ class BigQueryClient(DatabaseBackend):
             byte_progress=progress,
             query_begin=job.created,
             last_update=datetime.now(tz=UTC),
-            collected_bytes=job.total_bytes_processed or 0,
+            result_bytes=result_bytes,
             final_rows=final_rows,
         )
 

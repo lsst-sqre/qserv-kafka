@@ -89,7 +89,7 @@ class MockDatabaseBackend(DatabaseBackend):
             status=AsyncQueryPhase.EXECUTING,
             query_begin=now,
             last_update=now,
-            collected_bytes=1000,
+            result_bytes=1000,
             chunk_progress=ChunkProgress(
                 total_chunks=100, completed_chunks=50
             ),
@@ -248,7 +248,7 @@ def test_qserv_query_status_serialization() -> None:
         status=AsyncQueryPhase.EXECUTING,
         query_begin=now,
         last_update=now,
-        collected_bytes=5000000,
+        result_bytes=5000000,
         chunk_progress=ChunkProgress(total_chunks=100, completed_chunks=75),
         czar_id=42,
         czar_type="shared",
@@ -273,7 +273,7 @@ def test_bigquery_query_status_serialization() -> None:
         status=AsyncQueryPhase.COMPLETED,
         query_begin=now,
         last_update=now,
-        collected_bytes=2000000,
+        result_bytes=2000000,
         final_rows=42,
         byte_progress=ByteProgress(
             bytes_processed=2000000, bytes_billed=1500000, cached=True

@@ -252,10 +252,22 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
         ),
     )
 
-    bigquery_size: int = Field(
-        ...,
+    bigquery_bytes_processed: int | None = Field(
+        None,
+        title="Bytes processed by BigQuery",
+        description=(
+            "Bytes scanned by BigQuery to execute the query, used as the"
+            " basis for billing."
+        ),
+    )
+
+    bigquery_size: int | None = Field(
+        None,
         title="Data size from BigQuery",
-        description="Result size reported by BigQuery in bytes",
+        description=(
+            "Result size reported by BigQuery in bytes, or null if the"
+            " result table's size could not be retrieved"
+        ),
         validation_alias=AliasChoices("bigquery_size", "backend_size"),
     )
 
@@ -263,8 +275,9 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
         None,
         title="BigQuery result rate",
         description=(
-            "BigQuery data bytes per second for query, or null if the"
-            " query completed too quickly to determine a meaningful rate"
+            "BigQuery result bytes per second for query, or null if the"
+            " query completed too quickly, or its result size could not be"
+            " retrieved, to determine a meaningful rate"
         ),
         validation_alias=AliasChoices("bigquery_rate", "backend_rate"),
     )
@@ -273,7 +286,10 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
     def to_logging_context(self) -> dict[str, Any]:
         result = super().to_logging_context()
         result["bigquery_elapsed"] = self._to_seconds(self.bigquery_elapsed)
-        result["bigquery_size"] = self.bigquery_size
+        if self.bigquery_bytes_processed is not None:
+            result["bigquery_bytes_processed"] = self.bigquery_bytes_processed
+        if self.bigquery_size is not None:
+            result["bigquery_size"] = self.bigquery_size
         if self.bigquery_bytes_billed is not None:
             result["bigquery_bytes_billed"] = self.bigquery_bytes_billed
         return result

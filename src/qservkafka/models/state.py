@@ -229,8 +229,9 @@ class RunningQuery(StartedQuery):
         completed = self.completed or now
         backend_elapsed = completed - self.start
         backend_elapsed_sec = backend_elapsed.total_seconds()
-        if backend_elapsed_sec > 0:
-            backend_rate = self.status.collected_bytes / backend_elapsed_sec
+        backend_size = self.status.result_bytes
+        if backend_elapsed_sec > 0 and backend_size is not None:
+            backend_rate = backend_size / backend_elapsed_sec
         else:
             backend_rate = None
         reported_end = self.status.last_update or completed
@@ -251,7 +252,7 @@ class RunningQuery(StartedQuery):
             result_rate=stats.data_bytes / stats.elapsed.total_seconds(),
             upload_tables=len(self.job.upload_tables),
             backend_reported_elapsed=reported_end - self.status.query_begin,
-            backend_size=self.status.collected_bytes,
+            backend_size=backend_size,
             backend_rate=backend_rate,
             **self.status.to_success_event_fields(),
         )

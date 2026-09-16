@@ -159,7 +159,7 @@ class QservAsyncStatusData(BaseModel):
             query_begin=self.query_begin,
             last_update=self.last_update,
             error=self.error,
-            collected_bytes=self.collected_bytes,
+            result_bytes=self.collected_bytes,
             final_rows=self.final_rows,
             chunk_progress=ChunkProgress(
                 total_chunks=self.total_chunks,
