@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from enum import StrEnum
 from typing import Annotated, Any, Literal, override
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from safir.pydantic import UtcDatetime
 
 from .progress import ByteProgress, ChunkProgress, ProgressMetrics
@@ -54,9 +54,10 @@ class QueryStatusBase(BaseModel, ABC):
         Field(
             title="Result size",
             description=(
-                "Size of the query result in bytes, or null if not yet"
-                " known or unavailable"
+                "Size of the query result so far in bytes, or null if not"
+                " yet known or unavailable"
             ),
+            validation_alias=AliasChoices("result_bytes", "collected_bytes"),
         ),
     ] = None
 
@@ -229,15 +230,13 @@ class BigQueryQueryStatus(QueryStatusBase):
 
     @override
     def to_success_event_fields(self) -> dict[str, Any]:
-        fields: dict[str, Any] = {}
-        if self.byte_progress:
-            fields["bigquery_bytes_processed"] = (
-                self.byte_progress.bytes_processed
-            )
-            bytes_billed = self.byte_progress.bytes_billed
-            if bytes_billed is not None:
-                fields["bigquery_bytes_billed"] = bytes_billed
-        return fields
+        if not self.byte_progress:
+            return {}
+        fields = {
+            "bigquery_bytes_processed": self.byte_progress.bytes_processed,
+            "bigquery_bytes_billed": self.byte_progress.bytes_billed,
+        }
+        return {k: v for k, v in fields.items() if v is not None}
 
     @override
     def update_progress_from(self, progress: ProgressMetrics | None) -> None:
