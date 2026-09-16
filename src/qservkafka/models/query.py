@@ -50,16 +50,13 @@ class QueryStatusBase(BaseModel, ABC):
     error: Annotated[str | None, Field(title="Error message")] = None
 
     result_bytes: Annotated[
-        int | None,
+        int,
         Field(
             title="Result size",
-            description=(
-                "Size of the query result so far in bytes, or null if not"
-                " yet known or unavailable"
-            ),
+            description="Size of the query result so far in bytes",
             validation_alias=AliasChoices("result_bytes", "collected_bytes"),
         ),
-    ] = None
+    ] = 0
 
     final_rows: Annotated[int | None, Field(title="Final row count")] = None
 
@@ -186,8 +183,7 @@ class QservQueryStatus(QueryStatusBase):
         result: dict[str, Any] = {}
         if self.chunk_progress:
             result.update(self.chunk_progress.to_logging_context())
-        if self.result_bytes is not None:
-            result["qserv_size"] = self.result_bytes
+        result["qserv_size"] = self.result_bytes
         return result
 
     @override
@@ -224,8 +220,7 @@ class BigQueryQueryStatus(QueryStatusBase):
         result: dict[str, Any] = {}
         if self.byte_progress:
             result.update(self.byte_progress.to_logging_context())
-        if self.result_bytes is not None:
-            result["bigquery_size"] = self.result_bytes
+        result["bigquery_size"] = self.result_bytes
         return result
 
     @override

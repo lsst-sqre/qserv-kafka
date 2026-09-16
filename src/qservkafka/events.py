@@ -261,13 +261,10 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
         ),
     )
 
-    bigquery_size: int | None = Field(
-        None,
+    bigquery_size: int = Field(
+        ...,
         title="Data size from BigQuery",
-        description=(
-            "Result size reported by BigQuery in bytes, or null if the"
-            " result table's size could not be retrieved"
-        ),
+        description="Result size reported by BigQuery in bytes",
         validation_alias=AliasChoices("bigquery_size", "backend_size"),
     )
 
@@ -276,8 +273,7 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
         title="BigQuery result rate",
         description=(
             "BigQuery result bytes per second for query, or null if the"
-            " query completed too quickly, or its result size could not be"
-            " retrieved, to determine a meaningful rate"
+            " query completed too quickly to determine a meaningful rate"
         ),
         validation_alias=AliasChoices("bigquery_rate", "backend_rate"),
     )
@@ -288,8 +284,7 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
         result["bigquery_elapsed"] = self._to_seconds(self.bigquery_elapsed)
         if self.bigquery_bytes_processed is not None:
             result["bigquery_bytes_processed"] = self.bigquery_bytes_processed
-        if self.bigquery_size is not None:
-            result["bigquery_size"] = self.bigquery_size
+        result["bigquery_size"] = self.bigquery_size
         if self.bigquery_bytes_billed is not None:
             result["bigquery_bytes_billed"] = self.bigquery_bytes_billed
         return result

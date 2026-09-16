@@ -230,7 +230,7 @@ class RunningQuery(StartedQuery):
         backend_elapsed = completed - self.start
         backend_elapsed_sec = backend_elapsed.total_seconds()
         backend_size = self.status.result_bytes
-        if backend_elapsed_sec > 0 and backend_size is not None:
+        if backend_elapsed_sec > 0:
             backend_rate = backend_size / backend_elapsed_sec
         else:
             backend_rate = None

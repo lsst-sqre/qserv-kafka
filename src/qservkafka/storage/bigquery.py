@@ -338,9 +338,11 @@ class BigQueryClient(DatabaseBackend):
                     lambda: self._client.get_table(job.destination).num_bytes
                 )
             except Exception:
-                self.logger.warning(
-                    "Failed to retrieve BigQuery result table size",
-                    exc_info=True,
+                self.logger.exception(
+                    "Failed to retrieve BigQuery result table size"
+                )
+                await self.events.query_api_failure.publish(
+                    BigQueryApiFailureEvent()
                 )
 
         return BigQueryQueryStatus(
@@ -351,7 +353,7 @@ class BigQueryClient(DatabaseBackend):
             byte_progress=progress,
             query_begin=job.created,
             last_update=datetime.now(tz=UTC),
-            result_bytes=result_bytes,
+            result_bytes=result_bytes or 0,
             final_rows=final_rows,
         )
 

@@ -208,7 +208,7 @@ async def test_get_query_status_executing(
     assert status.error is None
     assert isinstance(status.progress, ByteProgress)
     assert status.progress.bytes_processed == 1000000
-    assert status.result_bytes is None
+    assert status.result_bytes == 0
 
 
 @pytest.mark.asyncio
@@ -261,7 +261,7 @@ async def test_get_query_status_failed(
     assert status.query_id == "test-job-id"
     assert status.status == AsyncQueryPhase.FAILED
     assert status.error == "Syntax error in SQL"
-    assert status.result_bytes is None
+    assert status.result_bytes == 0
 
 
 @pytest.mark.asyncio
