@@ -440,6 +440,14 @@ class JobMetadata(BaseModel):
         ),
     ]
 
+    adql_query: Annotated[
+        str | None,
+        Field(
+            title="Original ADQL query",
+            description=("ADQL query as submitted by the user."),
+        ),
+    ] = None
+
     database: Annotated[
         str | None,
         Field(
@@ -479,6 +487,15 @@ class JobRun(BaseModel):
             description="TAP query converted to MySQL-compatible SQL",
         ),
     ]
+
+    adql_query: Annotated[
+        str | None,
+        Field(
+            title="Original ADQL query",
+            description=("ADQL query as submitted by the user."),
+            validation_alias="adqlQuery",
+        ),
+    ] = None
 
     database: Annotated[
         str | None,
@@ -557,7 +574,11 @@ class JobRun(BaseModel):
 
     def to_job_metadata(self) -> JobMetadata:
         """Convert to the job metadata used in status responses."""
-        return JobMetadata(query=self.query, database=self.database)
+        return JobMetadata(
+            query=self.query,
+            adql_query=self.adql_query,
+            database=self.database,
+        )
 
 
 class JobQueryInfo(BaseModel):
