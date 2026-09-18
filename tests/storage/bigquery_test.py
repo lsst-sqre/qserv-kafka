@@ -208,7 +208,7 @@ async def test_get_query_status_executing(
     assert status.error is None
     assert isinstance(status.progress, ByteProgress)
     assert status.progress.bytes_processed == 1000000
-    assert status.collected_bytes == 1000000
+    assert status.result_bytes == 0
 
 
 @pytest.mark.asyncio
@@ -228,6 +228,7 @@ async def test_get_query_status_completed(
     mock_job.total_bytes_billed = 2000000
     mock_job.result.return_value = mock_result
     mock_bq_client.get_job.return_value = mock_job
+    mock_bq_client.get_table.return_value.num_bytes = 1500000
 
     status = await bigquery_client.get_query_status("test-job-id")
 
@@ -235,7 +236,10 @@ async def test_get_query_status_completed(
     assert status.status == AsyncQueryPhase.COMPLETED
     assert status.error is None
     assert status.final_rows == 42
-    assert status.collected_bytes == 2000000
+    assert status.progress
+    assert status.progress.bytes_processed == 2000000
+    assert status.result_bytes == 1500000
+    mock_bq_client.get_table.assert_called_once_with(mock_job.destination)
 
 
 @pytest.mark.asyncio
@@ -257,7 +261,7 @@ async def test_get_query_status_failed(
     assert status.query_id == "test-job-id"
     assert status.status == AsyncQueryPhase.FAILED
     assert status.error == "Syntax error in SQL"
-    assert status.collected_bytes == 0
+    assert status.result_bytes == 0
 
 
 @pytest.mark.asyncio

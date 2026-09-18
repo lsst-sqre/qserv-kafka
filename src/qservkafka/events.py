@@ -252,6 +252,15 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
         ),
     )
 
+    bigquery_bytes_processed: int | None = Field(
+        None,
+        title="Bytes processed by BigQuery",
+        description=(
+            "Bytes scanned by BigQuery to execute the query, used as the"
+            " basis for billing."
+        ),
+    )
+
     bigquery_size: int = Field(
         ...,
         title="Data size from BigQuery",
@@ -263,7 +272,7 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
         None,
         title="BigQuery result rate",
         description=(
-            "BigQuery data bytes per second for query, or null if the"
+            "BigQuery result bytes per second for query, or null if the"
             " query completed too quickly to determine a meaningful rate"
         ),
         validation_alias=AliasChoices("bigquery_rate", "backend_rate"),
@@ -273,6 +282,8 @@ class BigQuerySuccessEvent(QuerySuccessEvent):
     def to_logging_context(self) -> dict[str, Any]:
         result = super().to_logging_context()
         result["bigquery_elapsed"] = self._to_seconds(self.bigquery_elapsed)
+        if self.bigquery_bytes_processed is not None:
+            result["bigquery_bytes_processed"] = self.bigquery_bytes_processed
         result["bigquery_size"] = self.bigquery_size
         if self.bigquery_bytes_billed is not None:
             result["bigquery_bytes_billed"] = self.bigquery_bytes_billed

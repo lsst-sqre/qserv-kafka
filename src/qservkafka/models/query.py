@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from enum import StrEnum
 from typing import Annotated, Any, Literal, override
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from safir.pydantic import UtcDatetime
 
 from .progress import ByteProgress, ChunkProgress, ProgressMetrics
@@ -49,8 +49,13 @@ class QueryStatusBase(BaseModel, ABC):
 
     error: Annotated[str | None, Field(title="Error message")] = None
 
-    collected_bytes: Annotated[
-        int, Field(title="Bytes collected by backend")
+    result_bytes: Annotated[
+        int,
+        Field(
+            title="Result size",
+            description="Size of the query result so far in bytes",
+            validation_alias=AliasChoices("result_bytes", "collected_bytes"),
+        ),
     ] = 0
 
     final_rows: Annotated[int | None, Field(title="Final row count")] = None
@@ -178,8 +183,7 @@ class QservQueryStatus(QueryStatusBase):
         result: dict[str, Any] = {}
         if self.chunk_progress:
             result.update(self.chunk_progress.to_logging_context())
-        if self.collected_bytes:
-            result["qserv_size"] = self.collected_bytes
+        result["qserv_size"] = self.result_bytes
         return result
 
     @override
@@ -216,15 +220,18 @@ class BigQueryQueryStatus(QueryStatusBase):
         result: dict[str, Any] = {}
         if self.byte_progress:
             result.update(self.byte_progress.to_logging_context())
-        if self.collected_bytes:
-            result["bigquery_size"] = self.collected_bytes
+        result["bigquery_size"] = self.result_bytes
         return result
 
     @override
     def to_success_event_fields(self) -> dict[str, Any]:
-        if self.byte_progress and self.byte_progress.bytes_billed is not None:
-            return {"bigquery_bytes_billed": self.byte_progress.bytes_billed}
-        return {}
+        if not self.byte_progress:
+            return {}
+        fields = {
+            "bigquery_bytes_processed": self.byte_progress.bytes_processed,
+            "bigquery_bytes_billed": self.byte_progress.bytes_billed,
+        }
+        return {k: v for k, v in fields.items() if v is not None}
 
     @override
     def update_progress_from(self, progress: ProgressMetrics | None) -> None:
