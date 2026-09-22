@@ -170,6 +170,7 @@ class MockQserv:
         self._expected_job: JobRun | None
         self._immediate_success: JobRun | None
         self._intermittent_failure: int | None
+        self._last_submit_request: AsyncSubmitRequest | None
         self._mocks: list[MagicMock] = []
         self._next_query_id: int
         self._override_status: Response | None
@@ -195,6 +196,10 @@ class MockQserv:
     def results_stored(self) -> bool:
         """Whether results are currently stored."""
         return self._results_stored
+
+    def get_last_submit_request(self) -> AsyncSubmitRequest | None:
+        """Return the body of the most recent submit request, if any."""
+        return self._last_submit_request
 
     def get_status(self, query_id: int) -> QservAsyncStatusData:
         """Return the current stored status.
@@ -263,6 +268,7 @@ class MockQserv:
         self._expected_job = None
         self._immediate_success = None
         self._intermittent_failure = 0 if self.flaky else None
+        self._last_submit_request = None
         self._next_query_id = 1
         self._override_status = None
         self._override_submit = None
@@ -554,7 +560,7 @@ class MockQserv:
         self._check_auth(request)
         self._check_version(request)
         body_raw = json.loads(request.content.decode())
-        AsyncSubmitRequest.model_validate(body_raw)
+        self._last_submit_request = AsyncSubmitRequest.model_validate(body_raw)
         if self._override_submit:
             return self._override_submit
         if self._should_fail():

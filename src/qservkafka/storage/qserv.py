@@ -354,7 +354,9 @@ class QservClient(DatabaseBackend):
 
     @override
     async def submit_query(self, job: JobRun) -> str:
-        request = AsyncSubmitRequest(query=job.query, database=job.database)
+        request = AsyncSubmitRequest(
+            query=job.query, database=job.database, adql_query=job.adql_query
+        )
         result = await self._post("/query-async", request, AsyncSubmitResponse)
         return str(result.query_id)
 

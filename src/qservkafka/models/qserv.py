@@ -189,6 +189,14 @@ class AsyncSubmitRequest(BaseModel):
         str | None, Field(title="Default database for query")
     ] = None
 
+    adql_query: Annotated[
+        str | None,
+        Field(
+            title="Original ADQL query",
+            description=("ADQL query as submitted by the user."),
+        ),
+    ] = None
+
 
 class AsyncSubmitResponse(BaseResponse):
     """Response from creating an async job."""

@@ -83,6 +83,23 @@ async def test_start(data: QservKafkaData, factory: Factory) -> None:
 
 
 @pytest.mark.asyncio
+async def test_adql_query(
+    data: QservKafkaData, factory: Factory, mock_qserv: MockQserv
+) -> None:
+    """Test that the original ADQL query is forwarded to Qserv and status."""
+    job = data.read_pydantic(JobRun, "jobs/adql")
+    query_service = factory.create_query_service()
+
+    await query_service.handle_query(job)
+    status = read_status_message(factory)
+    data.assert_job_status_matches(status, "status/adql-started")
+
+    submitted = mock_qserv.get_last_submit_request()
+    assert submitted
+    assert submitted.adql_query == job.adql_query
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
