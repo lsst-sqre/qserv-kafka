@@ -432,6 +432,8 @@ JobTableUpload = Annotated[
 class JobMetadata(BaseModel):
     """Metadata about a query."""
 
+    model_config = ConfigDict(serialize_by_alias=True, validate_by_name=True)
+
     query: Annotated[
         str,
         Field(
@@ -444,7 +446,9 @@ class JobMetadata(BaseModel):
         str | None,
         Field(
             title="Original ADQL query",
-            description=("ADQL query as submitted by the user."),
+            description="ADQL query as submitted by the user.",
+            validation_alias="adqlQuery",
+            serialization_alias="adqlQuery",
         ),
     ] = None
 
