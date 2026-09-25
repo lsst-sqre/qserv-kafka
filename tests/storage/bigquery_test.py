@@ -349,3 +349,37 @@ async def test_upload_table_not_implemented(
         await bigquery_client.upload_table(upload)
 
     assert "not supported" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_submit_query_with_timeout(
+    bigquery_client: BigQueryClient,
+    sample_job_run: JobRun,
+    mock_bq_client: MagicMock,
+) -> None:
+    mock_job = MagicMock(spec=QueryJob)
+    mock_job.job_id = "bq-job-uuid-789"
+    mock_bq_client.query.return_value = mock_job
+
+    sample_job_run.timeout = timedelta(seconds=90)
+    await bigquery_client.submit_query(sample_job_run)
+
+    job_config = mock_bq_client.query.call_args[1]["job_config"]
+    assert str(job_config.job_timeout_ms) == "90000"
+
+
+@pytest.mark.asyncio
+async def test_submit_query_without_timeout(
+    bigquery_client: BigQueryClient,
+    sample_job_run: JobRun,
+    mock_bq_client: MagicMock,
+) -> None:
+    mock_job = MagicMock(spec=QueryJob)
+    mock_job.job_id = "bq-job-uuid-790"
+    mock_bq_client.query.return_value = mock_job
+
+    sample_job_run.timeout = None
+    await bigquery_client.submit_query(sample_job_run)
+
+    job_config = mock_bq_client.query.call_args[1]["job_config"]
+    assert job_config.job_timeout_ms is None
