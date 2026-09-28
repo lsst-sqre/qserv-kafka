@@ -410,6 +410,11 @@ class BigQueryClient(DatabaseBackend):
                     config.bigquery_max_bytes_billed
                 )
 
+            if job.timeout is not None:
+                job_config_kwargs["job_timeout_ms"] = int(
+                    job.timeout.total_seconds() * 1000
+                )
+
             job_config = QueryJobConfig(**job_config_kwargs)
             query_job = self._client.query(job.query, job_config=job_config)
             return query_job.job_id
