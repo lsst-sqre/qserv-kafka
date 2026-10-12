@@ -201,6 +201,36 @@ async def test_immediate_dispatch(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("max_result_cells", "fast"), [(24, True), (23, False)]
+)
+async def test_immediate_dispatch_queue(
+    *,
+    max_result_cells: int,
+    fast: bool,
+    data: QservKafkaData,
+    factory: Factory,
+    mock_qserv: MockQserv,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that quick queries are routed based on result cell count."""
+    monkeypatch.setattr(config, "arq_fast_max_result_cells", max_result_cells)
+    query_service = factory.create_query_service()
+    job = data.read_pydantic(JobRun, "jobs/data")
+    mock_qserv.set_immediate_success(job)
+
+    with patch.object(RedisArqQueue, "enqueue", autospec=True) as mock:
+        await query_service.handle_query(job)
+        assert mock.call_count == 1
+        queue, *args = mock.call_args.args
+        assert args == ["finish_query", "1"]
+        if fast:
+            assert queue.default_queue_name == config.arq_fast_queue
+        else:
+            assert queue.default_queue_name == config.arq_slow_queue
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
 )
 async def test_no_delete(
