@@ -434,7 +434,7 @@ class Binary2Encoder(VOTableEncoder):
         EncodingError
             Raised if an error occurred encoding a row of the results.
         """
-        nulls = BitArray(length=len(types))
+        nulls = BitArray.from_zeros(len(types))
         output = bytearray()
         for i, column in enumerate(types):
             try:
