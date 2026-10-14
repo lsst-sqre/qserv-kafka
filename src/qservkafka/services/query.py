@@ -342,6 +342,26 @@ class QueryService:
                     database_name=database,
                 )
 
+    def _is_small_result(self, query: RunningQuery) -> bool:
+        """Check if a query's result is small enough for fast workers.
+
+        Parameters
+        ----------
+        query
+            Completed query.
+
+        Returns
+        -------
+        bool
+            `True` if the result should be processed by the fast workers,
+            `False` if it should go to the slow workers.
+        """
+        rows = query.status.final_rows
+        if rows is None:
+            return False
+        columns = len(query.job.result_format.column_types)
+        return rows * columns <= config.arq_fast_max_result_cells
+
     async def _publish_initial_status(
         self, started_query: StartedQuery, logger: BoundLogger
     ) -> None:
@@ -366,15 +386,26 @@ class QueryService:
             return
 
         # If the query has already completed successfully, immediately
-        # dispatch it to the result worker and and send an executing status.
-        # Otherwise, let the result service build the status, which handles
-        # executing, aborted, and failed queries.
+        # dispatch it to the result worker and send an executing status.
+        # Small results go to the fast workers, large ones to the slow
+        # workers. Otherwise, let the result service build the status,
+        # which handles executing, aborted, and failed queries.
         if query.status.status == AsyncQueryPhase.COMPLETED:
             query.completed = datetime.now(tz=UTC)
             query.result_queued = True
             await self._state.store_query(query)
-            await self._arq_fast.enqueue("finish_query", query.query_id)
-            logger.info("Dispatched immediately completed query to worker")
+            if self._is_small_result(query):
+                await self._arq_fast.enqueue("finish_query", query.query_id)
+                queue = "fast"
+            else:
+                await self._arq_slow.enqueue("finish_query", query.query_id)
+                queue = "slow"
+            logger.info(
+                "Dispatched immediately completed query to worker",
+                queue=queue,
+                final_rows=query.status.final_rows,
+                columns=len(query.job.result_format.column_types),
+            )
             await self._status.publish_executing(query)
         else:
             if query.status.status == AsyncQueryPhase.EXECUTING:

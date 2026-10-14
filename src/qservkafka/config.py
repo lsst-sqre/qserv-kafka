@@ -108,6 +108,16 @@ class Config(BaseSettings):
         ),
     )
 
+    arq_fast_max_result_cells: int = Field(
+        1000000,
+        title="Maximum number of cells in the result for fast workers",
+        description=(
+            "Queries that complete immediately (for example, BigQuery cache"
+            " hits) but whose results have more cells (rows times columns)"
+            " than this are sent to the slow workers."
+        ),
+    )
+
     arq_fast_queue: str = Field(
         "arq:upload",
         title="arq queue for fast actions",
