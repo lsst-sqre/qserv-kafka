@@ -79,6 +79,30 @@ class StatusPublisher:
         )
         await self._events.query_abort.publish(event)
 
+    async def publish_bytes_exceeded(
+        self, job: JobRun, quota: GafaelfawrTapQuota
+    ) -> None:
+        """Publish status for a request that exceeds the user's bytes quota.
+
+        Currently, the bytes billed quota is only used by BigQuery. Repoert
+        that the user has incurred more billed bytes than their quota allows
+        and they will need to wait for the next day.
+
+        Parameters
+        ----------
+        job
+            Initial query request.
+        quota
+            User's quota.
+        """
+        self._logger.info(
+            "Query rejected due to bytes billed quota",
+            quota=quota.model_dump(mode="json"),
+            **job.to_logging_context(),
+        )
+        error = JobError.for_bytes_exceeded(quota)
+        await self._publish_status(JobStatus.from_error(job, error))
+
     async def publish_completed(
         self, query: RunningQuery, stats: UploadStats
     ) -> None:
@@ -99,6 +123,29 @@ class StatusPublisher:
         await self._events.query_success.publish(event)
         logger = logger.bind(**event.to_logging_context())
         logger.info("Job complete and results uploaded")
+
+    async def publish_count_exceeded(
+        self, job: JobRun, running: int, quota: GafaelfawrTapQuota
+    ) -> None:
+        """Publish status for a request that exceeds the user's quota.
+
+        Parameters
+        ----------
+        job
+            Initial query request.
+        running
+            Number of running queries.
+        quota
+            User's quota.
+        """
+        self._logger.info(
+            "Query rejected due to concurrent query quota",
+            quota=quota.model_dump(mode="json"),
+            running=running,
+            **job.to_logging_context(),
+        )
+        error = JobError.for_count_exceeded(running, quota)
+        await self._publish_status(JobStatus.from_error(job, error))
 
     async def publish_exception(
         self, query: StartedQuery, exc: QueryError
@@ -196,29 +243,6 @@ class StatusPublisher:
         """
         self._logger.warning(message, **job.to_logging_context())
         error = JobError(code=JobErrorCode.invalid_request, message=message)
-        await self._publish_status(JobStatus.from_error(job, error))
-
-    async def publish_quota_exceeded(
-        self, job: JobRun, running: int, quota: GafaelfawrTapQuota
-    ) -> None:
-        """Publish status for a request that exceeds the user's quota.
-
-        Parameters
-        ----------
-        job
-            Initial query request.
-        running
-            Number of running queries.
-        quota
-            Maximum allowed number of concurrent running queries.
-        """
-        self._logger.info(
-            "Query rejected due to quota",
-            quota=quota.model_dump(mode="json"),
-            running=running,
-            **job.to_logging_context(),
-        )
-        error = JobError.for_quota_exceeded(running, quota)
         await self._publish_status(JobStatus.from_error(job, error))
 
     async def publish_start_exception(

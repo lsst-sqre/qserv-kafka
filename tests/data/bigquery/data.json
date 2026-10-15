@@ -1,0 +1,17 @@
+{
+  "backend_type": "BigQuery",
+  "byte_progress": {
+    "bytesBilled": 9000,
+    "bytesProcessed": 2000000,
+    "cached": false
+  },
+  "error": null,
+  "final_rows": 42,
+  "last_update": "2026-10-15T23:47:22.433636Z",
+  "query": null,
+  "query_begin": "2026-10-15T23:47:22.433636Z",
+  "query_id": "bq-job-uuid-123",
+  "result_bytes": 2000000,
+  "results_too_large": false,
+  "status": "COMPLETED"
+}

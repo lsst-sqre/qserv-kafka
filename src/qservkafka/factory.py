@@ -9,9 +9,10 @@ from typing import Any, Self, override
 from aiohttp import ClientSession, TCPConnector
 from faststream.kafka import KafkaBroker
 from faststream.kafka.publisher import DefaultPublisher
-from google.cloud import bigquery, bigquery_storage
-from google.cloud.storage import Client as GCSClient
+from google.cloud import bigquery, bigquery_storage, storage
 from httpx import AsyncClient, Limits
+from limits.aio.strategies import FixedWindowRateLimiter
+from limits.storage import storage_from_string
 from redis.asyncio import BlockingConnectionPool, Redis
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
@@ -25,8 +26,7 @@ from safir.slack.webhook import SlackWebhookClient
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from structlog.stdlib import BoundLogger, get_logger
 
-from qservkafka.background import BackgroundTaskManager
-
+from .background import BackgroundTaskManager
 from .config import BackendType, config
 from .constants import (
     REDIS_BACKOFF_MAX,
@@ -82,6 +82,9 @@ class ProcessContext(metaclass=ABCMeta):
 
     status_publisher: DefaultPublisher
     """Kafka publisher for the status topic, built from the Kafka broker."""
+
+    limiter: FixedWindowRateLimiter | None
+    """Rate limiter for bytes billed quotas."""
 
     slack_client: SlackWebhookClient | None
     """Client for sending Slack error notifications."""
@@ -182,14 +185,19 @@ class ProcessContext(metaclass=ABCMeta):
         else:
             return MockArqQueue()
 
+    @classmethod
+    def _create_redis_client(cls) -> Redis:
+        """Create the Redis client."""
+        return Redis.from_pool(cls._create_redis_pool())
+
     @staticmethod
-    def _create_redis_client() -> Redis:
-        """Create the Redis client pool with exponential backoff."""
+    def _create_redis_pool() -> BlockingConnectionPool:
+        """Create a Redis client pool with exponential backoff."""
         redis_password = config.redis_password.get_secret_value()
         backoff = ExponentialBackoff(
             base=REDIS_BACKOFF_START, cap=REDIS_BACKOFF_MAX
         )
-        redis_pool = BlockingConnectionPool.from_url(
+        return BlockingConnectionPool.from_url(
             str(config.redis_url),
             password=redis_password,
             max_connections=config.redis_max_connections,
@@ -199,7 +207,6 @@ class ProcessContext(metaclass=ABCMeta):
             socket_timeout=REDIS_TIMEOUT,
             timeout=REDIS_POOL_TIMEOUT,
         )
-        return Redis.from_pool(redis_pool)
 
     @staticmethod
     def _create_slack_client(logger: BoundLogger) -> SlackWebhookClient | None:
@@ -285,7 +292,7 @@ class BigQueryProcessContext(ProcessContext):
     bigquery_read_client: bigquery_storage.BigQueryReadClient
     """Shared BigQuery Storage Read API gRPC client."""
 
-    gcs_client: GCSClient
+    gcs_client: storage.Client
     """Shared Google Cloud Storage client for uploaded table schemas."""
 
     @override
@@ -299,22 +306,29 @@ class BigQueryProcessContext(ProcessContext):
         def _make_clients() -> tuple[
             bigquery.Client,
             bigquery_storage.BigQueryReadClient,
-            GCSClient,
+            storage.Client,
         ]:
             bigquery_client = bigquery.Client(
                 project=config.bigquery_job_project or config.bigquery_project,
                 location=config.bigquery_location,
             )
             bigquery_read_client = bigquery_storage.BigQueryReadClient()
-            gcs_client = GCSClient(project=config.bigquery_project)
+            gcs_client = storage.Client(project=config.bigquery_project)
             return bigquery_client, bigquery_read_client, gcs_client
 
         clients = await asyncio.to_thread(_make_clients)
         bigquery_client, bigquery_read_client, gcs_client = clients
+        redis_pool = cls._create_redis_pool()
+        rate_limiter_storage = storage_from_string(
+            "async+redis://",
+            implementation="redispy",
+            connection_pool=redis_pool,  # type: ignore[arg-type]
+        )
         return cls(
             bigquery_client=bigquery_client,
             bigquery_read_client=bigquery_read_client,
             gcs_client=gcs_client,
+            limiter=FixedWindowRateLimiter(rate_limiter_storage),
             **shared,
         )
 
@@ -424,6 +438,7 @@ class QservProcessContext(ProcessContext):
             sessionmaker=sessionmaker,
             qserv_http_client=qserv_http_client,
             upload_http_client=upload_http_client,
+            limiter=None,
             **shared,
         )
 
@@ -571,6 +586,7 @@ class Factory(metaclass=ABCMeta):
                 self._logger,
             ),
             state_store=self.create_query_state_store(),
+            limiter=self._context.limiter,
             rate_limit_store=self.create_rate_limit_store(),
             gafaelfawr_storage=self._context.gafaelfawr,
             arq_queue_fast=self._context.arq_queue_fast,

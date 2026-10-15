@@ -648,6 +648,7 @@ class JobErrorCode(StrEnum):
     backend_sql_error = "backend_sql_error"
     encoding_error = "encoding_error"
     invalid_request = "invalid_request"
+    quota_error = "quota_error"
     quota_exceeded = "quota_exceeded"
     result_timeout = "result_timeout"
     upload_failed = "upload_failed"
@@ -679,8 +680,28 @@ class JobError(BaseModel):
     ]
 
     @classmethod
-    def for_quota_exceeded(cls, used: int, quota: GafaelfawrTapQuota) -> Self:
-        """Generate an error object for a quota exceeded error.
+    def for_bytes_exceeded(cls, quota: GafaelfawrTapQuota) -> Self:
+        """Generate an error object for a bytes billed exceeded error.
+
+        Parameters
+        ----------
+        quota
+            Quota for the user.
+
+        Returns
+        -------
+        JobError
+            Corresponding error component of a Kafka job status message.
+        """
+        error = (
+            f"Maximum number of billed bytes ({quota.bytes_billed}) reached"
+            " within a 24 hour period; retry your query tomorrow"
+        )
+        return cls(code=JobErrorCode.quota_exceeded, message=error)
+
+    @classmethod
+    def for_count_exceeded(cls, used: int, quota: GafaelfawrTapQuota) -> Self:
+        """Generate an error object for a concurrent query exceeded error.
 
         Parameters
         ----------
