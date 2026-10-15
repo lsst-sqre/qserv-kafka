@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import (
     AsyncGenerator,
     Callable,
@@ -11,14 +12,30 @@ from collections.abc import (
     Iterator,
     Sequence,
 )
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import UTC, datetime
 from functools import wraps
 from typing import Any, Concatenate, Protocol, cast, override
 
 import pyarrow as pa
+from google.api_core.exceptions import ClientError, TooManyRequests
 from google.cloud import bigquery, bigquery_storage
-from google.cloud.bigquery import DatasetReference, QueryJob, QueryJobConfig
+from google.cloud.bigquery import (
+    CreateDisposition,
+    DatasetReference,
+    LoadJob,
+    LoadJobConfig,
+    QueryJob,
+    QueryJobConfig,
+    SchemaField,
+    SourceFormat,
+    TableReference,
+    WriteDisposition,
+)
+from google.cloud.storage import Blob
+from google.cloud.storage import Client as GCSClient
 from httpx import AsyncClient
+from pydantic import ValidationError
 from safir.slack.webhook import SlackWebhookClient
 from structlog.stdlib import BoundLogger
 
@@ -26,18 +43,43 @@ from ..config import config
 from ..events import BigQueryApiFailureEvent, Events, QueryApiFailureEvent
 from ..exceptions import (
     BackendNotImplementedError,
+    BigQueryApiError,
+    BigQueryApiFailedError,
     BigQueryApiNetworkError,
     BigQueryApiProtocolError,
 )
+from ..models.bigquery import BigQueryUploadSchema
 from ..models.kafka import JobRun, JobTableUpload
 from ..models.progress import ByteProgress
-from ..models.qserv import TableUploadStats
-from ..models.query import AsyncQueryPhase, BigQueryQueryStatus, ProcessStatus
+from ..models.query import (
+    AsyncQueryPhase,
+    BigQueryQueryStatus,
+    ProcessStatus,
+    TableUploadStats,
+)
 from .backend import DatabaseBackend
 
 __all__ = ["BigQueryClient"]
 
 _RESULT_BATCH_SIZE = 1000
+
+_UPLOAD_NULL_MARKER = "\\N"
+"""String used for null values in uploaded CSV files."""
+
+_UPLOAD_MAX_ERRORS = 5
+"""Maximum number of load errors to include in the error for the user."""
+
+_UPLOAD_GS_URL = re.compile(r"^gs://[^/]+/.+")
+"""Pattern for the GCS URLs of uploaded tables and their schemas."""
+
+
+def _upload_error(
+    method: str, project: str, exc: Exception
+) -> BigQueryApiError:
+    """Convert an upload exception, only retrying transient errors."""
+    if isinstance(exc, ClientError) and not isinstance(exc, TooManyRequests):
+        return BigQueryApiFailedError.from_exception(method, project, exc)
+    return BigQueryApiNetworkError.from_exception(method, project, exc)
 
 
 def _next_record_batch(
@@ -116,6 +158,9 @@ class BigQueryClient(DatabaseBackend):
         Shared synchronous BigQuery client for the jobs/REST API.
     bigquery_read_client
         Shared BigQuery Storage Read API client used to stream results.
+    gcs_client
+        Shared Google Cloud Storage client used to read the schemas of
+        uploaded tables.
     http_client
         HTTP client for making API calls.
     events
@@ -137,9 +182,10 @@ class BigQueryClient(DatabaseBackend):
     Notes
     -----
     BigQuery differs from Qserv in a few ways: Query IDs are UUIDs (strings)
-    instead of int, progress is reported in bytes processed, there is no temp
-    table upload. Also results are cached for 24 hours and auto-expire, and
-    query listing is limited.
+    instead of int, and progress is reported in bytes processed. Uploaded
+    tables are loaded straight from GCS into a shared upload dataset.
+    Results are cached for 24 hours and auto-expire, and query listing is
+    limited.
     """
 
     def __init__(
@@ -149,6 +195,7 @@ class BigQueryClient(DatabaseBackend):
         location: str,
         bigquery_client: bigquery.Client,
         bigquery_read_client: bigquery_storage.BigQueryReadClient,
+        gcs_client: GCSClient,
         http_client: AsyncClient,
         events: Events,
         slack_client: SlackWebhookClient | None,
@@ -163,6 +210,7 @@ class BigQueryClient(DatabaseBackend):
         self._http_client = http_client
         self._client = bigquery_client
         self._storage_client = bigquery_read_client
+        self._gcs_client = gcs_client
 
     def _validate_query_job(self, job: Any, query_id: str) -> QueryJob:
         """Validate and return a `QueryJob`, raising errors for invalid states.
@@ -218,10 +266,22 @@ class BigQueryClient(DatabaseBackend):
         self.logger.info("Cancelled BigQuery query", bigquery_job_id=query_id)
 
     @override
-    async def delete_database(self, database: str) -> None:
-        raise BackendNotImplementedError(
-            "BigQuery doesn't use temporary databases, no deletion needed"
-        )
+    @_retry
+    async def delete_upload_resource(self, name: str) -> None:
+        table = self._get_upload_table(name)
+        timeout = config.backend_api_timeout.total_seconds()
+        try:
+            await asyncio.to_thread(
+                self._client.delete_table,
+                table,
+                not_found_ok=True,
+                timeout=timeout,
+            )
+        except Exception as e:
+            exc = _upload_error("delete_table", table.project, e)
+            msg = "Failed to delete uploaded table"
+            self.logger.exception(msg, **exc.to_logging_context())
+            raise exc from e
 
     @override
     async def delete_result(self, query_id: str) -> None:
@@ -358,6 +418,12 @@ class BigQueryClient(DatabaseBackend):
         )
 
     @override
+    def get_upload_resources(
+        self, uploads: Sequence[JobTableUpload]
+    ) -> list[str]:
+        return [u.table_name for u in uploads]
+
+    @override
     @_retry
     async def list_running_queries(self) -> dict[str, ProcessStatus]:
         def _list_running() -> dict[str, ProcessStatus]:
@@ -438,7 +504,182 @@ class BigQueryClient(DatabaseBackend):
         return job_id
 
     @override
+    @_retry
     async def upload_table(self, upload: JobTableUpload) -> TableUploadStats:
-        raise BackendNotImplementedError(
-            "Table upload is not supported for BigQuery backend"
+        table = self._get_upload_table(upload.table_name)
+        for url in (upload.source_url, upload.schema_url):
+            if not _UPLOAD_GS_URL.match(url):
+                msg = f"{url} for {upload.table_name} is not a gs:// URL"
+                raise BigQueryApiProtocolError("upload", table.project, msg)
+        start = datetime.now(tz=UTC)
+        timeout = config.bigquery_upload_timeout.total_seconds()
+        schema = await self._read_upload_schema(upload, table)
+
+        job_config = LoadJobConfig(
+            schema=schema,
+            source_format=SourceFormat.CSV,
+            null_marker=_UPLOAD_NULL_MARKER,
+            allow_quoted_newlines=True,
+            create_disposition=CreateDisposition.CREATE_IF_NEEDED,
+            write_disposition=WriteDisposition.WRITE_TRUNCATE,
         )
+
+        try:
+            load_job = await asyncio.to_thread(
+                self._client.load_table_from_uri,
+                upload.source_url,
+                table,
+                job_config=job_config,
+            )
+        except Exception as e:
+            exc = _upload_error("load_table", table.project, e)
+            msg = "Failed to start BigQuery load job"
+            self.logger.exception(msg, **exc.to_logging_context())
+            raise exc from e
+
+        # A failed job raises the exception matching its error reason.
+        job_id = load_job.job_id
+        try:
+            await asyncio.to_thread(load_job.result, timeout=timeout)
+        except Exception as e:
+            project = table.project
+            error_result = load_job.error_result or {}
+            if isinstance(e, FutureTimeoutError):
+                await self._cancel_load(load_job)
+                error = f"Timed out loading {table.table_id} after {timeout}s"
+                exc = BigQueryApiFailedError("load_table", project, error)
+            elif error_result.get("reason") == "invalid":
+                errors = load_job.errors or [error_result]
+                details = "; ".join(
+                    str(err.get("message", err))
+                    for err in errors[:_UPLOAD_MAX_ERRORS]
+                )
+                error = f"Unable to load uploaded table {table.table_id}"
+                exc = BigQueryApiFailedError(
+                    "load_table", project, f"{error}: {details}"
+                )
+            else:
+                exc = _upload_error("load_table", project, e)
+            msg = "Failed to load uploaded table into BigQuery"
+            context = exc.to_logging_context()
+            self.logger.exception(msg, bigquery_job_id=job_id, **context)
+            raise exc from e
+
+        elapsed = datetime.now(tz=UTC) - start
+        self.logger.info(
+            "Loaded uploaded table into BigQuery",
+            table_name=upload.table_name,
+            bigquery_job_id=job_id,
+            rows=load_job.output_rows,
+            elapsed=elapsed.total_seconds(),
+        )
+        return TableUploadStats(
+            size=load_job.input_file_bytes, elapsed=elapsed
+        )
+
+    async def _cancel_load(self, load_job: LoadJob) -> None:
+        """Cancel a load job that timed out, logging any failure.
+
+        Parameters
+        ----------
+        load_job
+            Load job to cancel.
+        """
+        try:
+            await asyncio.to_thread(load_job.cancel)
+        except Exception as e:
+            self.logger.warning(
+                "Unable to cancel BigQuery load job",
+                bigquery_job_id=load_job.job_id,
+                error=str(e),
+            )
+
+    def _get_upload_table(self, table_name: str) -> TableReference:
+        """Parse and check the destination of an uploaded table.
+
+        The TAP service passes in the fully qualified table name. Reject any
+        table that is not in the configured upload dataset.
+
+        Parameters
+        ----------
+        table_name
+            Fully qualified name of the uploaded table.
+
+        Returns
+        -------
+        TableReference
+            Reference to the destination table.
+
+        Raises
+        ------
+        BackendNotImplementedError
+            Raised if table uploads are not configured.
+        BigQueryApiProtocolError
+            Raised if the table is not in the upload dataset.
+        """
+        project = config.bigquery_upload_project
+        if not project:
+            msg = "Table upload is not configured for the BigQuery backend"
+            raise BackendNotImplementedError(msg)
+        dataset = config.bigquery_upload_dataset
+        try:
+            table = TableReference.from_string(table_name)
+        except ValueError as e:
+            msg = f"Invalid upload table name {table_name}: {e}"
+            raise BigQueryApiProtocolError("upload", project, msg) from e
+        if table.project != project or table.dataset_id != dataset:
+            msg = (
+                f"Upload table {table_name} is not in upload dataset"
+                f" {project}.{dataset}"
+            )
+            raise BigQueryApiProtocolError("upload", project, msg)
+        return table
+
+    async def _read_upload_schema(
+        self, upload: JobTableUpload, table: TableReference
+    ) -> list[SchemaField]:
+        """Read the BigQuery schema of an uploaded table from GCS.
+
+        Parameters
+        ----------
+        upload
+            Uploaded table.
+        table
+            Destination table, used for error reporting.
+
+        Returns
+        -------
+        list of SchemaField
+            Schema of the uploaded table.
+
+        Raises
+        ------
+        BigQueryApiFailedError
+            Raised if GCS refused the request.
+        BigQueryApiNetworkError
+            Raised if the schema could not be retrieved from GCS because of a
+            transient error.
+        BigQueryApiProtocolError
+            Raised if the schema is invalid.
+        """
+        timeout = config.backend_api_timeout.total_seconds()
+        blob = Blob.from_uri(upload.schema_url, client=self._gcs_client)
+        try:
+            data = await asyncio.to_thread(
+                blob.download_as_text, timeout=timeout
+            )
+        except Exception as e:
+            exc = _upload_error("get_schema", table.project, e)
+            msg = "Failed to read uploaded table schema from GCS"
+            self.logger.exception(msg, **exc.to_logging_context())
+            raise exc from e
+
+        try:
+            schema = BigQueryUploadSchema.model_validate_json(data)
+        except ValidationError as e:
+            error = f"Invalid schema for {upload.table_name}: {e}"
+            exc = BigQueryApiProtocolError("get_schema", table.project, error)
+            msg = "Invalid uploaded table schema"
+            self.logger.exception(msg, **exc.to_logging_context())
+            raise exc from e
+        return [SchemaField(f.name, f.type) for f in schema.root]

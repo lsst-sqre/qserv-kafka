@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import timedelta
 from enum import StrEnum
 from typing import Annotated, Any, Literal, override
 
@@ -17,6 +19,7 @@ __all__ = [
     "ProcessStatus",
     "QservQueryStatus",
     "QueryStatus",
+    "TableUploadStats",
 ]
 
 
@@ -297,3 +300,14 @@ class ProcessStatus(BaseModel):
             return True
 
         return self.progress.is_different_than(other.progress)
+
+
+@dataclass
+class TableUploadStats:
+    """Statistics from a table upload."""
+
+    size: int | None
+    """Size of the uploaded table in CSV format (bytes), if known."""
+
+    elapsed: timedelta
+    """Time required to upload the table (including reading from GCS)."""

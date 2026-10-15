@@ -55,9 +55,13 @@ from ..models.qserv import (
     AsyncSubmitResponse,
     BaseResponse,
     QservStatusResponse,
+)
+from ..models.query import (
+    AsyncQueryPhase,
+    ProcessStatus,
+    QservQueryStatus,
     TableUploadStats,
 )
-from ..models.query import AsyncQueryPhase, ProcessStatus, QservQueryStatus
 from .backend import DatabaseBackend
 
 API_VERSION = 60
@@ -278,12 +282,12 @@ class QservClient(DatabaseBackend):
         await self._delete(f"/query-async/result/{query_id}")
 
     @override
-    async def delete_database(self, database: str) -> None:
+    async def delete_upload_resource(self, name: str) -> None:
         """Delete a user database.
 
         Parameters
         ----------
-        database
+        name
             Name of the database to delete.
 
         Notes
@@ -298,10 +302,9 @@ class QservClient(DatabaseBackend):
         temporary database oncd the job is completed and not have to worry
         about interactions with other queries.
         """
-        await self._delete(
-            f"/ingest/database/{database}",
-            timeout=config.qserv_upload_delete_timeout,
-        )
+        route = f"/ingest/database/{name}"
+        self._check_upload_database(name, "DELETE", route)
+        await self._delete(route, timeout=config.qserv_upload_delete_timeout)
 
     @override
     async def get_query_results_gen(
@@ -337,6 +340,12 @@ class QservClient(DatabaseBackend):
         return result.status.to_query_status()
 
     @override
+    def get_upload_resources(
+        self, uploads: Sequence[JobTableUpload]
+    ) -> list[str]:
+        return sorted({u.database for u in uploads})
+
+    @override
     @_retry(qserv_protocol=QservProtocol.SQL)
     async def list_running_queries(self) -> dict[str, ProcessStatus]:
         try:
@@ -363,6 +372,10 @@ class QservClient(DatabaseBackend):
     @override
     @_retry
     async def upload_table(self, upload: JobTableUpload) -> TableUploadStats:
+        self._check_upload_database(upload.database, "POST", "/ingest/csv")
+        if "." in upload.table:
+            msg = f"Invalid upload table name {upload.table_name}"
+            raise QservApiProtocolError("POST", "/ingest/csv", msg)
         start = datetime.now(tz=UTC)
         data = {
             "database": upload.database,
@@ -421,6 +434,29 @@ class QservClient(DatabaseBackend):
         # Return the statistics.
         elapsed = datetime.now(tz=UTC) - start
         return TableUploadStats(size=size, elapsed=elapsed)
+
+    def _check_upload_database(
+        self, database: str, method: str, route: str
+    ) -> None:
+        """Ensure we only touch a user database.
+
+        Parameters
+        ----------
+        database
+            Name of the database.
+        method
+            HTTP method of the request, for error reporting.
+        route
+            Route of the request, for error reporting.
+
+        Raises
+        ------
+        QservApiProtocolError
+            Raised if the database is not a user database.
+        """
+        if not database.startswith("user_"):
+            msg = f"Upload database {database} is not a user database"
+            raise QservApiProtocolError(method, route, msg)
 
     @_retry
     async def _delete(
