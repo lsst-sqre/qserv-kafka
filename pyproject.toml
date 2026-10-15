@@ -31,6 +31,7 @@ dependencies = [
     "google-cloud-bigquery-storage>=2.27",
     "httpx>=0.27",
     "humanize>=4.15.0",
+    "limits[async-redis]>=5",
     "memray>=1.17",
     "pyarrow>=21",
     "pydantic>=2.11",
@@ -182,3 +183,6 @@ new_fragment_template = "file:changelog.d/_template.md.jinja"
 skip_fragments = "_template.md.jinja"
 
 [tool.setuptools_scm]
+
+[tool.uv.sources]
+rubin-gafaelfawr = { git = "https://github.com/lsst-sqre/gafaelfawr", subdirectory = "client" }
