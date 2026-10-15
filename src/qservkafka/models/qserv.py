@@ -1,7 +1,5 @@
 """Models used for talking to Qserv."""
 
-from dataclasses import dataclass
-from datetime import timedelta
 from enum import StrEnum
 from typing import Annotated, Any
 
@@ -18,7 +16,6 @@ __all__ = [
     "QservAsyncStatusData",
     "QservQueryPhase",
     "QservStatusResponse",
-    "TableUploadStats",
 ]
 
 
@@ -193,7 +190,7 @@ class AsyncSubmitRequest(BaseModel):
         str | None,
         Field(
             title="Original ADQL query",
-            description=("ADQL query as submitted by the user."),
+            description="ADQL query as submitted by the user.",
         ),
     ] = None
 
@@ -211,18 +208,3 @@ class AsyncSubmitResponse(BaseResponse):
             validation_alias="queryId",
         ),
     ]
-
-
-@dataclass
-class TableUploadStats:
-    """Statistics from a table upload to Qserv."""
-
-    size: int | None
-    """Size of the uploaded table in CSV format (bytes), if known."""
-
-    elapsed: timedelta
-    """Time required to upload the table to Qserv.
-
-    Does not include the time required to retrieve the table source and SQL
-    from GCS before uploading.
-    """

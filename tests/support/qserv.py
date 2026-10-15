@@ -724,9 +724,10 @@ class MockQserv:
         else:
             expected_job = self._data.read_pydantic(JobRun, "jobs/upload")
         upload_table = expected_job.upload_tables[0]
+        database, table = upload_table.table_name.split(".", 1)
         expected = {
-            "database": upload_table.database,
-            "table": upload_table.table,
+            "database": database,
+            "table": table,
             "fields_terminated_by": ",",
             "charset_name": "utf8mb4",
             "collation_name": "utf8mb4_uca1400_ai_ci",
@@ -742,7 +743,6 @@ class MockQserv:
             ),
             ("rows", ("table.csv", self._UPLOAD_CSV, "text/csv")),
         ]
-        database = upload_table.database
 
         if self._uploaded_database is not None:
             assert database == self._uploaded_database, (

@@ -349,7 +349,7 @@ async def test_upload(
 
         job = await kafka_manager.start_query("jobs/upload")
         table_name = job.upload_tables[0].table_name
-        database_name = job.upload_tables[0].database
+        database_name = table_name.split(".", 1)[0]
 
         # Jobs with table uploads are dispatched to the fast arq worker pool,
         # so that worker has to run before the job is actually started.

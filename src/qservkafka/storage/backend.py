@@ -8,8 +8,7 @@ from typing import Any
 
 from ..events import QueryApiFailureEvent
 from ..models.kafka import JobRun, JobTableUpload
-from ..models.qserv import TableUploadStats
-from ..models.query import ProcessStatus, QueryStatus
+from ..models.query import ProcessStatus, QueryStatus, TableUploadStats
 
 __all__ = ["DatabaseBackend"]
 
@@ -45,22 +44,36 @@ class DatabaseBackend(ABC):
         """
 
     @abstractmethod
-    async def delete_database(self, database: str) -> None:
-        """Delete a temporary database and all its contents.
+    async def delete_upload_resource(self, name: str) -> None:
+        """Delete a resource holding uploaded tables.
 
         Parameters
         ----------
-        database
-            Name of the database to delete.
+        name
+            Name of the resource, as returned by `get_upload_resources`.
 
         Raises
         ------
         Exception
            Error if deletion fails.
+        """
 
-        Notes
-        -----
-        Backends may implement this as a no-op.
+    @abstractmethod
+    def get_upload_resources(
+        self, uploads: Sequence[JobTableUpload]
+    ) -> list[str]:
+        """Get the resources to delete once uploaded tables are not needed.
+
+        Parameters
+        ----------
+        uploads
+            Uploaded tables.
+
+        Returns
+        -------
+        list of str
+            Names of the backend resources holding the uploaded tables, each
+            listed once.
         """
 
     @abstractmethod

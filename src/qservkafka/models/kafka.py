@@ -288,9 +288,10 @@ class UploadTableBase(BaseModel, ABC):
         Field(
             title="Name of table",
             description=(
-                "Name of the table in Qserv. Must start with user_<username>."
+                "Qualified name of the table to create, in the form expected"
+                " by the backend"
             ),
-            pattern=r"user_[^.]+\.[^.]+$",
+            pattern=r"^[^.]+(?:\.[^.]+)+$",
             validation_alias="tableName",
         ),
     ]
@@ -309,22 +310,12 @@ class UploadTableBase(BaseModel, ABC):
         Field(
             title="URL of schema",
             description=(
-                "URL to a JSON file specifying the table schema. This must"
-                " be in the format expected by Qserv."
+                "URL to a JSON file specifying the table schema, in the"
+                " format expected by the backend"
             ),
             validation_alias="schemaUrl",
         ),
     ]
-
-    @property
-    def database(self) -> str:
-        """Name of the database."""
-        return self.table_name.split(".", 1)[0]
-
-    @property
-    def table(self) -> str:
-        """Name of the table."""
-        return self.table_name.split(".", 1)[1]
 
     def to_ingest_fields(self) -> dict[str, str]:
         """Qserv ingest API fields specific to this partition strategy."""
