@@ -1,0 +1,26 @@
+{
+  "executionID": "1",
+  "jobID": "uws123",
+  "metadata": {
+    "database": "dp1",
+    "query": "SELECT TOP 10 * FROM table"
+  },
+  "queryInfo": {
+    "endTime": "<ANY>",
+    "progress": {
+      "bytesBilled": 9000,
+      "bytesProcessed": 2000000
+    },
+    "startTime": "<ANY>"
+  },
+  "resultInfo": {
+    "format": {
+      "serialization": "BINARY2",
+      "type": "VOTable"
+    },
+    "resultLocation": "https://gcs.example.com/upload",
+    "totalRows": 0
+  },
+  "status": "COMPLETED",
+  "timestamp": "<ANY>"
+}

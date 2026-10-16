@@ -40,6 +40,7 @@ __all__ = [
     "QservApiUploadWebError",
     "QservApiWebError",
     "QueryError",
+    "RateLimitError",
     "TableUploadWebError",
     "UploadWebError",
 ]
@@ -510,6 +511,29 @@ class QservApiUploadWebError(QservApiWebError):
             exc_name = type(exc).__name__
             message = f"{exc_name}: {exc!s}" if str(exc) else exc_name
             return cls(message, user=user)
+
+
+class RateLimitError(QueryError):
+    """Error checking the user's rate limit."""
+
+    description = "Unable to check quota"
+    error = JobErrorCode.quota_error
+
+    @classmethod
+    def from_exception(cls, exc: Exception, user: str | None = None) -> Self:
+        """Create an exception from an underlying rate limit exception.
+
+        Parameters
+        ----------
+        exc
+            Exception raised by the rate limit library.
+        user
+            Username associated with the exception.
+        """
+        if str(exc):
+            return cls(f"{type(exc).__name__}: {exc!s}", user)
+        else:
+            return cls(str(exc), user)
 
 
 class TableUploadWebError(SlackWebException, QueryError):
