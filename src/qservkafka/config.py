@@ -218,6 +218,29 @@ class Config(BaseSettings):
         description="GCP project ID containing the BigQuery datasets to query",
     )
 
+    bigquery_upload_dataset: str = Field(
+        "tap_uploads",
+        title="BigQuery upload dataset",
+        description="Dataset that holds tables uploads.",
+    )
+
+    bigquery_upload_project: str | None = Field(
+        None,
+        title="BigQuery upload project ID",
+        description=(
+            "GCP project ID containing the dataset for table uploads."
+            " If not set table uploads are not supported."
+        ),
+    )
+
+    bigquery_upload_timeout: HumanTimedelta = Field(
+        timedelta(minutes=5),
+        title="BigQuery table upload timeout",
+        description=(
+            "Maximum time to wait for BigQuery to load an uploaded table."
+        ),
+    )
+
     consumer_group_id: str | None = Field(
         "qserv", title="Kafka consumer group ID"
     )
@@ -487,7 +510,9 @@ class Config(BaseSettings):
 
     @property
     def upload_worker_timeout(self) -> timedelta:
-        """Qserv upload timeout plus a grace period for arq workers."""
+        """Backend upload timeout plus a grace period for arq workers."""
+        if self.backend == BackendType.BIGQUERY:
+            return self.bigquery_upload_timeout + ARQ_TIMEOUT_GRACE
         return self.qserv_upload_timeout + ARQ_TIMEOUT_GRACE
 
     @field_validator("qserv_database_url")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, override
 
@@ -21,13 +21,13 @@ from qservkafka.models.kafka import (
     ReplicatedTableUpload,
 )
 from qservkafka.models.progress import ByteProgress, ChunkProgress
-from qservkafka.models.qserv import TableUploadStats
 from qservkafka.models.query import (
     AsyncQueryPhase,
     BigQueryQueryStatus,
     ProcessStatus,
     QservQueryStatus,
     QueryStatus,
+    TableUploadStats,
 )
 from qservkafka.storage.backend import DatabaseBackend
 
@@ -64,7 +64,7 @@ class MockDatabaseBackend(DatabaseBackend):
         self.submitted_queries: list[str] = []
         self.cancelled_queries: list[str] = []
         self.deleted_results: list[str] = []
-        self.deleted_databases: list[str] = []
+        self.deleted_uploads: list[str] = []
         self.uploaded_tables: list[JobTableUpload] = []
 
     @override
@@ -127,9 +127,16 @@ class MockDatabaseBackend(DatabaseBackend):
         return TableUploadStats(size=1000, elapsed=timedelta(seconds=1))
 
     @override
-    async def delete_database(self, database: str) -> None:
-        """Mock database deletion."""
-        self.deleted_databases.append(database)
+    async def delete_upload_resource(self, name: str) -> None:
+        """Mock upload deletion."""
+        self.deleted_uploads.append(name)
+
+    @override
+    def get_upload_resources(
+        self, uploads: Sequence[JobTableUpload]
+    ) -> list[str]:
+        """Mock upload resources."""
+        return [u.table_name for u in uploads]
 
     @override
     def result_api_failure_event(self) -> QueryApiFailureEvent:
@@ -218,14 +225,6 @@ async def test_backend_upload_table() -> None:
     assert isinstance(stats, TableUploadStats)
     assert stats.size == 1000
     assert len(backend.uploaded_tables) == 1
-
-
-@pytest.mark.asyncio
-async def test_backend_delete_database() -> None:
-    backend = MockDatabaseBackend()
-    await backend.delete_database("test_database")
-
-    assert "test_database" in backend.deleted_databases
 
 
 @pytest.mark.asyncio

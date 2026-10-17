@@ -1,6 +1,7 @@
 """Service to create new queries."""
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 
@@ -25,6 +26,7 @@ from ..models.kafka import (
     JobResultSerialization,
     JobResultType,
     JobRun,
+    JobTableUpload,
 )
 from ..models.query import AsyncQueryPhase
 from ..models.state import Query, RunningQuery, StartedQuery
@@ -148,7 +150,7 @@ class QueryService:
         await self._state.delete_query(query.query_id)
 
         # Delete the uploaded tables, and the results if configured to do so.
-        await self._delete_uploaded_databases(query.job)
+        await self._delete_uploads(query.job)
         if query.has_results() and config.qserv_delete_queries:
             try:
                 await self._backend.delete_result(query.query_id)
@@ -305,41 +307,42 @@ class QueryService:
         await self._rate_store.end_query(query.job.owner)
         await self._arq_fast.enqueue("cleanup_query", query)
 
-    async def _delete_uploaded_databases(
+    async def _delete_uploads(
         self,
         job: JobRun,
-        databases: set[str] | None = None,
+        uploads: Sequence[JobTableUpload] | None = None,
     ) -> None:
-        """Delete any temporary databases created for uploaded tables.
+        """Delete any tables uploaded for the job.
 
         Parameters
         ----------
         job
             Job metadata.
-        databases
-            If given, the databases to delete. Otherwise, all databases in the
+        uploads
+            If given, the uploads to delete. Otherwise, all tables in the
             list of tables to upload will be deleted.
         """
         logger = self._logger.bind(**job.to_logging_context())
-        if databases is None:
-            databases = {t.database for t in job.upload_tables}
+        if uploads is None:
+            uploads = job.upload_tables
+        resources = self._backend.get_upload_resources(uploads)
         logger.debug(
-            "Deleting upload databases",
-            upload_table_count=len(job.upload_tables),
-            upload_table_types=[type(t).__name__ for t in job.upload_tables],
-            databases=list(databases),
+            "Deleting uploaded tables",
+            upload_table_count=len(uploads),
+            upload_table_types=[type(u).__name__ for u in uploads],
+            resources=resources,
         )
-        for database in databases:
+        for resource in resources:
             try:
-                await self._backend.delete_database(database)
-                logger.debug("Deleted upload database", database_name=database)
+                await self._backend.delete_upload_resource(resource)
+                logger.debug("Deleted uploaded tables", resource=resource)
             except BackendApiError as e:
                 e.user = job.owner
                 await report_exception(e, slack_client=self._slack_client)
                 logger.exception(
-                    "Unable to delete temporary database, orphaning it",
+                    "Unable to delete uploaded tables, orphaning them",
                     error=str(e),
-                    database_name=database,
+                    resource=resource,
                 )
 
     def _is_small_result(self, query: RunningQuery) -> bool:
@@ -430,11 +433,11 @@ class QueryService:
             Started query with backend job ID.
         """
         # Upload any tables.
-        uploaded = set()
+        uploaded: list[JobTableUpload] = []
         try:
             for upload in query.job.upload_tables:
                 stats = await self._backend.upload_table(upload)
-                uploaded.add(upload.database)
+                uploaded.append(upload)
                 logger.info("Uploaded table", table_name=upload.table_name)
                 event = TemporaryTableUploadEvent(
                     job_id=query.job.job_id,
@@ -452,7 +455,7 @@ class QueryService:
                 msg = "Unable to upload table"
             await report_exception(e, self._slack_client)
             logger.exception(msg, error=str(e))
-            await self._delete_uploaded_databases(query.job, uploaded)
+            await self._delete_uploads(query.job, uploaded)
             raise
 
         # Start the query.
@@ -467,7 +470,7 @@ class QueryService:
             else:
                 await report_exception(e, self._slack_client)
                 logger.exception("Unable to start query", error=str(e))
-            await self._delete_uploaded_databases(query.job)
+            await self._delete_uploads(query.job)
             raise
 
         # Return the corresponding StartedQuery object.

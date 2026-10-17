@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+from pydantic import ValidationError
 from vo_models.uws.types import ExecutionPhase
 
 from qservkafka.models.kafka import (
@@ -16,6 +18,7 @@ from qservkafka.models.kafka import (
     JobResultType,
     JobRun,
     JobStatus,
+    ReplicatedTableUpload,
 )
 from qservkafka.models.progress import ChunkProgress
 from qservkafka.models.votable import VOTableSize
@@ -179,3 +182,39 @@ def test_upload_table_dependent() -> None:
     assert upload.ref_director_database == "dp1"
     assert upload.ref_director_table == "Object"
     assert upload.ref_director_id_col_name == "objectId"
+
+
+@pytest.mark.parametrize(
+    "table_name",
+    [
+        "user_me.mysources",
+        "my-project.tap_uploads.user_me_uws123_mysources",
+    ],
+)
+def test_upload_table_name(table_name: str) -> None:
+    upload = ReplicatedTableUpload.model_validate(
+        {
+            "tableName": table_name,
+            "sourceUrl": "gs://bucket/data.csv",
+            "schemaUrl": "gs://bucket/schema.json",
+        }
+    )
+    assert upload.table_name == table_name
+
+
+@pytest.mark.parametrize(
+    "table_name",
+    [
+        "mysources",
+        "user_me..mysources",
+    ],
+)
+def test_upload_table_name_invalid(table_name: str) -> None:
+    with pytest.raises(ValidationError):
+        ReplicatedTableUpload.model_validate(
+            {
+                "tableName": table_name,
+                "sourceUrl": "gs://bucket/data.csv",
+                "schemaUrl": "gs://bucket/schema.json",
+            }
+        )
