@@ -1,5 +1,6 @@
 """Tests for creating new queries."""
 
+import re
 from collections.abc import AsyncGenerator, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -594,4 +595,7 @@ async def test_bytes_billed_quota(
         # job again should therefore fail with an out of quota message.
         await query_service.start_query(Query(job=job))
         status = read_status_message(factory_bigquery)
+        assert status.error
+        message = status.error.message
+        status.error.message = re.sub(r"[\d :-]+ UTC$", "", message)
         data.assert_pydantic_matches(status, "status/data-bytes-quota")

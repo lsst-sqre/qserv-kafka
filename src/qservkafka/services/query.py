@@ -362,7 +362,9 @@ class QueryService:
                 raise RateLimitError.from_exception(e, job.owner) from e
             if not allowed:
                 await self._rate_store.end_query(job.owner)
-                await self._status.publish_bytes_exceeded(job, quota)
+                stats = await self._limiter.get_window_stats(limit, job.owner)
+                reset = datetime.fromtimestamp(stats.reset_time, tz=UTC)
+                await self._status.publish_bytes_exceeded(job, quota, reset)
                 return False
 
         return True

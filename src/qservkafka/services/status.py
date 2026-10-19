@@ -1,7 +1,10 @@
 """Query job status publisher."""
 
+from datetime import datetime
+
 from faststream.kafka.publisher import DefaultPublisher
 from rubin.gafaelfawr import GafaelfawrTapQuota
+from safir.datetime import format_datetime_for_logging
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
@@ -80,7 +83,7 @@ class StatusPublisher:
         await self._events.query_abort.publish(event)
 
     async def publish_bytes_exceeded(
-        self, job: JobRun, quota: GafaelfawrTapQuota
+        self, job: JobRun, quota: GafaelfawrTapQuota, reset: datetime
     ) -> None:
         """Publish status for a request that exceeds the user's bytes quota.
 
@@ -94,13 +97,16 @@ class StatusPublisher:
             Initial query request.
         quota
             User's quota.
+        reset
+            When the user's quota will reset.
         """
         self._logger.info(
             "Query rejected due to bytes billed quota",
+            quota_reset=format_datetime_for_logging(reset),
             quota=quota.model_dump(mode="json"),
             **job.to_logging_context(),
         )
-        error = JobError.for_bytes_exceeded(quota)
+        error = JobError.for_bytes_exceeded(quota, reset)
         await self._publish_status(JobStatus.from_error(job, error))
 
     async def publish_completed(

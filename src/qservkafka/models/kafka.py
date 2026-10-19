@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self, override
 
+import humanize
 from pydantic import (
     BaseModel,
     BeforeValidator,
@@ -21,6 +22,7 @@ from pydantic import (
     Tag,
 )
 from rubin.gafaelfawr import GafaelfawrTapQuota
+from safir.datetime import format_datetime_for_logging
 from safir.pydantic import SecondsTimedelta
 from vo_models.uws.types import ExecutionPhase
 
@@ -680,22 +682,30 @@ class JobError(BaseModel):
     ]
 
     @classmethod
-    def for_bytes_exceeded(cls, quota: GafaelfawrTapQuota) -> Self:
+    def for_bytes_exceeded(
+        cls, quota: GafaelfawrTapQuota, reset: datetime
+    ) -> Self:
         """Generate an error object for a bytes billed exceeded error.
 
         Parameters
         ----------
         quota
             Quota for the user.
+        reset
+            When the quota will reset.
 
         Returns
         -------
         JobError
             Corresponding error component of a Kafka job status message.
         """
+        if quota.bytes_billed is None:
+            raise ValueError("Bytes billed quota exceeded but not set")
+        quota_bytes_billed = humanize.naturalsize(quota.bytes_billed)
+        reset_str = format_datetime_for_logging(reset.replace(microsecond=0))
         error = (
-            f"Maximum number of billed bytes ({quota.bytes_billed}) reached"
-            " within a 24 hour period; retry your query tomorrow"
+            f"Maximum number of billed bytes ({quota_bytes_billed}) reached"
+            f" within a 24 hour period; retry your query after {reset_str} UTC"
         )
         return cls(code=JobErrorCode.quota_exceeded, message=error)
 

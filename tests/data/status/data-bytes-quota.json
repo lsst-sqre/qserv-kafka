@@ -1,7 +1,7 @@
 {
   "errorInfo": {
     "errorCode": "quota_exceeded",
-    "errorMessage": "Maximum number of billed bytes (10000) reached within a 24 hour period; retry your query tomorrow"
+    "errorMessage": "Maximum number of billed bytes (10.0 kB) reached within a 24 hour period; retry your query after"
   },
   "executionID": null,
   "jobID": "uws123",
