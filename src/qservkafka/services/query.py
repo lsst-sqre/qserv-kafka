@@ -59,7 +59,8 @@ class QueryService:
     votable_writer
         Writer for VOTable output.
     limiter
-        Rate limit manager for bytes billed rate limits.
+        Fixed-window rate limit manager, currently only used for bytes billed
+        rate limits.
     rate_limit_store
         Storage for rate limiting.
     gafaelfawr_storage
@@ -256,6 +257,7 @@ class QueryService:
                 await report_exception(e, self._slack_client)
                 await self._rate_store.end_query(job.owner)
                 await self._status.publish_start_exception(query, e)
+                return
 
         # Set up the logger.
         logger = self._logger.bind(
@@ -310,13 +312,13 @@ class QueryService:
                     logger.exception(e.description, **e.to_logging_context())
                     await self._status.publish_exception(query, e)
                 else:
-                    await self._update_quota(query)
                     await self._status.publish_completed(query, stats)
             case AsyncQueryPhase.FAILED:
                 await self._status.publish_failed(query)
 
         # If the query was still executing, the code above returned early, so
         # the query completed in some fashion and can be cleaned up.
+        await self._update_quota(query)
         await self._rate_store.end_query(query.job.owner)
         await self._arq_fast.enqueue("cleanup_query", query)
 
@@ -562,15 +564,11 @@ class QueryService:
             return
         owner = query.job.owner
         quota = await self._gafaelfawr.get_user_quota(owner)
-        if not quota or not quota.bytes_billed:
+        if not quota or quota.bytes_billed is None:
             return
         limit = RateLimitItemPerDay(quota.bytes_billed)
         try:
-            allowed = await self._limiter.hit(limit, owner, cost=used - 1)
-            if not allowed:
-                # Consume all remaining quota if user would go over limit.
-                status = await self._limiter.get_window_stats(limit, owner)
-                await self._limiter.hit(limit, owner, cost=status.remaining)
+            await self._limiter.hit(limit, owner, cost=used - 1)
         except Exception as e:
             logger = self._logger.bind(**query.to_logging_context())
             logger.exception("Error updating quota")

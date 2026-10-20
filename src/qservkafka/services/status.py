@@ -87,7 +87,7 @@ class StatusPublisher:
     ) -> None:
         """Publish status for a request that exceeds the user's bytes quota.
 
-        Currently, the bytes billed quota is only used by BigQuery. Repoert
+        Currently, the bytes billed quota is only used by BigQuery. Report
         that the user has incurred more billed bytes than their quota allows
         and they will need to wait for the next day.
 
