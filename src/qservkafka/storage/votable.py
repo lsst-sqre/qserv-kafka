@@ -263,6 +263,7 @@ class Binary2Encoder(VOTableEncoder):
         output_lines = UPLOAD_BUFFER_SIZE // (_BASE64_LINE_LENGTH + 1)
         threshold = input_line_length * output_lines
         overflow = False
+        data_bytes = 0
         try:
             async for row in results:
                 if maxrec is not None and self._total_rows == maxrec:
@@ -273,9 +274,10 @@ class Binary2Encoder(VOTableEncoder):
                 )
                 self._total_rows += 1
                 encoded.write(encoded_row)
+                data_bytes += len(encoded_row)
                 if (
                     self._max_bytes is not None
-                    and encoded.tell() >= self._max_bytes
+                    and data_bytes >= self._max_bytes
                 ):
                     self._logger.info(
                         "Result truncated: max_result_bytes limit reached",

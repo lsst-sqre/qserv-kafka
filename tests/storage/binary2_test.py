@@ -1,5 +1,6 @@
 """Test the VOTable BINARY2 writer."""
 
+import math
 from base64 import b64encode
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -228,3 +229,39 @@ async def test_max_bytes_truncation() -> None:
     assert encoded.endswith(b"<overflow>")
     assert b"<footer>" not in encoded
     assert encoder.total_rows < 3
+
+
+@pytest.mark.asyncio
+async def test_max_bytes_truncation_large() -> None:
+    """Check that the max bytes limit is enforced."""
+    config = JobResultConfig(
+        format=JobResultFormat(
+            type=JobResultType.VOTable,
+            serialization=JobResultSerialization.BINARY2,
+        ),
+        column_types=[
+            JobResultColumnType.model_validate(
+                {"name": "a", "datatype": "char", "arraysize": "*"}
+            )
+        ],
+        envelope=JobResultEnvelope(
+            header="<header>",
+            footer="<footer>",
+            footer_overflow="<overflow>",
+        ),
+    )
+    rows = [("x" * 7000,) for _ in range(2000)]
+    max_bytes = 1000000
+    logger = get_logger(__name__)
+    encoder = Binary2Encoder(
+        config, DiscoveryClient(), logger, max_bytes=max_bytes
+    )
+    encoded = b""
+    async for blob in encoder.encode(data_generator(rows)):
+        encoded += blob
+    assert encoded.endswith(b"<overflow>")
+
+    # Each row is a null flag byte, a 4-byte length, and the 7000-byte value.
+    # Encoding stops on the first row that reaches the limit.
+    row_size = 1 + 4 + 7000
+    assert encoder.total_rows == math.ceil(max_bytes / row_size)
