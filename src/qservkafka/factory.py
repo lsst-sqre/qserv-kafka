@@ -296,7 +296,7 @@ class BigQueryProcessContext(ProcessContext):
             bigquery.Client, bigquery_storage.BigQueryReadClient
         ]:
             bigquery_client = bigquery.Client(
-                project=config.bigquery_project,
+                project=config.bigquery_job_project or config.bigquery_project,
                 location=config.bigquery_location,
             )
             bigquery_read_client = bigquery_storage.BigQueryReadClient()
