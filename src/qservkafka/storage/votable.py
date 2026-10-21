@@ -830,7 +830,8 @@ class VOParquetEncoder(VOTableEncoder):
         """
         base_type = col.datatype.arrow_type
 
-        if col.is_array():
+        # A char or unicodeChar arraysize is a string length, not an array.
+        if col.is_array() and not col.datatype.is_string():
             return pa.list_(base_type)
         return base_type
 
@@ -859,7 +860,7 @@ class VOParquetEncoder(VOTableEncoder):
                 processed[col_name] = None
             elif column.datatype == VOTablePrimitive.boolean:
                 processed[col_name] = bool(value)
-            elif column.is_array():
+            elif column.is_array() and not column.datatype.is_string():
                 result = value if isinstance(value, list) else [value]
                 limit = column.arraysize.limit if column.arraysize else None
                 if limit is not None and len(result) > limit:
