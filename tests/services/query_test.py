@@ -475,7 +475,8 @@ async def test_upload(
         status, "status/upload-started", execution_id="2"
     )
     assert mock_qserv.get_uploaded_table() == job.upload_tables[0].table_name
-    assert mock_qserv.get_uploaded_database() == job.upload_tables[0].database
+    database = job.upload_tables[0].table_name.split(".", 1)[0]
+    assert mock_qserv.get_uploaded_database() == database
 
     # Only the second query should be active.
     assert await state_store.get_active_queries() == {"2"}

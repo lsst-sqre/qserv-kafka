@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pyarrow as pa
 import pytest
-from google.api_core.exceptions import GoogleAPIError
-from google.cloud.bigquery import DatasetReference, QueryJob
+from google.api_core.exceptions import (
+    BadRequest,
+    Forbidden,
+    GoogleAPIError,
+    InternalServerError,
+)
+from google.cloud.bigquery import (
+    DatasetReference,
+    QueryJob,
+    SchemaField,
+    SourceFormat,
+    TableReference,
+)
+from google.cloud.storage import Blob
 from httpx import AsyncClient
 from pydantic import HttpUrl
 from structlog.stdlib import BoundLogger
@@ -16,8 +28,9 @@ from structlog.stdlib import BoundLogger
 from qservkafka import config as config_module
 from qservkafka.events import Events
 from qservkafka.exceptions import (
-    BackendNotImplementedError,
     BigQueryApiError,
+    BigQueryApiFailedError,
+    BigQueryApiNetworkError,
     BigQueryApiProtocolError,
 )
 from qservkafka.models.kafka import (
@@ -32,6 +45,12 @@ from qservkafka.models.kafka import (
 from qservkafka.models.progress import ByteProgress
 from qservkafka.models.query import AsyncQueryPhase
 from qservkafka.storage.bigquery import BigQueryClient
+
+UPLOAD_TABLE = "upload-project.tap_uploads.user_test_uws123_mytable"
+
+UPLOAD_SCHEMA = (
+    '[{"name": "ra", "type": "FLOAT64"}, {"name": "id", "type": "INT64"}]'
+)
 
 
 @pytest.fixture
@@ -62,6 +81,7 @@ def bigquery_client(
         location="US",
         bigquery_client=mock_bq_client,
         bigquery_read_client=mock_storage_client,
+        gcs_client=MagicMock(),
         http_client=http_client,
         events=events,
         slack_client=slack_client,
@@ -91,6 +111,39 @@ def sample_job_run() -> JobRun:
             column_types=[],
         ),
         timeout=timedelta(minutes=5),
+    )
+
+
+@pytest.fixture
+def upload_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Configure the BigQuery upload dataset."""
+    config = config_module.config
+    monkeypatch.setattr(config, "bigquery_upload_project", "upload-project")
+    monkeypatch.setattr(config, "bigquery_upload_dataset", "tap_uploads")
+
+
+@pytest.fixture
+def mock_schema_blob(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Mock reading the schema of an uploaded table from GCS."""
+    blob = MagicMock()
+    blob.download_as_text.return_value = UPLOAD_SCHEMA
+    from_uri = MagicMock(return_value=blob)
+    monkeypatch.setattr(Blob, "from_uri", from_uri)
+    return from_uri
+
+
+@pytest.fixture
+def fast_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make retries of BigQuery API calls fast."""
+    config = config_module.config
+    monkeypatch.setattr(config, "backend_retry_delay", timedelta(0))
+
+
+def _upload(table_name: str = UPLOAD_TABLE) -> ReplicatedTableUpload:
+    return ReplicatedTableUpload(
+        table_name=table_name,
+        source_url="gs://uploads/uws123/mytable.csv",
+        schema_url="gs://uploads/uws123/mytable.schema.json",
     )
 
 
@@ -336,19 +389,165 @@ async def test_delete_result(
 
 
 @pytest.mark.asyncio
-async def test_upload_table_not_implemented(
+@pytest.mark.usefixtures("upload_config")
+async def test_upload_table(
     bigquery_client: BigQueryClient,
+    mock_bq_client: MagicMock,
+    mock_schema_blob: MagicMock,
 ) -> None:
-    upload = ReplicatedTableUpload(
-        table_name="user_test.temp_table",
-        source_url="https://example.com/data.csv",
-        schema_url="https://example.com/schema.json",
-    )
+    load_job = MagicMock()
+    load_job.error_result = None
+    load_job.input_file_bytes = 1234
+    mock_bq_client.load_table_from_uri.return_value = load_job
 
-    with pytest.raises(BackendNotImplementedError) as exc_info:
+    stats = await bigquery_client.upload_table(_upload())
+
+    assert stats.size == 1234
+    assert mock_schema_blob.call_args[0][0] == (
+        "gs://uploads/uws123/mytable.schema.json"
+    )
+    args = mock_bq_client.load_table_from_uri.call_args
+    assert args[0][0] == "gs://uploads/uws123/mytable.csv"
+    job_config = args[1]["job_config"]
+    assert job_config.schema == [
+        SchemaField("ra", "FLOAT64"),
+        SchemaField("id", "INT64"),
+    ]
+    assert job_config.source_format == SourceFormat.CSV
+    assert job_config.null_marker == "\\N"
+    assert not job_config.skip_leading_rows
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("upload_config", "mock_schema_blob")
+async def test_upload_table_rejected(
+    bigquery_client: BigQueryClient,
+    mock_bq_client: MagicMock,
+) -> None:
+    load_job = MagicMock()
+    load_job.result.side_effect = BadRequest("Error while reading data")
+    load_job.error_result = {
+        "reason": "invalid",
+        "message": "Error while reading data",
+    }
+    load_job.errors = [
+        {"message": "Could not parse 'abc' as INT64 for field id"},
+    ]
+    mock_bq_client.load_table_from_uri.return_value = load_job
+
+    with pytest.raises(BigQueryApiFailedError) as exc_info:
+        await bigquery_client.upload_table(_upload())
+
+    assert "user_test_uws123_mytable" in str(exc_info.value)
+    assert "Could not parse 'abc' as INT64" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("upload_config", "mock_schema_blob")
+async def test_upload_table_load_failed(
+    bigquery_client: BigQueryClient,
+    mock_bq_client: MagicMock,
+) -> None:
+    load_job = MagicMock()
+    load_job.result.side_effect = Forbidden("Access Denied")
+    load_job.error_result = {
+        "reason": "accessDenied",
+        "message": "Access Denied",
+    }
+    mock_bq_client.load_table_from_uri.return_value = load_job
+
+    with pytest.raises(BigQueryApiFailedError, match="Access Denied"):
+        await bigquery_client.upload_table(_upload())
+
+    mock_bq_client.load_table_from_uri.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("upload_config", "mock_schema_blob", "fast_retry")
+async def test_upload_table_load_retried(
+    bigquery_client: BigQueryClient,
+    mock_bq_client: MagicMock,
+) -> None:
+    load_job = MagicMock()
+    load_job.result.side_effect = InternalServerError("Backend error")
+    load_job.error_result = {
+        "reason": "backendError",
+        "message": "Backend error",
+    }
+    mock_bq_client.load_table_from_uri.return_value = load_job
+    bigquery_client.events = MagicMock()
+    bigquery_client.events.query_api_failure.publish = AsyncMock()
+
+    with pytest.raises(BigQueryApiNetworkError):
+        await bigquery_client.upload_table(_upload())
+
+    count = config_module.config.backend_retry_count
+    assert mock_bq_client.load_table_from_uri.call_count == count
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("upload_config", "mock_schema_blob")
+async def test_upload_table_timeout(
+    bigquery_client: BigQueryClient,
+    mock_bq_client: MagicMock,
+) -> None:
+    load_job = MagicMock()
+    load_job.result.side_effect = TimeoutError()
+    mock_bq_client.load_table_from_uri.return_value = load_job
+
+    with pytest.raises(BigQueryApiFailedError, match="Timed out"):
+        await bigquery_client.upload_table(_upload())
+
+    load_job.cancel.assert_called_once()
+    mock_bq_client.load_table_from_uri.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("upload_config")
+async def test_upload_table_invalid_schema(
+    bigquery_client: BigQueryClient,
+    mock_bq_client: MagicMock,
+    mock_schema_blob: MagicMock,
+) -> None:
+    blob = mock_schema_blob.return_value
+    blob.download_as_text.return_value = '[{"name": "ra"}]'
+
+    with pytest.raises(BigQueryApiProtocolError, match="Invalid schema"):
+        await bigquery_client.upload_table(_upload())
+
+    mock_bq_client.load_table_from_uri.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("upload_config", "mock_schema_blob")
+async def test_upload_table_outside_dataset(
+    bigquery_client: BigQueryClient,
+    mock_bq_client: MagicMock,
+) -> None:
+    upload = _upload("upload-project.ppdb_public.user_test_mytable")
+
+    with pytest.raises(BigQueryApiProtocolError):
         await bigquery_client.upload_table(upload)
 
-    assert "not supported" in str(exc_info.value).lower()
+    mock_bq_client.load_table_from_uri.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("upload_config")
+async def test_delete_upload_resource(
+    bigquery_client: BigQueryClient,
+    mock_bq_client: MagicMock,
+) -> None:
+    await bigquery_client.delete_upload_resource(UPLOAD_TABLE)
+
+    mock_bq_client.delete_table.assert_called_once()
+    args = mock_bq_client.delete_table.call_args
+    assert args[0][0] == TableReference.from_string(UPLOAD_TABLE)
+    assert args[1]["not_found_ok"] is True
+
+    outside = "upload-project.ppdb_public.user_test_uws123_bad"
+    with pytest.raises(BigQueryApiProtocolError):
+        await bigquery_client.delete_upload_resource(outside)
 
 
 @pytest.mark.asyncio

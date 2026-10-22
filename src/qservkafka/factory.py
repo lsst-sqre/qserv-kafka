@@ -10,6 +10,7 @@ from aiohttp import ClientSession, TCPConnector
 from faststream.kafka import KafkaBroker
 from faststream.kafka.publisher import DefaultPublisher
 from google.cloud import bigquery, bigquery_storage
+from google.cloud.storage import Client as GCSClient
 from httpx import AsyncClient, Limits
 from redis.asyncio import BlockingConnectionPool, Redis
 from redis.asyncio.retry import Retry
@@ -284,6 +285,9 @@ class BigQueryProcessContext(ProcessContext):
     bigquery_read_client: bigquery_storage.BigQueryReadClient
     """Shared BigQuery Storage Read API gRPC client."""
 
+    gcs_client: GCSClient
+    """Shared Google Cloud Storage client for uploaded table schemas."""
+
     @override
     @classmethod
     async def create(
@@ -293,21 +297,24 @@ class BigQueryProcessContext(ProcessContext):
         shared = await cls.build_shared_context(kafka_broker)
 
         def _make_clients() -> tuple[
-            bigquery.Client, bigquery_storage.BigQueryReadClient
+            bigquery.Client,
+            bigquery_storage.BigQueryReadClient,
+            GCSClient,
         ]:
             bigquery_client = bigquery.Client(
                 project=config.bigquery_job_project or config.bigquery_project,
                 location=config.bigquery_location,
             )
             bigquery_read_client = bigquery_storage.BigQueryReadClient()
-            return bigquery_client, bigquery_read_client
+            gcs_client = GCSClient(project=config.bigquery_project)
+            return bigquery_client, bigquery_read_client, gcs_client
 
-        bigquery_client, bigquery_read_client = await asyncio.to_thread(
-            _make_clients
-        )
+        clients = await asyncio.to_thread(_make_clients)
+        bigquery_client, bigquery_read_client, gcs_client = clients
         return cls(
             bigquery_client=bigquery_client,
             bigquery_read_client=bigquery_read_client,
+            gcs_client=gcs_client,
             **shared,
         )
 
@@ -316,6 +323,7 @@ class BigQueryProcessContext(ProcessContext):
         await super().aclose()
         await asyncio.to_thread(self.bigquery_client.close)
         await asyncio.to_thread(self.bigquery_read_client.transport.close)
+        await asyncio.to_thread(self.gcs_client.close)
 
     @override
     def build_factory(self, logger: BoundLogger) -> Factory:
@@ -622,6 +630,7 @@ class BigQueryFactory(Factory):
             location=config.bigquery_location,
             bigquery_client=self._context.bigquery_client,
             bigquery_read_client=self._context.bigquery_read_client,
+            gcs_client=self._context.gcs_client,
             http_client=self._context.http_client,
             events=self._context.events,
             slack_client=self._context.slack_client,
