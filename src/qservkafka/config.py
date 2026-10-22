@@ -314,14 +314,28 @@ class Config(BaseSettings):
 
     name: str = Field("qserv-kafka", title="Name of application")
 
+    parquet_batch_bytes: int = Field(
+        32 * 1024 * 1024,
+        title="VOParquet batch byte target",
+        description=(
+            "Approximate size in bytes of the row data to accumulate before"
+            " converting it to an Arrow record batch when encoding VOParquet."
+            " Python object overhead is not included. Batches are also"
+            " limited by parquet_batch_cells."
+        ),
+        ge=1024 * 1024,
+    )
+
     parquet_batch_cells: int = Field(
         250000,
-        title="VOParquet batch cell target",
+        title="VOParquet batch cell limit",
         description=(
-            "Target number of cells (rows times columns) to accumulate as"
+            "Maximum number of cells (rows times columns) to accumulate as"
             " Python objects before converting them to an Arrow record batch"
-            " when encoding Parquet. The per-result batch size in rows is"
-            " this value divided by the column count (at least one row)."
+            " when encoding VOParquet. Limits memory usage for results with"
+            " lots of small values, where Python object overhead is larger"
+            " than the data. The maximum batch size in rows is this value"
+            " divided by the column count (at least one row)."
         ),
         ge=1000,
         le=10000000,
@@ -332,8 +346,8 @@ class Config(BaseSettings):
         title="VOParquet row group byte target",
         description=(
             "Target size in bytes of the uncompressed Arrow data in each"
-            " Parquet row group. Row groups are held in memory while they are"
-            " written, so this bounds the memory used by the encoder."
+            " Parquet row group. A whole row group is held in memory while it"
+            " is written, so peak encoder memory is a few times this value."
         ),
         ge=1024 * 1024,
     )

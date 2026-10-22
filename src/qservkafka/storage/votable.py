@@ -626,11 +626,14 @@ class VOParquetEncoder(VOTableEncoder):
         self._column_names = [col.name for col in config.column_types]
         self._arrow_schema = self._build_arrow_schema()
 
-        # Size batches from a target number of cells (rows times columns).
-        # Row groups are written once the pending batches reach a target size
-        # in bytes.
+        # Batches are converted to Arrow when they reach either the cell limit
+        # or the byte limit. The byte count leaves out Python's per-object
+        # overhead, so the cell limit is what bounds memory when values are
+        # small. Row groups are written once the converted batches reach
+        # parquet_row_group_bytes.
         columns = max(1, len(self._column_names))
         self._batch_rows = max(1, global_config.parquet_batch_cells // columns)
+        self._batch_bytes = global_config.parquet_batch_bytes
         self._row_group_bytes = global_config.parquet_row_group_bytes
 
     @property
@@ -669,9 +672,10 @@ class VOParquetEncoder(VOTableEncoder):
             use_dictionary=False,
         )
 
-        current_batch = []
-        pending = []
-        pending_bytes = 0
+        batch = []
+        batch_size = 0
+        row_group = []
+        row_group_size = 0
         overflow = self._predetermined_overflow
         try:
             async for row in results:
@@ -679,23 +683,27 @@ class VOParquetEncoder(VOTableEncoder):
                     overflow = True
                     break
 
-                current_batch.append(await self._process_row_for_parquet(row))
+                processed, row_bytes = await self._process_row_for_parquet(row)
+                batch.append(processed)
+                batch_size += row_bytes
                 self._total_rows += 1
 
-                if len(current_batch) >= self._batch_rows:
+                if (
+                    len(batch) >= self._batch_rows
+                    or batch_size >= self._batch_bytes
+                ):
                     # When the batch is full, fold the Python rows into one
                     # Arrow record batch (compact columnar form) and release
-                    # them. Batches collect in pending until they add up to
-                    # a row group.
-                    record_batch = self._batch_to_arrow_record_batch(
-                        current_batch
-                    )
-                    pending.append(record_batch)
-                    pending_bytes += record_batch.nbytes
-                    current_batch.clear()
-                    if pending_bytes >= self._row_group_bytes:
-                        yield self._write_row_group(writer, buffer, pending)
-                        pending_bytes = 0
+                    # them. Record batches collect in row_group until they
+                    # reach the row group size.
+                    record_batch = self._batch_to_arrow_record_batch(batch)
+                    row_group.append(record_batch)
+                    row_group_size += record_batch.nbytes
+                    batch.clear()
+                    batch_size = 0
+                    if row_group_size >= self._row_group_bytes:
+                        yield self._write_row_group(writer, buffer, row_group)
+                        row_group_size = 0
                         # We can only stop between row groups, so the output
                         # may exceed the limit by one row group.
                         if (
@@ -715,12 +723,10 @@ class VOParquetEncoder(VOTableEncoder):
                     self._logger.info(f"Processed {self._total_rows:,} rows")
 
             # Flush whatever is left as a final row group, then the footer.
-            if current_batch:
-                pending.append(
-                    self._batch_to_arrow_record_batch(current_batch)
-                )
-            if pending:
-                yield self._write_row_group(writer, buffer, pending)
+            if batch:
+                row_group.append(self._batch_to_arrow_record_batch(batch))
+            if row_group:
+                yield self._write_row_group(writer, buffer, row_group)
             writer.add_key_value_metadata(
                 self._votable_metadata(overflow=overflow)
             )
@@ -734,7 +740,7 @@ class VOParquetEncoder(VOTableEncoder):
         self,
         writer: pq.ParquetWriter,
         buffer: StreamingAdapter,
-        pending: list[pa.RecordBatch],
+        batches: list[pa.RecordBatch],
     ) -> bytes:
         """Write the accumulated record batches as one Parquet row group.
 
@@ -744,7 +750,7 @@ class VOParquetEncoder(VOTableEncoder):
             Open Parquet writer.
         buffer
             Streaming buffer the writer writes into.
-        pending
+        batches
             Record batches to write. Cleared in place.
 
         Returns
@@ -754,9 +760,9 @@ class VOParquetEncoder(VOTableEncoder):
             buffer and ready to yield.
         """
         # zero-copy wrap
-        table = pa.Table.from_batches(pending, schema=self._arrow_schema)
+        table = pa.Table.from_batches(batches, schema=self._arrow_schema)
         writer.write_table(table, row_group_size=table.num_rows)
-        pending.clear()
+        batches.clear()
         return buffer.flush_buffer()
 
     def _batch_to_arrow_record_batch(
@@ -851,7 +857,7 @@ class VOParquetEncoder(VOTableEncoder):
 
     async def _process_row_for_parquet(
         self, row: Sequence[Any]
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], int]:
         """Process row for the VOParquet format.
 
         Parameters
@@ -863,23 +869,28 @@ class VOParquetEncoder(VOTableEncoder):
         -------
         dict[str, Any]
             Processed row as a dictionary suitable for Parquet encoding.
+        int
+            Approximate size of the row in bytes. Text values count their
+            length and other values count eight bytes per element.
         """
         processed: dict[str, Any] = {}
+        size = 0
 
         for i, col_name in enumerate(self._column_names):
             value = row[i]
             column = self._config.column_types[i]
+            cell_size = 8
 
             if value is None:
-                processed[col_name] = None
+                pass
             elif column.datatype == VOTablePrimitive.boolean:
-                processed[col_name] = bool(value)
+                value = bool(value)
             elif column.is_array() and not column.datatype.is_string():
-                result = value if isinstance(value, list) else [value]
+                value = value if isinstance(value, list) else [value]
                 limit = column.arraysize.limit if column.arraysize else None
-                if limit is not None and len(result) > limit:
-                    result = result[:limit]
-                processed[col_name] = result
+                if limit is not None and len(value) > limit:
+                    value = value[:limit]
+                cell_size = 8 * len(value)
             elif column.datatype in (
                 VOTablePrimitive.char,
                 VOTablePrimitive.unicode_char,
@@ -905,11 +916,13 @@ class VOParquetEncoder(VOTableEncoder):
                 if column.arraysize and column.arraysize.limit is not None:
                     value_str = value_str[: column.arraysize.limit]
 
-                processed[col_name] = value_str
-            else:
-                processed[col_name] = value
+                value = value_str
+                cell_size = len(value_str)
 
-        return processed
+            processed[col_name] = value
+            size += cell_size
+
+        return processed, size
 
 
 class VOTableWriter:
