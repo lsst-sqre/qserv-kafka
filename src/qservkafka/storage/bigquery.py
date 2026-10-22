@@ -159,6 +159,7 @@ class BigQueryClient(DatabaseBackend):
         self.logger = logger
 
         self._project = project
+        self._job_project = bigquery_client.project
         self._location = location
         self._http_client = http_client
         self._client = bigquery_client
@@ -209,7 +210,7 @@ class BigQueryClient(DatabaseBackend):
             await asyncio.to_thread(_cancel)
         except Exception as e:
             exc = BigQueryApiNetworkError.from_exception(
-                "cancel", self._project, e
+                "cancel", self._job_project, e
             )
             msg = "Failed to cancel BigQuery query"
             self.logger.exception(msg, **exc.to_logging_context())
@@ -249,7 +250,7 @@ class BigQueryClient(DatabaseBackend):
             batch_iter = await asyncio.to_thread(_setup_stream)
         except Exception as e:
             exc = BigQueryApiNetworkError.from_exception(
-                "get_results", self._project, e
+                "get_results", self._job_project, e
             )
             msg = "Failed to retrieve BigQuery results"
             self.logger.exception(msg, **exc.to_logging_context())
@@ -263,7 +264,7 @@ class BigQueryClient(DatabaseBackend):
                     )
                 except Exception as e:
                     exc = BigQueryApiNetworkError.from_exception(
-                        "get_results", self._project, e
+                        "get_results", self._job_project, e
                     )
                     self.logger.exception(
                         "Failed to stream BigQuery results",
@@ -313,7 +314,7 @@ class BigQueryClient(DatabaseBackend):
             job, progress, final_rows = await asyncio.to_thread(_get_status)
         except Exception as e:
             exc = BigQueryApiNetworkError.from_exception(
-                "get_status", self._project, e
+                "get_status", self._job_project, e
             )
             msg = "Failed to get BigQuery query status"
             self.logger.exception(msg, **exc.to_logging_context())
@@ -381,7 +382,7 @@ class BigQueryClient(DatabaseBackend):
                     )
             except Exception as e:
                 exc = BigQueryApiNetworkError.from_exception(
-                    "list_jobs", self._project, e
+                    "list_jobs", self._job_project, e
                 )
                 msg = "Failed to list running BigQuery jobs"
                 self.logger.exception(msg, **exc.to_logging_context())
@@ -423,7 +424,7 @@ class BigQueryClient(DatabaseBackend):
             job_id = await asyncio.to_thread(_submit)
         except Exception as e:
             exc = BigQueryApiProtocolError.from_exception(
-                "query", self._project, e
+                "query", self._job_project, e
             )
             msg = "Failed to submit query to BigQuery"
             self.logger.exception(msg, **exc.to_logging_context())

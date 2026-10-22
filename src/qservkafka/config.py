@@ -218,6 +218,15 @@ class Config(BaseSettings):
         description="GCP project ID containing the BigQuery datasets to query",
     )
 
+    bigquery_job_project: str | None = Field(
+        None,
+        title="BigQuery job project ID",
+        description=(
+            "GCP project ID to use for BigQuery jobs. "
+            "If not set, bigquery_project will be used."
+        ),
+    )
+
     consumer_group_id: str | None = Field(
         "qserv", title="Kafka consumer group ID"
     )
