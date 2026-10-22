@@ -698,7 +698,7 @@ class JobError(BaseModel):
         if not status.quota:
             raise ValueError("Quota exceeded but no associated quota")
         if status.bytes_billed_reset:
-            if not status.quota.bytes_billed:
+            if status.quota.bytes_billed is None:
                 msg = "Bytes billed quota exceeded but no associated quota"
                 raise ValueError(msg)
             quota = humanize.naturalsize(status.quota.bytes_billed)
