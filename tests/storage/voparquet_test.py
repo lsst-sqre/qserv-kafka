@@ -2,6 +2,7 @@
 
 import tempfile
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -294,6 +295,43 @@ async def test_different_numeric_types() -> None:
 
     assert abs(table["double_val"][0].as_py() - 1.12345) < 1e-15
     assert table["large"][1].as_py() == -9999999999
+
+
+@pytest.mark.asyncio
+async def test_char_arraysize() -> None:
+    columns = [
+        {"name": "obs_name", "datatype": "char", "arraysize": "*"},
+        {
+            "name": "obs_time",
+            "datatype": "char",
+            "arraysize": "*",
+            "xtype": "timestamp",
+        },
+        {"name": "band", "datatype": "char", "arraysize": "4"},
+    ]
+
+    data = [
+        ("abc", datetime(2026, 10, 21, 12, 0, 0, tzinfo=UTC), "abcdefg"),
+        (None, None, None),
+    ]
+
+    table = await assert_parquet_data(
+        columns,
+        data,
+        expected_rows=2,
+        expected_columns=["obs_name", "obs_time", "band"],
+        expected_types={
+            "obs_name": "string",
+            "obs_time": "string",
+            "band": "string",
+        },
+    )
+
+    assert table["obs_name"][0].as_py() == "abc"
+    assert table["obs_time"][0].as_py() == "2026-10-21T12:00:00.000"
+    assert table["band"][0].as_py() == "abcd"
+    for col in ("obs_name", "obs_time", "band"):
+        assert not table[col][1].is_valid
 
 
 @pytest.mark.asyncio
