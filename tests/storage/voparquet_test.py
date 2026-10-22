@@ -519,3 +519,30 @@ async def test_maxrec_across_row_groups(
     assert len(table) == 50
     assert table["id"].to_pylist() == list(range(50))
     assert encoder.total_rows == 50
+
+
+@pytest.mark.asyncio
+async def test_max_bytes_truncation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config_module.config, "parquet_batch_cells", 10)
+    monkeypatch.setattr(config_module.config, "parquet_row_group_bytes", 1)
+    columns = [{"name": "id", "datatype": "int"}]
+    encoder = VOParquetEncoder(
+        build_config(columns),
+        DiscoveryClient(),
+        get_logger(__name__),
+        max_bytes=1,
+    )
+
+    data = [(i,) for i in range(100)]
+    parquet_data = b""
+    async for chunk in encoder.encode(data_generator(data)):
+        parquet_data += chunk
+
+    parquet_file = pq.ParquetFile(pa.BufferReader(parquet_data))
+    table = parquet_file.read()
+    assert table["id"].to_pylist() == list(range(10))
+    assert encoder.total_rows == 10
+    votable_xml = parquet_file.metadata.metadata[
+        b"IVOA.VOTable-Parquet.content"
+    ].decode()
+    assert "OVERFLOW" in votable_xml

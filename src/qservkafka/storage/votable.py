@@ -212,6 +212,8 @@ class Binary2Encoder(VOTableEncoder):
         Service discovery client.
     logger
         Logger to use.
+    max_bytes
+        Optional maximum number of bytes to encode.
     """
 
     def __init__(
@@ -616,10 +618,11 @@ class VOParquetEncoder(VOTableEncoder):
         logger: BoundLogger,
         *,
         overflow: bool = False,
+        max_bytes: int | None = None,
     ) -> None:
         super().__init__(config, discovery_client, logger)
         self._predetermined_overflow = overflow
-
+        self._max_bytes = max_bytes
         self._column_names = [col.name for col in config.column_types]
         self._arrow_schema = self._build_arrow_schema()
 
@@ -693,6 +696,20 @@ class VOParquetEncoder(VOTableEncoder):
                     if pending_bytes >= self._row_group_bytes:
                         yield self._write_row_group(writer, buffer, pending)
                         pending_bytes = 0
+                        # We can only stop between row groups, so the output
+                        # may exceed the limit by one row group.
+                        if (
+                            self._max_bytes is not None
+                            and buffer.written >= self._max_bytes
+                        ):
+                            self._logger.info(
+                                "Result truncated: max_result_bytes"
+                                " limit reached",
+                                max_bytes=self._max_bytes,
+                                rows_processed=self._total_rows,
+                            )
+                            overflow = True
+                            break
 
                 if self._total_rows % 100000 == 0:
                     self._logger.info(f"Processed {self._total_rows:,} rows")
@@ -965,6 +982,7 @@ class VOTableWriter:
                     self._discovery,
                     self._logger,
                     overflow=overflow,
+                    max_bytes=global_config.max_result_bytes,
                 )
                 mime_type = "application/vnd.apache.parquet"
             case JobResultType.VOTable:
