@@ -239,10 +239,15 @@ class BigQueryClient(DatabaseBackend):
             # to_arrow_iterable claims to return an Iterator, but it's a
             # generator holding a thread pool and gRPC streams. Narrow the
             # type so we can call close() on it.
+            #
+            # Limit the number of read streams. BigQuery uses more streams for
+            # bigger results and the client buffers data for each one, which
+            # with wide rows was enough to OOM our worker.
             return cast(
                 "Generator[pa.RecordBatch]",
                 validated_job.result().to_arrow_iterable(
                     bqstorage_client=self._storage_client,
+                    max_stream_count=config.bigquery_read_max_streams,
                 ),
             )
 

@@ -1,5 +1,6 @@
 """Test the VOTable BINARY2 writer."""
 
+import math
 from base64 import b64encode
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -7,7 +8,7 @@ from typing import Any
 import pytest
 from rubin.repertoire import DiscoveryClient
 from sqlalchemy import Row
-from structlog.stdlib import get_logger
+from structlog.stdlib import BoundLogger, get_logger
 
 from qservkafka.models.kafka import (
     JobResultColumnType,
@@ -16,8 +17,11 @@ from qservkafka.models.kafka import (
     JobResultFormat,
     JobResultSerialization,
     JobResultType,
+    JobRun,
 )
 from qservkafka.storage.votable import Binary2Encoder
+
+from ..support.data import QservKafkaData
 
 
 async def data_generator(
@@ -228,3 +232,25 @@ async def test_max_bytes_truncation() -> None:
     assert encoded.endswith(b"<overflow>")
     assert b"<footer>" not in encoded
     assert encoder.total_rows < 3
+
+
+@pytest.mark.asyncio
+async def test_max_bytes_truncation_large(
+    data: QservKafkaData, logger: BoundLogger
+) -> None:
+    """Check that the max bytes limit is enforced."""
+    config = data.read_pydantic(JobRun, "jobs/simple").result_format
+    rows = [("x" * 7000,) for _ in range(2000)]
+    max_bytes = 1000000
+    encoder = Binary2Encoder(
+        config, DiscoveryClient(), logger, max_bytes=max_bytes
+    )
+    encoded = b""
+    async for blob in encoder.encode(data_generator(rows)):
+        encoded += blob
+    assert encoded.endswith(config.envelope.footer_overflow.encode())
+
+    # Each row is a null flag byte, a 4-byte length, and the 7000-byte value.
+    # Encoding stops on the first row that reaches the limit.
+    row_size = 1 + 4 + 7000
+    assert encoder.total_rows == math.ceil(max_bytes / row_size)

@@ -202,6 +202,16 @@ class Config(BaseSettings):
         ),
     )
 
+    bigquery_read_max_streams: int = Field(
+        1,
+        title="BigQuery Storage read streams",
+        description=(
+            "Maximum number of parallel BigQuery Storage API streams used to"
+            " download a query result."
+        ),
+        ge=1,
+    )
+
     max_result_bytes: int | None = Field(
         None,
         title="Maximum result bytes",
