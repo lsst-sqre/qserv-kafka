@@ -419,7 +419,7 @@ async def test_encoder_properties() -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_and_row_group_sizes_adapt_to_columns() -> None:
+async def test_batch_sizes_adapt_to_columns() -> None:
     logger = get_logger(__name__)
 
     def make(n_columns: int) -> VOParquetEncoder:
@@ -432,21 +432,19 @@ async def test_batch_and_row_group_sizes_adapt_to_columns() -> None:
 
     wide = make(250)
     assert wide._batch_rows == 1000
-    assert wide._row_group_rows == 20000
 
     very_wide = make(100000)
     assert very_wide._batch_rows == 2
-    assert very_wide._row_group_rows == 50
 
     narrow = make(1)
     assert narrow._batch_rows == 250000
-    assert narrow._row_group_rows == 5000000
 
 
 @pytest.mark.asyncio
 async def test_multiple_row_groups(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(config_module.config, "parquet_batch_cells", 40)
-    monkeypatch.setattr(config_module.config, "parquet_row_group_cells", 120)
+    # 20-row batch of an int and a double is 240 byte, so 60 rows.
+    monkeypatch.setattr(config_module.config, "parquet_row_group_bytes", 720)
     columns = [
         {"name": "id", "datatype": "int"},
         {"name": "value", "datatype": "double"},
@@ -456,7 +454,6 @@ async def test_multiple_row_groups(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     assert encoder._batch_rows == 20
-    assert encoder._row_group_rows == 60
 
     data = [(i, i * 1.5) for i in range(250)]
     parquet_data = b""
@@ -478,11 +475,32 @@ async def test_multiple_row_groups(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_row_groups_wide_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every batch is over the byte limit  so each one becomes a row group.
+    monkeypatch.setattr(config_module.config, "parquet_batch_cells", 10)
+    monkeypatch.setattr(config_module.config, "parquet_row_group_bytes", 1)
+    columns = [{"name": "blob", "datatype": "char", "arraysize": "*"}]
+    encoder = VOParquetEncoder(
+        build_config(columns), DiscoveryClient(), get_logger(__name__)
+    )
+
+    data = [(f"{i}" + "x" * 7000,) for i in range(100)]
+    parquet_data = b""
+    async for chunk in encoder.encode(data_generator(data)):
+        parquet_data += chunk
+
+    parquet_file = pq.ParquetFile(pa.BufferReader(parquet_data))
+    assert parquet_file.metadata.num_row_groups == 10
+    table = parquet_file.read()
+    assert table["blob"].to_pylist() == [row[0] for row in data]
+
+
+@pytest.mark.asyncio
 async def test_maxrec_across_row_groups(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(config_module.config, "parquet_batch_cells", 20)
-    monkeypatch.setattr(config_module.config, "parquet_row_group_cells", 60)
+    monkeypatch.setattr(config_module.config, "parquet_row_group_bytes", 240)
     columns = [{"name": "id", "datatype": "int"}]
     encoder = VOParquetEncoder(
         build_config(columns), DiscoveryClient(), get_logger(__name__)

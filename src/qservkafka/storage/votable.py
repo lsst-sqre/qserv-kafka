@@ -623,17 +623,12 @@ class VOParquetEncoder(VOTableEncoder):
         self._column_names = [col.name for col in config.column_types]
         self._arrow_schema = self._build_arrow_schema()
 
-        # Calculate the batch and row group sizes from a target number of
-        # cells (rows times columns). This is so that memory use stays
-        # roughly constant regardless of column size. The row group is
-        # assembled from those batches and is kept larger so the file footer
-        # stays relatively small.
+        # Size batches from a target number of cells (rows times columns).
+        # Row groups are written once the pending batches reach a target size
+        # in bytes.
         columns = max(1, len(self._column_names))
         self._batch_rows = max(1, global_config.parquet_batch_cells // columns)
-        self._row_group_rows = max(
-            self._batch_rows,
-            global_config.parquet_row_group_cells // columns,
-        )
+        self._row_group_bytes = global_config.parquet_row_group_bytes
 
     @property
     @override
@@ -673,7 +668,7 @@ class VOParquetEncoder(VOTableEncoder):
 
         current_batch = []
         pending = []
-        pending_rows = 0
+        pending_bytes = 0
         overflow = self._predetermined_overflow
         try:
             async for row in results:
@@ -689,15 +684,15 @@ class VOParquetEncoder(VOTableEncoder):
                     # Arrow record batch (compact columnar form) and release
                     # them. Batches collect in pending until they add up to
                     # a row group.
-                    pending.append(
-                        self._batch_to_arrow_record_batch(current_batch)
+                    record_batch = self._batch_to_arrow_record_batch(
+                        current_batch
                     )
-                    pending_rows += len(current_batch)
+                    pending.append(record_batch)
+                    pending_bytes += record_batch.nbytes
                     current_batch.clear()
-
-                if pending_rows >= self._row_group_rows:
-                    yield self._write_row_group(writer, buffer, pending)
-                    pending_rows = 0
+                    if pending_bytes >= self._row_group_bytes:
+                        yield self._write_row_group(writer, buffer, pending)
+                        pending_bytes = 0
 
                 if self._total_rows % 100000 == 0:
                     self._logger.info(f"Processed {self._total_rows:,} rows")

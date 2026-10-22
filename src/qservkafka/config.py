@@ -327,17 +327,15 @@ class Config(BaseSettings):
         le=10000000,
     )
 
-    parquet_row_group_cells: int = Field(
-        5000000,
-        title="VOParquet row group cell target",
+    parquet_row_group_bytes: int = Field(
+        128 * 1024 * 1024,
+        title="VOParquet row group byte target",
         description=(
-            "Target number of cells (rows times columns) per Parquet row"
-            " group. The per-result row group size in rows is this value"
-            " divided by the column count, and never smaller than the batch"
-            " size."
+            "Target size in bytes of the uncompressed Arrow data in each"
+            " Parquet row group. Row groups are held in memory while they are"
+            " written, so this bounds the memory used by the encoder."
         ),
-        ge=10000,
-        le=200000000,
+        ge=1024 * 1024,
     )
 
     qserv_database_overflow: int = Field(
