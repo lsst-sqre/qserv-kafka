@@ -74,6 +74,11 @@ class QueryStatusBase(BaseModel, ABC):
     ] = False
 
     @property
+    def bytes_billed(self) -> int | None:
+        """Bytes billed by this query, if available."""
+        return None
+
+    @property
     @abstractmethod
     def progress(self) -> ProgressMetrics | None:
         """Backend-specific progress."""
@@ -210,6 +215,11 @@ class BigQueryQueryStatus(QueryStatusBase):
         ByteProgress | None,
         Field(title="Byte-based progress"),
     ] = None
+
+    @override
+    @property
+    def bytes_billed(self) -> int | None:
+        return self.byte_progress.bytes_billed if self.byte_progress else None
 
     @override
     @property

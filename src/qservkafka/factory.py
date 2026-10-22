@@ -16,6 +16,7 @@ from limits.storage import storage_from_string
 from redis.asyncio import BlockingConnectionPool, Redis
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
+from rubin.gafaelfawr import GafaelfawrClient
 from rubin.repertoire import DiscoveryClient
 from safir.arq import ArqMode, ArqQueue, MockArqQueue, RedisArqQueue
 from safir.database import create_database_engine
@@ -42,7 +43,6 @@ from .services.query import QueryService
 from .services.status import StatusPublisher
 from .storage.backend import DatabaseBackend
 from .storage.bigquery import BigQueryClient
-from .storage.gafaelfawr import GafaelfawrStorage
 from .storage.qserv import QservClient
 from .storage.rate import RateLimitStore
 from .storage.state import QueryStateStore
@@ -92,8 +92,8 @@ class ProcessContext(metaclass=ABCMeta):
     discovery_client: DiscoveryClient
     """Shared service discovery client."""
 
-    gafaelfawr: GafaelfawrStorage
-    """Shared caching Gafaelfawr storage."""
+    gafaelfawr_client: GafaelfawrClient
+    """Shared Gafaelfawr client."""
 
     event_manager: EventManager
     """Manager for publishing metrics events."""
@@ -147,10 +147,9 @@ class ProcessContext(metaclass=ABCMeta):
         slack_client = cls._create_slack_client(logger)
         http_client = await http_client_dependency()
         discovery_client = DiscoveryClient(http_client, logger=logger)
-        gafaelfawr = GafaelfawrStorage(
+        gafaelfawr_client = GafaelfawrClient(
             http_client=http_client,
             discovery_client=discovery_client,
-            slack_client=slack_client,
             logger=logger,
         )
 
@@ -167,9 +166,9 @@ class ProcessContext(metaclass=ABCMeta):
             "arq_queue_fast": arq_queue_fast,
             "arq_queue_slow": arq_queue_slow,
             "discovery_client": discovery_client,
+            "gafaelfawr_client": gafaelfawr_client,
             "kafka_broker": kafka_broker,
             "status_publisher": status_publisher,
-            "gafaelfawr": gafaelfawr,
             "event_manager": event_manager,
             "events": events,
             "slack_client": slack_client,
@@ -586,9 +585,7 @@ class Factory(metaclass=ABCMeta):
                 self._logger,
             ),
             state_store=self.create_query_state_store(),
-            limiter=self._context.limiter,
             rate_limit_store=self.create_rate_limit_store(),
-            gafaelfawr_storage=self._context.gafaelfawr,
             arq_queue_fast=self._context.arq_queue_fast,
             arq_queue_slow=self._context.arq_queue_slow,
             events=self._context.events,
@@ -604,7 +601,13 @@ class Factory(metaclass=ABCMeta):
         RateLimitStore
             Storage for rate limit information.
         """
-        return RateLimitStore(self._context.redis)
+        return RateLimitStore(
+            gafaelfawr_client=self._context.gafaelfawr_client,
+            limiter=self._context.limiter,
+            redis=self._context.redis,
+            slack_client=self._context.slack_client,
+            logger=self._logger,
+        )
 
     def create_status_publisher(self) -> StatusPublisher:
         """Create a query status publisher.

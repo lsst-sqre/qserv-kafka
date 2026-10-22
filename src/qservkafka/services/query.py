@@ -5,9 +5,6 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 
-from limits import RateLimitItemPerDay
-from limits.aio.strategies import FixedWindowRateLimiter
-from rubin.gafaelfawr import GafaelfawrTapQuota
 from safir.arq import ArqQueue
 from safir.sentry import report_exception
 from safir.slack.webhook import SlackWebhookClient
@@ -20,7 +17,6 @@ from ..exceptions import (
     BackendApiFailedError,
     BackendApiTransientError,
     QueryError,
-    RateLimitError,
     TableUploadWebError,
     UploadTimeoutError,
     UploadWebError,
@@ -32,11 +28,10 @@ from ..models.kafka import (
     JobRun,
     JobTableUpload,
 )
-from ..models.query import AsyncQueryPhase, BigQueryQueryStatus
+from ..models.query import AsyncQueryPhase
 from ..models.state import Query, RunningQuery, StartedQuery
 from ..models.votable import UploadStats
 from ..storage.backend import DatabaseBackend
-from ..storage.gafaelfawr import GafaelfawrStorage
 from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from ..storage.votable import VOTableWriter
@@ -58,13 +53,8 @@ class QueryService:
         Storage for query state.
     votable_writer
         Writer for VOTable output.
-    limiter
-        Fixed-window rate limit manager, currently only used for bytes billed
-        rate limits.
     rate_limit_store
         Storage for rate limiting.
-    gafaelfawr_storage
-        Storage for quota information.
     arq_queue_fast
         Client to dispatch fast jobs to arq workers.
     arq_queue_slow
@@ -85,9 +75,7 @@ class QueryService:
         backend: DatabaseBackend,
         votable_writer: VOTableWriter,
         state_store: QueryStateStore,
-        limiter: FixedWindowRateLimiter | None,
         rate_limit_store: RateLimitStore,
-        gafaelfawr_storage: GafaelfawrStorage,
         arq_queue_fast: ArqQueue,
         arq_queue_slow: ArqQueue,
         events: Events,
@@ -98,9 +86,7 @@ class QueryService:
         self._backend = backend
         self._votable = votable_writer
         self._state = state_store
-        self._limiter = limiter
         self._rate_store = rate_limit_store
-        self._gafaelfawr = gafaelfawr_storage
         self._arq_fast = arq_queue_fast
         self._arq_slow = arq_queue_slow
         self._events = events
@@ -243,28 +229,23 @@ class QueryService:
         query
             Query to start.
         """
+        logger = self._logger.bind(**query.to_logging_context())
         job = query.job
 
         # Increment the user's running queries and make sure they have space
         # to start a new query.
-        count = await self._rate_store.start_query(job.owner)
-        quota = await self._gafaelfawr.get_user_quota(job.owner)
-        if quota:
-            try:
-                if not await self._check_quota(job, quota, count):
-                    return
-            except QueryError as e:
-                await report_exception(e, self._slack_client)
-                await self._rate_store.end_query(job.owner)
-                await self._status.publish_start_exception(query, e)
-                return
+        try:
+            rate_status = await self._rate_store.start_query(job.owner)
+        except QueryError as e:
+            await report_exception(e, self._slack_client)
+            await self._status.publish_start_exception(query, e)
+            return
+        if not rate_status.allowed:
+            await self._status.publish_quota_exceeded(job, rate_status)
+            return
 
         # Set up the logger.
-        logger = self._logger.bind(
-            quota=quota.to_logging_context() if quota else None,
-            running=count,
-            **query.to_logging_context(),
-        )
+        logger = self._logger.bind(**rate_status.to_logging_context())
 
         # Start the query.
         try:
@@ -318,58 +299,8 @@ class QueryService:
 
         # If the query was still executing, the code above returned early, so
         # the query completed in some fashion and can be cleaned up.
-        await self._update_quota(query)
-        await self._rate_store.end_query(query.job.owner)
+        await self._rate_store.end_query(query.job.owner, query.status)
         await self._arq_fast.enqueue("cleanup_query", query)
-
-    async def _check_quota(
-        self, job: JobRun, quota: GafaelfawrTapQuota, count: int
-    ) -> bool:
-        """Check whether this query is allowed by the user's quota.
-
-        If the quota check fails, publish the appropriate quota exceeded
-        message before returning `False`.
-
-        Parameters
-        ----------
-        job
-            Job metadata.
-        quota
-            User's quota.
-        count
-            Count of currently running jobs for this user.
-
-        Returns
-        -------
-        bool
-            Whether the job is allowed to proceed.
-        """
-        if not quota:
-            return True
-        if quota.concurrent < count:
-            await self._rate_store.end_query(job.owner)
-            await self._status.publish_count_exceeded(job, count - 1, quota)
-            return False
-
-        # We don't know in advance how many bytes the query will bill, so we
-        # test the quota assuming it will bill one byte. When the query is
-        # complete, we will deduct the actual cost. A user can therefore
-        # always exceed their quota with one query, but then subsequent
-        # queries will be rejected.
-        if self._limiter and quota.bytes_billed:
-            limit = RateLimitItemPerDay(quota.bytes_billed)
-            try:
-                allowed = await self._limiter.hit(limit, job.owner)
-            except Exception as e:
-                raise RateLimitError.from_exception(e, job.owner) from e
-            if not allowed:
-                await self._rate_store.end_query(job.owner)
-                stats = await self._limiter.get_window_stats(limit, job.owner)
-                reset = datetime.fromtimestamp(stats.reset_time, tz=UTC)
-                await self._status.publish_bytes_exceeded(job, quota, reset)
-                return False
-
-        return True
 
     async def _delete_uploads(
         self,
@@ -540,40 +471,6 @@ class QueryService:
         # Return the corresponding StartedQuery object.
         logger.info("Started query", backend_id=query_id)
         return StartedQuery.from_query(query, query_id)
-
-    async def _update_quota(self, query: RunningQuery) -> None:
-        """Update bytes billed quota for a completed query.
-
-        We don't know in advance how much quota the query will consume, so we
-        need to update the consumed quota after the fact (minus the 1 that we
-        subtract from the quota at the start). This means any queries already
-        in progress before the user exceeds their quota will finish, even if
-        the user goes over quota.
-
-        Parameters
-        ----------
-        query
-            Metadata about the query without the Qserv status.
-        """
-        if not isinstance(query.status, BigQueryQueryStatus):
-            return
-        if not self._limiter or not query.status.byte_progress:
-            return
-        used = query.status.byte_progress.bytes_billed
-        if not used:
-            return
-        owner = query.job.owner
-        quota = await self._gafaelfawr.get_user_quota(owner)
-        if not quota or quota.bytes_billed is None:
-            return
-        limit = RateLimitItemPerDay(quota.bytes_billed)
-        try:
-            await self._limiter.hit(limit, owner, cost=used - 1)
-        except Exception as e:
-            logger = self._logger.bind(**query.to_logging_context())
-            logger.exception("Error updating quota")
-            exc = RateLimitError.from_exception(e, owner)
-            await report_exception(exc, self._slack_client)
 
     async def _upload_results(self, query: RunningQuery) -> UploadStats:
         """Retrieve and upload the results.
