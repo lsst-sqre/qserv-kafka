@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from rubin.repertoire import DiscoveryClient
 from sqlalchemy import Row
-from structlog.stdlib import get_logger
+from structlog.stdlib import BoundLogger, get_logger
 
 from qservkafka.models.kafka import (
     JobResultColumnType,
@@ -17,8 +17,11 @@ from qservkafka.models.kafka import (
     JobResultFormat,
     JobResultSerialization,
     JobResultType,
+    JobRun,
 )
 from qservkafka.storage.votable import Binary2Encoder
+
+from ..support.data import QservKafkaData
 
 
 async def data_generator(
@@ -232,34 +235,20 @@ async def test_max_bytes_truncation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_max_bytes_truncation_large() -> None:
+async def test_max_bytes_truncation_large(
+    data: QservKafkaData, logger: BoundLogger
+) -> None:
     """Check that the max bytes limit is enforced."""
-    config = JobResultConfig(
-        format=JobResultFormat(
-            type=JobResultType.VOTable,
-            serialization=JobResultSerialization.BINARY2,
-        ),
-        column_types=[
-            JobResultColumnType.model_validate(
-                {"name": "a", "datatype": "char", "arraysize": "*"}
-            )
-        ],
-        envelope=JobResultEnvelope(
-            header="<header>",
-            footer="<footer>",
-            footer_overflow="<overflow>",
-        ),
-    )
+    config = data.read_pydantic(JobRun, "jobs/simple").result_format
     rows = [("x" * 7000,) for _ in range(2000)]
     max_bytes = 1000000
-    logger = get_logger(__name__)
     encoder = Binary2Encoder(
         config, DiscoveryClient(), logger, max_bytes=max_bytes
     )
     encoded = b""
     async for blob in encoder.encode(data_generator(rows)):
         encoded += blob
-    assert encoded.endswith(b"<overflow>")
+    assert encoded.endswith(config.envelope.footer_overflow.encode())
 
     # Each row is a null flag byte, a 4-byte length, and the 7000-byte value.
     # Encoding stops on the first row that reaches the limit.
