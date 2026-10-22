@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator, Generator, Iterator
 from contextlib import aclosing
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -12,6 +13,7 @@ from aiokafka import AIOKafkaConsumer
 from aioresponses import aioresponses
 from faststream.kafka import KafkaBroker, TestKafkaBroker
 from faststream_fastapi import FastStreamAPI
+from google.cloud import bigquery, bigquery_storage, storage
 from httpx import ASGITransport, AsyncClient
 from pydantic import MySQLDsn, RedisDsn, SecretStr
 from rubin.gafaelfawr import MockGafaelfawr, register_mock_gafaelfawr
@@ -28,7 +30,7 @@ from testcontainers.core.network import Network
 from testcontainers.mysql import MySqlContainer
 from testcontainers.redis import RedisContainer
 
-from qservkafka.config import config
+from qservkafka.config import BackendType, config
 from qservkafka.factory import Factory, build_process_context
 from qservkafka.main import create_app
 
@@ -110,7 +112,6 @@ async def factory(
     *,
     mock_qserv: MockQserv,
     mock_slack: MockSlackWebhook,
-    engine: AsyncEngine,
     redis: RedisContainer,
     monkeypatch: pytest.MonkeyPatch,
     logger: BoundLogger,
@@ -130,6 +131,39 @@ async def factory(
         await context.connect()
         async with aclosing(context):
             yield context.build_factory(logger)
+
+
+@pytest_asyncio.fixture
+async def factory_bigquery(
+    *,
+    mock_slack: MockSlackWebhook,
+    redis: RedisContainer,
+    monkeypatch: pytest.MonkeyPatch,
+    logger: BoundLogger,
+) -> AsyncGenerator[Factory]:
+    """Provide a component factory for tests.
+
+    This fixture doesn't require the app and doesn't start an actual Kafka
+    instance. Only use this for unit tests without a real Kafka.
+
+    Replace this with a real BigQuery mock once one has been written.
+    """
+    redis_host = redis.get_container_host_ip()
+    redis_port = redis.get_exposed_port(6379)
+    redis_url = RedisDsn(f"redis://{redis_host}:{redis_port}/0")
+    monkeypatch.setattr(config, "redis_url", redis_url)
+    monkeypatch.setattr(config, "backend", BackendType.BIGQUERY)
+    kafka_broker = KafkaBroker(**config.kafka.to_faststream_params())
+    with (
+        patch.object(bigquery, "Client"),
+        patch.object(bigquery_storage, "BigQueryReadClient"),
+        patch.object(storage, "Client"),
+    ):
+        context = await build_process_context(kafka_broker)
+        async with TestKafkaBroker(kafka_broker):
+            await context.connect()
+            async with aclosing(context):
+                yield context.build_factory(logger)
 
 
 @pytest.fixture(scope="session")

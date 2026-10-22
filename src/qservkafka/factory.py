@@ -9,12 +9,14 @@ from typing import Any, Self, override
 from aiohttp import ClientSession, TCPConnector
 from faststream.kafka import KafkaBroker
 from faststream.kafka.publisher import DefaultPublisher
-from google.cloud import bigquery, bigquery_storage
-from google.cloud.storage import Client as GCSClient
+from google.cloud import bigquery, bigquery_storage, storage
 from httpx import AsyncClient, Limits
+from limits.aio.strategies import FixedWindowRateLimiter
+from limits.storage import storage_from_string
 from redis.asyncio import BlockingConnectionPool, Redis
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
+from rubin.gafaelfawr import GafaelfawrClient
 from rubin.repertoire import DiscoveryClient
 from safir.arq import ArqMode, ArqQueue, MockArqQueue, RedisArqQueue
 from safir.database import create_database_engine
@@ -25,8 +27,7 @@ from safir.slack.webhook import SlackWebhookClient
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from structlog.stdlib import BoundLogger, get_logger
 
-from qservkafka.background import BackgroundTaskManager
-
+from .background import BackgroundTaskManager
 from .config import BackendType, config
 from .constants import (
     REDIS_BACKOFF_MAX,
@@ -39,12 +40,13 @@ from .events import Events
 from .models.state import RunningQuery
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
+from .services.rate import RateLimitService
 from .services.status import StatusPublisher
 from .storage.backend import DatabaseBackend
 from .storage.bigquery import BigQueryClient
 from .storage.gafaelfawr import GafaelfawrStorage
 from .storage.qserv import QservClient
-from .storage.rate import RateLimitStore
+from .storage.rate import ConcurrentQueryStorage, RateLimitStorage
 from .storage.state import QueryStateStore
 from .storage.votable import VOTableWriter
 
@@ -83,14 +85,17 @@ class ProcessContext(metaclass=ABCMeta):
     status_publisher: DefaultPublisher
     """Kafka publisher for the status topic, built from the Kafka broker."""
 
+    limiter: FixedWindowRateLimiter | None
+    """Rate limiter for bytes billed quotas."""
+
     slack_client: SlackWebhookClient | None
     """Client for sending Slack error notifications."""
 
     discovery_client: DiscoveryClient
     """Shared service discovery client."""
 
-    gafaelfawr: GafaelfawrStorage
-    """Shared caching Gafaelfawr storage."""
+    gafaelfawr_client: GafaelfawrClient
+    """Shared Gafaelfawr client."""
 
     event_manager: EventManager
     """Manager for publishing metrics events."""
@@ -144,10 +149,9 @@ class ProcessContext(metaclass=ABCMeta):
         slack_client = cls._create_slack_client(logger)
         http_client = await http_client_dependency()
         discovery_client = DiscoveryClient(http_client, logger=logger)
-        gafaelfawr = GafaelfawrStorage(
+        gafaelfawr_client = GafaelfawrClient(
             http_client=http_client,
             discovery_client=discovery_client,
-            slack_client=slack_client,
             logger=logger,
         )
 
@@ -164,9 +168,9 @@ class ProcessContext(metaclass=ABCMeta):
             "arq_queue_fast": arq_queue_fast,
             "arq_queue_slow": arq_queue_slow,
             "discovery_client": discovery_client,
+            "gafaelfawr_client": gafaelfawr_client,
             "kafka_broker": kafka_broker,
             "status_publisher": status_publisher,
-            "gafaelfawr": gafaelfawr,
             "event_manager": event_manager,
             "events": events,
             "slack_client": slack_client,
@@ -182,14 +186,19 @@ class ProcessContext(metaclass=ABCMeta):
         else:
             return MockArqQueue()
 
+    @classmethod
+    def _create_redis_client(cls) -> Redis:
+        """Create the Redis client."""
+        return Redis.from_pool(cls._create_redis_pool())
+
     @staticmethod
-    def _create_redis_client() -> Redis:
-        """Create the Redis client pool with exponential backoff."""
+    def _create_redis_pool() -> BlockingConnectionPool:
+        """Create a Redis client pool with exponential backoff."""
         redis_password = config.redis_password.get_secret_value()
         backoff = ExponentialBackoff(
             base=REDIS_BACKOFF_START, cap=REDIS_BACKOFF_MAX
         )
-        redis_pool = BlockingConnectionPool.from_url(
+        return BlockingConnectionPool.from_url(
             str(config.redis_url),
             password=redis_password,
             max_connections=config.redis_max_connections,
@@ -199,7 +208,6 @@ class ProcessContext(metaclass=ABCMeta):
             socket_timeout=REDIS_TIMEOUT,
             timeout=REDIS_POOL_TIMEOUT,
         )
-        return Redis.from_pool(redis_pool)
 
     @staticmethod
     def _create_slack_client(logger: BoundLogger) -> SlackWebhookClient | None:
@@ -285,7 +293,7 @@ class BigQueryProcessContext(ProcessContext):
     bigquery_read_client: bigquery_storage.BigQueryReadClient
     """Shared BigQuery Storage Read API gRPC client."""
 
-    gcs_client: GCSClient
+    gcs_client: storage.Client
     """Shared Google Cloud Storage client for uploaded table schemas."""
 
     @override
@@ -299,22 +307,29 @@ class BigQueryProcessContext(ProcessContext):
         def _make_clients() -> tuple[
             bigquery.Client,
             bigquery_storage.BigQueryReadClient,
-            GCSClient,
+            storage.Client,
         ]:
             bigquery_client = bigquery.Client(
                 project=config.bigquery_job_project or config.bigquery_project,
                 location=config.bigquery_location,
             )
             bigquery_read_client = bigquery_storage.BigQueryReadClient()
-            gcs_client = GCSClient(project=config.bigquery_project)
+            gcs_client = storage.Client(project=config.bigquery_project)
             return bigquery_client, bigquery_read_client, gcs_client
 
         clients = await asyncio.to_thread(_make_clients)
         bigquery_client, bigquery_read_client, gcs_client = clients
+        redis_pool = cls._create_redis_pool()
+        rate_limiter_storage = storage_from_string(
+            "async+redis://",
+            implementation="redispy",
+            connection_pool=redis_pool,  # type: ignore[arg-type]
+        )
         return cls(
             bigquery_client=bigquery_client,
             bigquery_read_client=bigquery_read_client,
             gcs_client=gcs_client,
+            limiter=FixedWindowRateLimiter(rate_limiter_storage),
             **shared,
         )
 
@@ -424,6 +439,7 @@ class QservProcessContext(ProcessContext):
             sessionmaker=sessionmaker,
             qserv_http_client=qserv_http_client,
             upload_http_client=upload_http_client,
+            limiter=None,
             **shared,
         )
 
@@ -504,7 +520,7 @@ class Factory(metaclass=ABCMeta):
             Client for the database backend.
         """
 
-    async def create_background_task_manager(self) -> BackgroundTaskManager:
+    def create_background_task_manager(self) -> BackgroundTaskManager:
         """Create the background task manager to monitor Qserv jobs.
 
         Returns
@@ -512,27 +528,24 @@ class Factory(metaclass=ABCMeta):
         BackgroundTaskManager
             Manager for periodically checking the status of Qserv jobs.
         """
-        monitor = await self.create_query_monitor()
         return BackgroundTaskManager(
-            monitor, self._context.slack_client, self._logger
+            monitor=self.create_query_monitor(),
+            rate_limit_service=self.create_rate_limit_service(),
+            slack_client=self._context.slack_client,
+            logger=self._logger,
         )
 
-    def create_query_state_store(self) -> QueryStateStore:
-        """Create the storage client for query state.
+    def create_concurrent_query_storage(self) -> ConcurrentQueryStorage:
+        """Create the storage for tracking concurrent queries.
 
         Returns
         -------
-        QueryStateStore
-            Client for query state.
+        ConcurrentQueryStorage
+            Storage for concurrent query tracking.
         """
-        redis_storage = PydanticRedisStorage(
-            datatype=RunningQuery,
-            redis=self._context.redis,
-            key_prefix="query:",
-        )
-        return QueryStateStore(redis_storage, self._logger)
+        return ConcurrentQueryStorage(self._context.redis)
 
-    async def create_query_monitor(self) -> QueryMonitor:
+    def create_query_monitor(self) -> QueryMonitor:
         """Create the singleton monitor for query status.
 
         This is run as a background task.
@@ -549,7 +562,7 @@ class Factory(metaclass=ABCMeta):
             arq_queue_fast=self._context.arq_queue_fast,
             arq_queue_slow=self._context.arq_queue_slow,
             state_store=self.create_query_state_store(),
-            rate_limit_store=self.create_rate_limit_store(),
+            rate_limit_service=self.create_rate_limit_service(),
             events=self._context.events,
             logger=self._logger,
         )
@@ -571,8 +584,7 @@ class Factory(metaclass=ABCMeta):
                 self._logger,
             ),
             state_store=self.create_query_state_store(),
-            rate_limit_store=self.create_rate_limit_store(),
-            gafaelfawr_storage=self._context.gafaelfawr,
+            rate_limit_service=self.create_rate_limit_service(),
             arq_queue_fast=self._context.arq_queue_fast,
             arq_queue_slow=self._context.arq_queue_slow,
             events=self._context.events,
@@ -580,7 +592,44 @@ class Factory(metaclass=ABCMeta):
             logger=self._logger,
         )
 
-    def create_rate_limit_store(self) -> RateLimitStore:
+    def create_query_state_store(self) -> QueryStateStore:
+        """Create the storage client for query state.
+
+        Returns
+        -------
+        QueryStateStore
+            Client for query state.
+        """
+        redis_storage = PydanticRedisStorage(
+            datatype=RunningQuery,
+            redis=self._context.redis,
+            key_prefix="query:",
+        )
+        return QueryStateStore(redis_storage, self._logger)
+
+    def create_rate_limit_service(self) -> RateLimitService:
+        """Create a new service that handles rate limiting.
+
+        Returns
+        -------
+        RateLimitService
+            Service for rate limiting.
+        """
+        return RateLimitService(
+            concurrent_storage=self.create_concurrent_query_storage(),
+            rate_limit_storage=self.create_rate_limit_store(),
+            gafaelfawr_storage=GafaelfawrStorage(
+                http_client=self._context.http_client,
+                discovery_client=self._context.discovery_client,
+                slack_client=self._context.slack_client,
+                logger=self._logger,
+            ),
+            state_store=self.create_query_state_store(),
+            slack_client=self._context.slack_client,
+            logger=self._logger,
+        )
+
+    def create_rate_limit_store(self) -> RateLimitStorage:
         """Create a new storage client for rate limiting.
 
         Returns
@@ -588,7 +637,7 @@ class Factory(metaclass=ABCMeta):
         RateLimitStore
             Storage for rate limit information.
         """
-        return RateLimitStore(self._context.redis)
+        return RateLimitStorage("bytes_billed", self._context.limiter)
 
     def create_status_publisher(self) -> StatusPublisher:
         """Create a query status publisher.

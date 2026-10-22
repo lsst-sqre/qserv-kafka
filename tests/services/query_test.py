@@ -1,10 +1,20 @@
 """Tests for creating new queries."""
 
+import re
+from collections.abc import AsyncGenerator, Sequence
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import call, patch
 
 import pytest
+import respx
 from pydantic import SecretStr
+from rubin.gafaelfawr import (
+    GafaelfawrQuota,
+    GafaelfawrTapQuota,
+    GafaelfawrUserInfo,
+    MockGafaelfawr,
+)
 from safir.arq import RedisArqQueue
 from safir.metrics import MockEventPublisher
 from safir.testing.slack import MockSlackWebhook
@@ -12,8 +22,10 @@ from safir.testing.slack import MockSlackWebhook
 from qservkafka.config import config
 from qservkafka.factory import Factory
 from qservkafka.models.kafka import JobCancel, JobRun
+from qservkafka.models.query import BigQueryQueryStatus
 from qservkafka.models.state import Query
 from qservkafka.services.query import QueryService
+from qservkafka.storage.bigquery import BigQueryClient
 
 from ..support.data import QservKafkaData
 from ..support.datetime import assert_approximately_now
@@ -27,7 +39,7 @@ async def assert_query_successful(
     data: QservKafkaData,
     factory: Factory,
     query_service: QueryService,
-    mock_qserv: MockQserv,
+    mock_qserv: MockQserv | None = None,
     job: JobRun,
     status: str,
     execution_id: str | None = None,
@@ -51,7 +63,8 @@ async def assert_query_successful(
     execution_id
         Expected execution ID for the job status.
     """
-    mock_qserv.set_immediate_success(job)
+    if mock_qserv:
+        mock_qserv.set_immediate_success(job)
     kafka_timestamp = datetime.now(tz=UTC) - timedelta(seconds=10)
     result = await start_and_complete_immediate(
         factory, job, kafka_start=kafka_timestamp
@@ -520,3 +533,69 @@ async def test_upload_dependent(
     )
     assert mock_qserv.get_uploaded_table() is None
     assert mock_qserv.get_uploaded_database() is None
+
+
+@pytest.mark.asyncio
+async def test_bytes_billed_quota(
+    *,
+    data: QservKafkaData,
+    factory_bigquery: Factory,
+    mock_gafaelfawr: MockGafaelfawr,
+    respx_mock: respx.Router,
+) -> None:
+    """Test handling of bytes billed quota."""
+    job = data.read_pydantic(JobRun, "jobs/data")
+    bigquery_status = data.read_pydantic(BigQueryQueryStatus, "bigquery/data")
+    quota = GafaelfawrQuota(
+        tap={
+            config.tap_service: GafaelfawrTapQuota(
+                bytes_billed=10000, concurrent=2
+            )
+        }
+    )
+    user_info = GafaelfawrUserInfo(username=job.owner, quota=quota)
+    mock_gafaelfawr.set_user_info(job.owner, user_info)
+
+    async def results() -> AsyncGenerator[Sequence[Any]]:
+        if False:
+            yield []  # type: ignore[unreachable]
+
+    respx_mock.put(str(job.result_url))
+    query_service = factory_bigquery.create_query_service()
+    with (
+        patch.object(BigQueryClient, "submit_query", return_value="id"),
+        patch.object(
+            BigQueryClient, "get_query_results_gen", return_value=results()
+        ),
+        patch.object(
+            BigQueryClient, "get_query_status", return_value=bigquery_status
+        ),
+    ):
+        await assert_query_successful(
+            data=data,
+            factory=factory_bigquery,
+            query_service=query_service,
+            job=job,
+            status="status/data-bigquery",
+            execution_id="id",
+        )
+
+        # We should be able to run the job again, even though the user goes
+        # over quota, since we don't know until it finishes.
+        await assert_query_successful(
+            data=data,
+            factory=factory_bigquery,
+            query_service=query_service,
+            job=job,
+            status="status/data-bigquery",
+            execution_id="id",
+        )
+
+        # This should have nearly exhausted the quota. Running the same
+        # job again should therefore fail with an out of quota message.
+        await query_service.start_query(Query(job=job))
+        status = read_status_message(factory_bigquery)
+        assert status.error
+        message = status.error.message
+        status.error.message = re.sub(r"[\d :-]+ UTC$", "", message)
+        data.assert_pydantic_matches(status, "status/data-bytes-quota")

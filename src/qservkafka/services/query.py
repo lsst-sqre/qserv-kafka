@@ -32,10 +32,9 @@ from ..models.query import AsyncQueryPhase
 from ..models.state import Query, RunningQuery, StartedQuery
 from ..models.votable import UploadStats
 from ..storage.backend import DatabaseBackend
-from ..storage.gafaelfawr import GafaelfawrStorage
-from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from ..storage.votable import VOTableWriter
+from .rate import RateLimitService
 from .status import StatusPublisher
 
 __all__ = ["QueryService"]
@@ -54,10 +53,8 @@ class QueryService:
         Storage for query state.
     votable_writer
         Writer for VOTable output.
-    rate_limit_store
+    rate_limit_service
         Storage for rate limiting.
-    gafaelfawr_storage
-        Storage for quota information.
     arq_queue_fast
         Client to dispatch fast jobs to arq workers.
     arq_queue_slow
@@ -78,8 +75,7 @@ class QueryService:
         backend: DatabaseBackend,
         votable_writer: VOTableWriter,
         state_store: QueryStateStore,
-        rate_limit_store: RateLimitStore,
-        gafaelfawr_storage: GafaelfawrStorage,
+        rate_limit_service: RateLimitService,
         arq_queue_fast: ArqQueue,
         arq_queue_slow: ArqQueue,
         events: Events,
@@ -90,8 +86,7 @@ class QueryService:
         self._backend = backend
         self._votable = votable_writer
         self._state = state_store
-        self._rate_store = rate_limit_store
-        self._gafaelfawr = gafaelfawr_storage
+        self._rate_limit = rate_limit_service
         self._arq_fast = arq_queue_fast
         self._arq_slow = arq_queue_slow
         self._events = events
@@ -234,33 +229,33 @@ class QueryService:
         query
             Query to start.
         """
+        logger = self._logger.bind(**query.to_logging_context())
         job = query.job
 
         # Increment the user's running queries and make sure they have space
         # to start a new query.
-        quota = await self._gafaelfawr.get_user_quota(job.owner)
-        count = await self._rate_store.start_query(job.owner)
-        if quota and quota.concurrent < count:
-            await self._rate_store.end_query(job.owner)
-            await self._status.publish_quota_exceeded(job, count - 1, quota)
+        try:
+            rate_status = await self._rate_limit.start_query(job.owner)
+        except QueryError as e:
+            await report_exception(e, self._slack_client)
+            await self._status.publish_start_exception(query, e)
+            return
+        if not rate_status.allowed:
+            await self._status.publish_quota_exceeded(job, rate_status)
             return
 
         # Set up the logger.
-        logger = self._logger.bind(
-            quota=quota.to_logging_context() if quota else None,
-            running=count,
-            **query.to_logging_context(),
-        )
+        logger = self._logger.bind(**rate_status.to_logging_context())
 
         # Start the query.
         try:
             started_query = await self._start_query_internal(query, logger)
         except QueryError as e:
-            await self._rate_store.end_query(job.owner)
+            await self._rate_limit.end_query(job.owner)
             await self._status.publish_start_exception(query, e)
             return
         except Exception:
-            await self._rate_store.end_query(job.owner)
+            await self._rate_limit.end_query(job.owner)
             raise
 
         # Publish an initial status update to Kafka.
@@ -304,7 +299,7 @@ class QueryService:
 
         # If the query was still executing, the code above returned early, so
         # the query completed in some fashion and can be cleaned up.
-        await self._rate_store.end_query(query.job.owner)
+        await self._rate_limit.end_query(query.job.owner, query.status)
         await self._arq_fast.enqueue("cleanup_query", query)
 
     async def _delete_uploads(
@@ -383,7 +378,7 @@ class QueryService:
         try:
             query = await self.get_running_query(started_query)
         except QueryError as e:
-            await self._rate_store.end_query(started_query.job.owner)
+            await self._rate_limit.end_query(started_query.job.owner)
             await self._arq_fast.enqueue("cleanup_query", started_query)
             await self._status.publish_exception(started_query, e)
             return
@@ -448,7 +443,7 @@ class QueryService:
                 await self._events.temporary_table.publish(event)
         except (BackendApiError, TableUploadWebError) as e:
             e.user = query.job.owner
-            await self._rate_store.end_query(query.job.owner)
+            await self._rate_limit.end_query(query.job.owner)
             if isinstance(e, TableUploadWebError):
                 msg = "Unable to retrieve table to upload"
             else:
@@ -463,7 +458,7 @@ class QueryService:
         try:
             query_id = await self._backend.submit_query(query.job)
         except BackendApiError as e:
-            await self._rate_store.end_query(query.job.owner)
+            await self._rate_limit.end_query(query.job.owner)
             if isinstance(e, BackendApiFailedError):
                 logger = logger.bind(**e.to_logging_context())
                 logger.info("Query rejected by backend")

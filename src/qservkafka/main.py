@@ -75,7 +75,7 @@ def create_app() -> FastStreamAPI:
         await context_dependency.initialize()
         logger = get_logger("qservkafka")
         factory = context_dependency.create_factory()
-        background = await factory.create_background_task_manager()
+        background = factory.create_background_task_manager()
         await background.start()
         logger.info("Qserv Kafka bridge started")
 

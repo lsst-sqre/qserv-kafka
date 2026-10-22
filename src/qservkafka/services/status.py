@@ -1,7 +1,6 @@
 """Query job status publisher."""
 
 from faststream.kafka.publisher import DefaultPublisher
-from rubin.gafaelfawr import GafaelfawrTapQuota
 from structlog.stdlib import BoundLogger
 from vo_models.uws.types import ExecutionPhase
 
@@ -15,6 +14,7 @@ from ..events import (
 )
 from ..exceptions import QueryError
 from ..models.kafka import JobError, JobErrorCode, JobRun, JobStatus
+from ..models.rate import RateLimitStatus
 from ..models.state import Query, RunningQuery, StartedQuery
 from ..models.votable import UploadStats
 
@@ -199,7 +199,7 @@ class StatusPublisher:
         await self._publish_status(JobStatus.from_error(job, error))
 
     async def publish_quota_exceeded(
-        self, job: JobRun, running: int, quota: GafaelfawrTapQuota
+        self, job: JobRun, status: RateLimitStatus
     ) -> None:
         """Publish status for a request that exceeds the user's quota.
 
@@ -207,18 +207,17 @@ class StatusPublisher:
         ----------
         job
             Initial query request.
-        running
-            Number of running queries.
-        quota
-            Maximum allowed number of concurrent running queries.
+        status
+            Rate limit status.
         """
-        self._logger.info(
-            "Query rejected due to quota",
-            quota=quota.model_dump(mode="json"),
-            running=running,
-            **job.to_logging_context(),
+        logger = self._logger.bind(
+            **status.to_logging_context(), **job.to_logging_context()
         )
-        error = JobError.for_quota_exceeded(running, quota)
+        if status.bytes_billed_reset:
+            logger.info("Query rejected due to bytes billed quota")
+        else:
+            logger.info("Query rejected due to concurrent query quota")
+        error = JobError.for_quota_exceeded(status)
         await self._publish_status(JobStatus.from_error(job, error))
 
     async def publish_start_exception(

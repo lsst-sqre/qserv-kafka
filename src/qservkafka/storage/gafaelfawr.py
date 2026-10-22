@@ -46,10 +46,6 @@ class GafaelfawrStorage:
         )
         self._token = config.gafaelfawr_token.get_secret_value()
 
-    async def clear_cache(self) -> None:
-        """Invalidate the cache."""
-        await self._gafaelfawr.clear_cache()
-
     async def get_user_quota(self, username: str) -> GafaelfawrTapQuota | None:
         """Get quota information for the user, with caching.
 

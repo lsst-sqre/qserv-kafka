@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Self, override
 
+import humanize
 from pydantic import (
     BaseModel,
     BeforeValidator,
@@ -20,11 +21,12 @@ from pydantic import (
     PlainSerializer,
     Tag,
 )
-from rubin.gafaelfawr import GafaelfawrTapQuota
+from safir.datetime import format_datetime_for_logging
 from safir.pydantic import SecondsTimedelta
 from vo_models.uws.types import ExecutionPhase
 
 from .progress import ProgressMetrics
+from .rate import RateLimitStatus
 from .votable import VOTableArraySize, VOTablePrimitive
 
 type DatetimeMillis = Annotated[
@@ -648,6 +650,7 @@ class JobErrorCode(StrEnum):
     backend_sql_error = "backend_sql_error"
     encoding_error = "encoding_error"
     invalid_request = "invalid_request"
+    quota_error = "quota_error"
     quota_exceeded = "quota_exceeded"
     result_timeout = "result_timeout"
     upload_failed = "upload_failed"
@@ -679,26 +682,38 @@ class JobError(BaseModel):
     ]
 
     @classmethod
-    def for_quota_exceeded(cls, used: int, quota: GafaelfawrTapQuota) -> Self:
-        """Generate an error object for a quota exceeded error.
+    def for_quota_exceeded(cls, status: RateLimitStatus) -> Self:
+        """Generate an error object for a bytes billed exceeded error.
 
         Parameters
         ----------
-        used
-            Number of running queries.
-        quota
-            Quota for the user.
+        status
+            Rate limit status.
 
         Returns
         -------
         JobError
             Corresponding error component of a Kafka job status message.
         """
-        error = (
-            f"Maximum running queries reached ({used} running, maximum"
-            f" {quota.concurrent}); wait for a query to finish or cancel one"
-            " of your running queries"
-        )
+        if not status.quota:
+            raise ValueError("Quota exceeded but no associated quota")
+        if status.bytes_billed_reset:
+            if status.quota.bytes_billed is None:
+                msg = "Bytes billed quota exceeded but no associated quota"
+                raise ValueError(msg)
+            quota = humanize.naturalsize(status.quota.bytes_billed)
+            reset = status.bytes_billed_reset.replace(microsecond=0)
+            reset_str = format_datetime_for_logging(reset)
+            error = (
+                f"Maximum number of billed bytes ({quota}) reached within a"
+                f" 24 hour period; retry your query after {reset_str} UTC"
+            )
+        else:
+            error = (
+                f"Maximum running queries reached ({status.running} running,"
+                f" maximum {status.quota.concurrent}); wait for a query to"
+                " finish or cancel one of your running queries"
+            )
         return cls(code=JobErrorCode.quota_exceeded, message=error)
 
 

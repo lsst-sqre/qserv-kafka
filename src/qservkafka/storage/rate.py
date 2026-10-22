@@ -1,11 +1,21 @@
 """Storage for rate limiting of simultaneous queries."""
 
+from datetime import UTC, datetime
+
 import redis.asyncio as redis
+from limits import RateLimitItemPerDay
+from limits.aio.strategies import FixedWindowRateLimiter
 
-__all__ = ["RateLimitStore"]
+from ..exceptions import RateLimitError
+from ..models.rate import RateLimit
+
+__all__ = [
+    "ConcurrentQueryStorage",
+    "RateLimitStorage",
+]
 
 
-class RateLimitStore:
+class ConcurrentQueryStorage:
     """Storage for tracking concurrent queries for rate limiting.
 
     This approach to rate limiting is not robust against race conditions due
@@ -34,6 +44,25 @@ class RateLimitStore:
 
     def __init__(self, redis: redis.Redis) -> None:
         self._redis = redis
+
+    async def count(self, username: str) -> int:
+        """Get the count of active queries.
+
+        Parmaeters
+        ----------
+        username
+            Username of user.
+
+        Returns
+        -------
+        int
+            Number of queries currently running.
+        """
+        count_raw = await self._redis.get(self._key(username))
+        if not count_raw:
+            return 0
+        count = int(count_raw)
+        return max(count, 0)
 
     async def end_query(self, username: str) -> int:
         """Decrement the number of active queries and return the count.
@@ -116,3 +145,88 @@ class RateLimitStore:
     def _key(username: str) -> str:
         """Construct the Redis key for the given user."""
         return f"rate:{username}"
+
+
+class RateLimitStorage:
+    """Storage for tracking dynamic rate limits.
+
+    Currently, the only supported limit is a quota on bytes billed. Since the
+    bytes billed for a query is only known after the query completes, this is
+    handled by allowing a query if there is any remaining quota and then
+    incrementing the amount used when the query completes.
+
+    Parameters
+    ----------
+    key
+        Additional key for limiter, generally the type of quota.
+    limiter
+        Underlying fixed window rate limiter, or `None` if no rate limiting is
+        being done by configuration.
+    """
+
+    def __init__(
+        self, key: str, limiter: FixedWindowRateLimiter | None
+    ) -> None:
+        self._key = key
+        self._limiter = limiter
+
+    async def get_daily(self, username: str, quota: int) -> RateLimit | None:
+        """Get information about the current status of a daily rate limit.
+
+        Parameters
+        ----------
+        username
+            Associated username.
+        quota
+            Maximum quota for that limit.
+
+        Returns
+        -------
+        RateLimit or None
+            Information about the status of the rate limit, or `None` if no
+            limit applies.
+
+        Raises
+        ------
+        RateLimitError
+            Raised if there was a failure contacting the rate limiting
+            backend.
+        """
+        if not self._limiter:
+            return None
+        limit = RateLimitItemPerDay(quota)
+        key = (username, self._key)
+        try:
+            stats = await self._limiter.get_window_stats(limit, *key)
+        except Exception as e:
+            raise RateLimitError.from_exception(e, username) from e
+        reset_time = datetime.fromtimestamp(stats.reset_time, tz=UTC)
+        return RateLimit(remaining=stats.remaining, reset_time=reset_time)
+
+    async def update_daily(self, username: str, quota: int, used: int) -> None:
+        """Update consumed units of a daily rate limit.
+
+        Errors will be reported to Slack but not raised.
+
+        Parameters
+        ----------
+        username
+            Associated username.
+        quota
+            Maximum quota for that limit.
+        used
+            Amount of quota that has been used.
+
+        Raises
+        ------
+        RateLimitError
+            Raised if there was a failure contacting the rate limiting
+            backend.
+        """
+        if not self._limiter:
+            return
+        limit = RateLimitItemPerDay(quota)
+        try:
+            await self._limiter.hit(limit, username, self._key, cost=used)
+        except Exception as e:
+            raise RateLimitError.from_exception(e, username) from e

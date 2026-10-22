@@ -1,0 +1,17 @@
+{
+  "errorInfo": {
+    "errorCode": "quota_exceeded",
+    "errorMessage": "Maximum number of billed bytes (10.0 kB) reached within a 24 hour period; retry your query after"
+  },
+  "executionID": null,
+  "jobID": "uws123",
+  "metadata": {
+    "adqlQuery": null,
+    "database": "dp1",
+    "query": "SELECT TOP 10 * FROM table"
+  },
+  "queryInfo": null,
+  "resultInfo": null,
+  "status": "ERROR",
+  "timestamp": "<ANY>"
+}
