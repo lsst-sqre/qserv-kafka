@@ -13,6 +13,7 @@ from structlog.stdlib import BoundLogger
 from .config import config
 from .constants import RATE_LIMIT_RECONCILE_INTERVAL
 from .services.monitor import QueryMonitor
+from .services.rate import RateLimitService
 
 __all__ = ["BackgroundTaskManager"]
 
@@ -31,6 +32,8 @@ class BackgroundTaskManager:
     ----------
     monitor
         Query monitor.
+    rate_limit_service
+        Rate limit service.
     slack_client
         Client to send errors to Slack
     logger
@@ -39,11 +42,14 @@ class BackgroundTaskManager:
 
     def __init__(
         self,
+        *,
         monitor: QueryMonitor,
+        rate_limit_service: RateLimitService,
         slack_client: SlackWebhookClient | None,
         logger: BoundLogger,
     ) -> None:
         self._monitor = monitor
+        self._rate_limit = rate_limit_service
         self._slack_client = slack_client
         self._logger = logger
         self._closing = asyncio.Event()
@@ -69,7 +75,7 @@ class BackgroundTaskManager:
                 "polling query status",
             ),
             self._loop(
-                self._monitor.reconcile_rate_limits,
+                self._rate_limit.reconcile_rate_limits,
                 RATE_LIMIT_RECONCILE_INTERVAL,
                 "reconciling rate limits",
             ),

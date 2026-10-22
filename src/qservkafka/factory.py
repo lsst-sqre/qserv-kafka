@@ -40,11 +40,13 @@ from .events import Events
 from .models.state import RunningQuery
 from .services.monitor import QueryMonitor
 from .services.query import QueryService
+from .services.rate import RateLimitService
 from .services.status import StatusPublisher
 from .storage.backend import DatabaseBackend
 from .storage.bigquery import BigQueryClient
+from .storage.gafaelfawr import GafaelfawrStorage
 from .storage.qserv import QservClient
-from .storage.rate import RateLimitStore
+from .storage.rate import ConcurrentQueryStorage, RateLimitStorage
 from .storage.state import QueryStateStore
 from .storage.votable import VOTableWriter
 
@@ -518,7 +520,7 @@ class Factory(metaclass=ABCMeta):
             Client for the database backend.
         """
 
-    async def create_background_task_manager(self) -> BackgroundTaskManager:
+    def create_background_task_manager(self) -> BackgroundTaskManager:
         """Create the background task manager to monitor Qserv jobs.
 
         Returns
@@ -526,27 +528,24 @@ class Factory(metaclass=ABCMeta):
         BackgroundTaskManager
             Manager for periodically checking the status of Qserv jobs.
         """
-        monitor = await self.create_query_monitor()
         return BackgroundTaskManager(
-            monitor, self._context.slack_client, self._logger
+            monitor=self.create_query_monitor(),
+            rate_limit_service=self.create_rate_limit_service(),
+            slack_client=self._context.slack_client,
+            logger=self._logger,
         )
 
-    def create_query_state_store(self) -> QueryStateStore:
-        """Create the storage client for query state.
+    def create_concurrent_query_storage(self) -> ConcurrentQueryStorage:
+        """Create the storage for tracking concurrent queries.
 
         Returns
         -------
-        QueryStateStore
-            Client for query state.
+        ConcurrentQueryStorage
+            Storage for concurrent query tracking.
         """
-        redis_storage = PydanticRedisStorage(
-            datatype=RunningQuery,
-            redis=self._context.redis,
-            key_prefix="query:",
-        )
-        return QueryStateStore(redis_storage, self._logger)
+        return ConcurrentQueryStorage(self._context.redis)
 
-    async def create_query_monitor(self) -> QueryMonitor:
+    def create_query_monitor(self) -> QueryMonitor:
         """Create the singleton monitor for query status.
 
         This is run as a background task.
@@ -563,7 +562,7 @@ class Factory(metaclass=ABCMeta):
             arq_queue_fast=self._context.arq_queue_fast,
             arq_queue_slow=self._context.arq_queue_slow,
             state_store=self.create_query_state_store(),
-            rate_limit_store=self.create_rate_limit_store(),
+            rate_limit_service=self.create_rate_limit_service(),
             events=self._context.events,
             logger=self._logger,
         )
@@ -585,7 +584,7 @@ class Factory(metaclass=ABCMeta):
                 self._logger,
             ),
             state_store=self.create_query_state_store(),
-            rate_limit_store=self.create_rate_limit_store(),
+            rate_limit_service=self.create_rate_limit_service(),
             arq_queue_fast=self._context.arq_queue_fast,
             arq_queue_slow=self._context.arq_queue_slow,
             events=self._context.events,
@@ -593,7 +592,44 @@ class Factory(metaclass=ABCMeta):
             logger=self._logger,
         )
 
-    def create_rate_limit_store(self) -> RateLimitStore:
+    def create_query_state_store(self) -> QueryStateStore:
+        """Create the storage client for query state.
+
+        Returns
+        -------
+        QueryStateStore
+            Client for query state.
+        """
+        redis_storage = PydanticRedisStorage(
+            datatype=RunningQuery,
+            redis=self._context.redis,
+            key_prefix="query:",
+        )
+        return QueryStateStore(redis_storage, self._logger)
+
+    def create_rate_limit_service(self) -> RateLimitService:
+        """Create a new service that handles rate limiting.
+
+        Returns
+        -------
+        RateLimitService
+            Service for rate limiting.
+        """
+        return RateLimitService(
+            concurrent_storage=self.create_concurrent_query_storage(),
+            rate_limit_storage=self.create_rate_limit_store(),
+            gafaelfawr_storage=GafaelfawrStorage(
+                http_client=self._context.http_client,
+                discovery_client=self._context.discovery_client,
+                slack_client=self._context.slack_client,
+                logger=self._logger,
+            ),
+            state_store=self.create_query_state_store(),
+            slack_client=self._context.slack_client,
+            logger=self._logger,
+        )
+
+    def create_rate_limit_store(self) -> RateLimitStorage:
         """Create a new storage client for rate limiting.
 
         Returns
@@ -601,13 +637,7 @@ class Factory(metaclass=ABCMeta):
         RateLimitStore
             Storage for rate limit information.
         """
-        return RateLimitStore(
-            gafaelfawr_client=self._context.gafaelfawr_client,
-            limiter=self._context.limiter,
-            redis=self._context.redis,
-            slack_client=self._context.slack_client,
-            logger=self._logger,
-        )
+        return RateLimitStorage("bytes_billed", self._context.limiter)
 
     def create_status_publisher(self) -> StatusPublisher:
         """Create a query status publisher.

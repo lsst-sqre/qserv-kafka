@@ -7,7 +7,18 @@ from typing import Any
 from rubin.gafaelfawr import GafaelfawrTapQuota
 from safir.datetime import format_datetime_for_logging
 
-__all__ = ["RateLimitStatus"]
+__all__ = ["RateLimit", "RateLimitStatus"]
+
+
+@dataclass
+class RateLimit:
+    """Current status of a dynamic rate limit."""
+
+    remaining: int
+    """Remaining units before exhausting the quota."""
+
+    reset_time: datetime
+    """When the quota will reset."""
 
 
 @dataclass

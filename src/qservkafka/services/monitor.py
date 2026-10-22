@@ -1,7 +1,6 @@
 """Service to monitor the status of running queries."""
 
 import asyncio
-from collections import Counter
 from datetime import UTC, datetime
 
 from safir.arq import ArqQueue
@@ -12,9 +11,9 @@ from ..exceptions import QueryError
 from ..models.query import AsyncQueryPhase, ProcessStatus
 from ..models.state import RunningQuery
 from ..storage.backend import DatabaseBackend
-from ..storage.rate import RateLimitStore
 from ..storage.state import QueryStateStore
 from .query import QueryService
+from .rate import RateLimitService
 from .status import StatusPublisher
 
 __all__ = ["QueryMonitor"]
@@ -38,7 +37,7 @@ class QueryMonitor:
         workers.
     state_store
         Storage for query state.
-    rate_limit_store
+    rate_limit_service
         Storage for rate limits.
     events
         Metrics events publishers.
@@ -55,7 +54,7 @@ class QueryMonitor:
         arq_queue_fast: ArqQueue,
         arq_queue_slow: ArqQueue,
         state_store: QueryStateStore,
-        rate_limit_store: RateLimitStore,
+        rate_limit_service: RateLimitService,
         events: Events,
         logger: BoundLogger,
     ) -> None:
@@ -65,7 +64,7 @@ class QueryMonitor:
         self._arq_fast = arq_queue_fast
         self._arq_slow = arq_queue_slow
         self._state = state_store
-        self._rate_store = rate_limit_store
+        self._rate_limit = rate_limit_service
         self._events = events
         self._logger = logger
 
@@ -136,7 +135,7 @@ class QueryMonitor:
                 query = await self._query.get_running_query(query)
             except QueryError as e:
                 await self._status.publish_exception(query, e)
-                await self._rate_store.end_query(query.job.owner)
+                await self._rate_limit.end_query(query.job.owner)
                 await self._arq_fast.enqueue("cleanup_query", query)
                 return
             if query.status.status != AsyncQueryPhase.EXECUTING:
@@ -148,13 +147,3 @@ class QueryMonitor:
             await self._arq_slow.enqueue("finish_query", query.query_id)
             await self._state.mark_queued_query(query.query_id)
             logger.info("Dispatched finished query to worker")
-
-    async def reconcile_rate_limits(self) -> None:
-        """Reconcile rate limits against currently running queries."""
-        active_queries = await self._state.get_active_queries()
-        counts: Counter[str] = Counter()
-        for backend_id in active_queries:
-            query = await self._state.get_query(backend_id)
-            if query:
-                counts[query.job.owner] += 1
-        await self._rate_store.reconcile_query_counts(counts)

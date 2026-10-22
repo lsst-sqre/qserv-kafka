@@ -5,32 +5,21 @@ from datetime import UTC, datetime
 import redis.asyncio as redis
 from limits import RateLimitItemPerDay
 from limits.aio.strategies import FixedWindowRateLimiter
-from rubin.gafaelfawr import (
-    GafaelfawrClient,
-    GafaelfawrError,
-    GafaelfawrNotFoundError,
-    GafaelfawrTapQuota,
-)
-from safir.sentry import report_exception
-from safir.slack.webhook import SlackWebhookClient
-from structlog.stdlib import BoundLogger
 
-from ..config import config
 from ..exceptions import RateLimitError
-from ..models.query import QueryStatus
-from ..models.rate import RateLimitStatus
+from ..models.rate import RateLimit
 
-__all__ = ["RateLimitStore"]
+__all__ = [
+    "ConcurrentQueryStorage",
+    "RateLimitStorage",
+]
 
 
-class RateLimitStore:
-    """Storage for tracking rate limits.
+class ConcurrentQueryStorage:
+    """Storage for tracking concurrent queries for rate limiting.
 
-    Currently, there are two supported rate limits: one on bytes billed, and
-    one on concurrent queries.
-
-    The concurrent query approach to rate limiting is not robust against race
-    conditions due to a few problems:
+    This approach to rate limiting is not robust against race conditions due
+    to a few problems:
 
     #. The bridge may lose contact with Redis after query completion and may
        not be able to decrement the counter properly.
@@ -49,37 +38,33 @@ class RateLimitStore:
 
     Parameters
     ----------
-    gafaelfawr_client
-        Shared Gafaelfawr client.
-    limiter
-        Fixed-window rate limit manager, currently only used for bytes billed
-        rate limits.
     redis
         A Redis client configured to talk to the backend store.
-    slack_client
-        Client to send errors to Slack
-    logger
-        Logger for messages.
     """
 
-    def __init__(
-        self,
-        *,
-        gafaelfawr_client: GafaelfawrClient,
-        limiter: FixedWindowRateLimiter | None,
-        redis: redis.Redis,
-        slack_client: SlackWebhookClient | None,
-        logger: BoundLogger,
-    ) -> None:
-        self._gafaelfawr = gafaelfawr_client
-        self._limiter = limiter
+    def __init__(self, redis: redis.Redis) -> None:
         self._redis = redis
-        self._slack_client = slack_client
-        self._logger = logger
 
-    async def end_query(
-        self, username: str, status: QueryStatus | None = None
-    ) -> None:
+    async def count(self, username: str) -> int:
+        """Get the count of active queries.
+
+        Parmaeters
+        ----------
+        username
+            Username of user.
+
+        Returns
+        -------
+        int
+            Number of queries currently running.
+        """
+        count_raw = await self._redis.get(self._key(username))
+        if not count_raw:
+            return 0
+        count = int(count_raw)
+        return max(count, 0)
+
+    async def end_query(self, username: str) -> int:
         """Decrement the number of active queries and return the count.
 
         Must be called once a query ends for any reason, including errors.
@@ -88,33 +73,14 @@ class RateLimitStore:
         ----------
         username
             User running the query.
-        status
-            Status of the query if the query was started.
 
-        Raises
-        ------
-        RateLimitError
-            Raised if there was a failure contacting the rate limiting
-            backend.
+        Returns
+        -------
+        int
+            Number of active queries for that user after subtracting this
+            query.
         """
-        await self._redis.decr(self._key(username))
-        if not self._limiter or not status or not status.bytes_billed:
-            return
-        quota = await self._get_quota(username)
-        if not quota or quota.bytes_billed is None:
-            return
-        limit = RateLimitItemPerDay(quota.bytes_billed)
-        used = status.bytes_billed
-        try:
-            await self._limiter.hit(limit, username, cost=used - 1)
-        except Exception as e:
-            self._logger.exception(
-                "Error updating quota",
-                username=username,
-                **status.to_logging_context(),
-            )
-            exc = RateLimitError.from_exception(e, username)
-            await report_exception(exc, self._slack_client)
+        return await self._redis.decr(self._key(username))
 
     async def reconcile_query_counts(self, counts: dict[str, int]) -> None:
         """Reconcile active query counts against a snapshot.
@@ -154,7 +120,7 @@ class RateLimitStore:
             if username not in counts:
                 await self._redis.delete(key)
 
-    async def start_query(self, username: str) -> RateLimitStatus:
+    async def start_query(self, username: str) -> int:
         """Increment the number of active queries and return the count.
 
         If the caller chooses to not start a query, it must decrement the
@@ -169,9 +135,56 @@ class RateLimitStore:
 
         Returns
         -------
-        RateLimitStatus
-            Status information about the user's quota, used to enhance logging
-            when starting the quer.
+        int
+            Count of running queries for that user, including the one
+            indicated by this call.
+        """
+        return await self._redis.incr(self._key(username))
+
+    @staticmethod
+    def _key(username: str) -> str:
+        """Construct the Redis key for the given user."""
+        return f"rate:{username}"
+
+
+class RateLimitStorage:
+    """Storage for tracking dynamic rate limits.
+
+    Currently, the only supported limit is a quota on bytes billed. Since the
+    bytes billed for a query is only known after the query completes, this is
+    handled by allowing a query if there is any remaining quota and then
+    incrementing the amount used when the query completes.
+
+    Parameters
+    ----------
+    key
+        Additional key for limiter, generally the type of quota.
+    limiter
+        Underlying fixed window rate limiter, or `None` if no rate limiting is
+        being done by configuration.
+    """
+
+    def __init__(
+        self, key: str, limiter: FixedWindowRateLimiter | None
+    ) -> None:
+        self._key = key
+        self._limiter = limiter
+
+    async def get_daily(self, username: str, quota: int) -> RateLimit | None:
+        """Get information about the current status of a daily rate limit.
+
+        Parameters
+        ----------
+        username
+            Associated username.
+        quota
+            Maximum quota for that limit.
+
+        Returns
+        -------
+        RateLimit or None
+            Information about the status of the rate limit, or `None` if no
+            limit applies.
 
         Raises
         ------
@@ -179,78 +192,41 @@ class RateLimitStore:
             Raised if there was a failure contacting the rate limiting
             backend.
         """
-        quota = await self._get_quota(username)
+        if not self._limiter:
+            return None
+        limit = RateLimitItemPerDay(quota)
+        key = (username, self._key)
+        try:
+            stats = await self._limiter.get_window_stats(limit, *key)
+        except Exception as e:
+            raise RateLimitError.from_exception(e, username) from e
+        reset_time = datetime.fromtimestamp(stats.reset_time, tz=UTC)
+        return RateLimit(remaining=stats.remaining, reset_time=reset_time)
 
-        # Track simultaneous running queries even if there is no quota so that
-        # a quota can be imposed later and will take into account the
-        # currently running queries. Don't increment the running count before
-        # checking the bytes limit if there is a quota, though.
-        if not quota:
-            running = await self._redis.incr(self._key(username))
-            return RateLimitStatus(allowed=True, running=running)
+    async def update_daily(self, username: str, quota: int, used: int) -> None:
+        """Update consumed units of a daily rate limit.
 
-        # Check any bytes billed quota. We don't know in advance how many
-        # bytes the query will bill, so we test the quota assuming it will
-        # bill one byte. When the query is complete, we will deduct the actual
-        # cost. A user can therefore always exceed their quota with queries
-        # started before one that puts them over quota finishes, but then
-        # subsequent queries will be rejected.
-        if self._limiter and quota.bytes_billed is not None:
-            limit = RateLimitItemPerDay(quota.bytes_billed)
-            try:
-                allowed = await self._limiter.hit(limit, username)
-            except Exception as e:
-                raise RateLimitError.from_exception(e, username) from e
-            if not allowed:
-                running = await self._redis.get(self._key(username))
-                stats = await self._limiter.get_window_stats(limit, username)
-                reset = datetime.fromtimestamp(stats.reset_time, tz=UTC)
-                return RateLimitStatus(
-                    allowed=False,
-                    running=running,
-                    bytes_billed_reset=reset,
-                    quota=quota,
-                )
-
-        # Now increment the running query count and check against the quota.
-        running = await self._redis.incr(self._key(username))
-        if quota.concurrent < running:
-            await self._redis.decr(self._key(username))
-            running -= 1
-            return RateLimitStatus(allowed=False, running=running, quota=quota)
-
-        # Return success.
-        return RateLimitStatus(allowed=True, running=running, quota=quota)
-
-    async def _get_quota(self, username: str) -> GafaelfawrTapQuota | None:
-        """Get quota information for the user.
+        Errors will be reported to Slack but not raised.
 
         Parameters
         ----------
         username
-            Username of user.
+            Associated username.
+        quota
+            Maximum quota for that limit.
+        used
+            Amount of quota that has been used.
 
-        Returns
-        -------
-        GafaelfawrTapQuota or None
-            Quota information for the user, or `None` if the user has no quota
-            or if there was any problem talking to Gafaelfawr.
+        Raises
+        ------
+        RateLimitError
+            Raised if there was a failure contacting the rate limiting
+            backend.
         """
-        token = config.gafaelfawr_token.get_secret_value()
+        if not self._limiter:
+            return
+        limit = RateLimitItemPerDay(quota)
         try:
-            info = await self._gafaelfawr.get_user_info(token, username)
-        except GafaelfawrNotFoundError:
-            return None
-        except GafaelfawrError as e:
-            await report_exception(e, slack_client=self._slack_client)
-            msg = "Cannot contact Gafaelfawr for quota information"
-            self._logger.exception(msg)
-            return None
-        if not info.quota:
-            return None
-        return info.quota.tap.get(config.tap_service)
-
-    @staticmethod
-    def _key(username: str) -> str:
-        """Construct the Redis key for the given user."""
-        return f"rate:{username}"
+            await self._limiter.hit(limit, username, self._key, cost=used)
+        except Exception as e:
+            raise RateLimitError.from_exception(e, username) from e
