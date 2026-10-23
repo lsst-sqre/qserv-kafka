@@ -7,6 +7,35 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-8.0.0'></a>
+## 8.0.0 (2026-10-23)
+
+### Backwards-incompatible changes
+
+- Replace the `parquet_row_group_cells` setting with `parquet_row_group_bytes` (default 128 MiB) to help contain memory usage for very wide rows or large cells, such as JSON blobs.
+
+### New features
+
+- Support temporary user table uploads for the BigQuery backend. The new `bigquery_upload_dataset`, `bigquery_upload_project`, and `bigquery_upload_timeout` options configure this support.
+- If the user has an applicable `bytes_billed` TAP quota, enforce that for BigQuery requests. qserv-kafka can only update usage after the query completes, so all queries in progress before the quota is exhausted will still run to completion even if the user is over quota.
+- Accept an optional `adqlQuery` field on the `JobRun` Kafka message with the original ADQL query text. Send it through status messages and logging and forward it to Qserv as `adql_query`.
+- Apply the optional `timeout` from the `JobRun` message to BigQuery queries so BigQuery cancels the query if it runs longer than that.
+- Send queries that complete immediately (BigQuery cache hits for example) to the slow worker if their result has more cells (rows times columns) than the new `arq_fast_max_result_cells` setting.
+- Add a `bigquery_read_max_streams` setting (default 1) to cap how many BigQuery Storage API streams are used to download a result.
+- Add a `bigquery_job_project` setting which defines under which project the jobs runs. If not set, this defaults to `bigquery_project`.
+- Add a `parquet_batch_bytes` setting (default 32 MiB) to limit the size of VOParquet batches before they are converted to Arrow.
+
+### Bug fixes
+
+- Correctly apply `max_result_bytes`, which previously was not properly implemented for either BINARY2 or VOParquet results.
+- Fix VOParquet encoding of string columns with an `arraysize`. These were previously treated as arrays, which caused issues with timestamp values.
+
+### Other changes
+
+- Fix `bigquery_size` in metrics to report the actual size of the BigQuery query result (from the destination table) instead of the bytes scanned to run the query.
+- Derive the `bigquery_rate` metric from the same result size, matching how `qserv_size`/`qserv_rate` already worked.
+- Add a `bigquery_bytes_processed` metric for the bytes scanned by BigQuery to run a query (the basis for billing).
+
 <a id='changelog-7.0.0'></a>
 ## 7.0.0 (2026-09-11)
 
