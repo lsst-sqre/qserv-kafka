@@ -11,7 +11,7 @@ import pyarrow.parquet as pq
 import pytest
 from rubin.repertoire import DiscoveryClient
 from sqlalchemy import Row
-from structlog.stdlib import get_logger
+from structlog.stdlib import BoundLogger, get_logger
 
 from qservkafka import config as config_module
 from qservkafka.models.kafka import (
@@ -335,7 +335,7 @@ async def test_char_arraysize() -> None:
 
 
 @pytest.mark.asyncio
-async def test_maxrec_limit() -> None:
+async def test_maxrec_limit(logger: BoundLogger) -> None:
     columns = [
         {"name": "obj_id", "datatype": "int"},
         {"name": "obj_name", "datatype": "char"},
@@ -362,9 +362,8 @@ async def test_maxrec_limit() -> None:
         ),
     )
 
-    local_logger = get_logger(__name__)
     encoder = VOParquetEncoder(
-        config, DiscoveryClient(), local_logger, overflow=True
+        config, DiscoveryClient(), logger, overflow=True
     )
 
     parquet_data = b""
@@ -389,7 +388,7 @@ async def test_maxrec_limit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_encoder_properties() -> None:
+async def test_encoder_properties(logger: BoundLogger) -> None:
     columns = [{"name": "obj_id", "datatype": "int"}]
     data = [(i,) for i in range(5)]
 
@@ -406,8 +405,7 @@ async def test_encoder_properties() -> None:
         ),
     )
 
-    local_logger = get_logger(__name__)
-    encoder = VOParquetEncoder(config, DiscoveryClient(), local_logger)
+    encoder = VOParquetEncoder(config, DiscoveryClient(), logger)
 
     chunks = [chunk async for chunk in encoder.encode(data_generator(data))]
 
@@ -419,8 +417,7 @@ async def test_encoder_properties() -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_and_row_group_sizes_adapt_to_columns() -> None:
-    logger = get_logger(__name__)
+async def test_batch_sizes_adapt_to_columns(logger: BoundLogger) -> None:
 
     def make(n_columns: int) -> VOParquetEncoder:
         columns = [
@@ -432,31 +429,30 @@ async def test_batch_and_row_group_sizes_adapt_to_columns() -> None:
 
     wide = make(250)
     assert wide._batch_rows == 1000
-    assert wide._row_group_rows == 20000
 
     very_wide = make(100000)
     assert very_wide._batch_rows == 2
-    assert very_wide._row_group_rows == 50
 
     narrow = make(1)
     assert narrow._batch_rows == 250000
-    assert narrow._row_group_rows == 5000000
 
 
 @pytest.mark.asyncio
-async def test_multiple_row_groups(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_multiple_row_groups(
+    monkeypatch: pytest.MonkeyPatch, logger: BoundLogger
+) -> None:
     monkeypatch.setattr(config_module.config, "parquet_batch_cells", 40)
-    monkeypatch.setattr(config_module.config, "parquet_row_group_cells", 120)
+    # 20-row batch of an int and a double is 240 byte, so 60 rows.
+    monkeypatch.setattr(config_module.config, "parquet_row_group_bytes", 720)
     columns = [
         {"name": "id", "datatype": "int"},
         {"name": "value", "datatype": "double"},
     ]
     encoder = VOParquetEncoder(
-        build_config(columns), DiscoveryClient(), get_logger(__name__)
+        build_config(columns), DiscoveryClient(), logger
     )
 
     assert encoder._batch_rows == 20
-    assert encoder._row_group_rows == 60
 
     data = [(i, i * 1.5) for i in range(250)]
     parquet_data = b""
@@ -479,13 +475,13 @@ async def test_multiple_row_groups(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_maxrec_across_row_groups(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, logger: BoundLogger
 ) -> None:
     monkeypatch.setattr(config_module.config, "parquet_batch_cells", 20)
-    monkeypatch.setattr(config_module.config, "parquet_row_group_cells", 60)
+    monkeypatch.setattr(config_module.config, "parquet_row_group_bytes", 240)
     columns = [{"name": "id", "datatype": "int"}]
     encoder = VOParquetEncoder(
-        build_config(columns), DiscoveryClient(), get_logger(__name__)
+        build_config(columns), DiscoveryClient(), logger
     )
 
     data = [(i,) for i in range(100)]
@@ -501,3 +497,57 @@ async def test_maxrec_across_row_groups(
     assert len(table) == 50
     assert table["id"].to_pylist() == list(range(50))
     assert encoder.total_rows == 50
+
+
+@pytest.mark.asyncio
+async def test_max_bytes_truncation(
+    monkeypatch: pytest.MonkeyPatch, logger: BoundLogger
+) -> None:
+    monkeypatch.setattr(config_module.config, "parquet_batch_cells", 10)
+    monkeypatch.setattr(config_module.config, "parquet_row_group_bytes", 1)
+    columns = [{"name": "id", "datatype": "int"}]
+    encoder = VOParquetEncoder(
+        build_config(columns),
+        DiscoveryClient(),
+        logger,
+        max_bytes=1,
+    )
+
+    data = [(i,) for i in range(100)]
+    parquet_data = b""
+    async for chunk in encoder.encode(data_generator(data)):
+        parquet_data += chunk
+
+    parquet_file = pq.ParquetFile(pa.BufferReader(parquet_data))
+    table = parquet_file.read()
+    assert table["id"].to_pylist() == list(range(10))
+    assert encoder.total_rows == 10
+    votable_xml = parquet_file.metadata.metadata[
+        b"IVOA.VOTable-Parquet.content"
+    ].decode()
+    assert "OVERFLOW" in votable_xml
+
+
+@pytest.mark.asyncio
+async def test_batch_bytes_limit(
+    monkeypatch: pytest.MonkeyPatch, logger: BoundLogger
+) -> None:
+    monkeypatch.setattr(config_module.config, "parquet_batch_bytes", 70000)
+    monkeypatch.setattr(config_module.config, "parquet_row_group_bytes", 1)
+    columns = [{"name": "blob", "datatype": "char", "arraysize": "*"}]
+    encoder = VOParquetEncoder(
+        build_config(columns), DiscoveryClient(), logger
+    )
+
+    data = [(f"{i}" + "x" * 7000,) for i in range(100)]
+    parquet_data = b""
+    async for chunk in encoder.encode(data_generator(data)):
+        parquet_data += chunk
+
+    parquet_file = pq.ParquetFile(pa.BufferReader(parquet_data))
+    metadata = parquet_file.metadata
+    assert metadata.num_row_groups == 10
+    for i in range(metadata.num_row_groups):
+        assert metadata.row_group(i).num_rows == 10
+    table = parquet_file.read()
+    assert table["blob"].to_pylist() == [row[0] for row in data]

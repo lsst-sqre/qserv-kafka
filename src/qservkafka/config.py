@@ -314,30 +314,42 @@ class Config(BaseSettings):
 
     name: str = Field("qserv-kafka", title="Name of application")
 
+    parquet_batch_bytes: int = Field(
+        32 * 1024 * 1024,
+        title="VOParquet batch byte target",
+        description=(
+            "Approximate size in bytes of the row data to accumulate before"
+            " converting it to an Arrow record batch when encoding VOParquet."
+            " Python object overhead is not included. Batches are also"
+            " limited by parquet_batch_cells."
+        ),
+        ge=1024 * 1024,
+    )
+
     parquet_batch_cells: int = Field(
         250000,
-        title="VOParquet batch cell target",
+        title="VOParquet batch cell limit",
         description=(
-            "Target number of cells (rows times columns) to accumulate as"
+            "Maximum number of cells (rows times columns) to accumulate as"
             " Python objects before converting them to an Arrow record batch"
-            " when encoding Parquet. The per-result batch size in rows is"
-            " this value divided by the column count (at least one row)."
+            " when encoding VOParquet. Limits memory usage for results with"
+            " lots of small values, where Python object overhead is larger"
+            " than the data. The maximum batch size in rows is this value"
+            " divided by the column count (at least one row)."
         ),
         ge=1000,
         le=10000000,
     )
 
-    parquet_row_group_cells: int = Field(
-        5000000,
-        title="VOParquet row group cell target",
+    parquet_row_group_bytes: int = Field(
+        128 * 1024 * 1024,
+        title="VOParquet row group byte target",
         description=(
-            "Target number of cells (rows times columns) per Parquet row"
-            " group. The per-result row group size in rows is this value"
-            " divided by the column count, and never smaller than the batch"
-            " size."
+            "Target size in bytes of the uncompressed Arrow data in each"
+            " Parquet row group. A whole row group is held in memory while it"
+            " is written, so peak encoder memory is a few times this value."
         ),
-        ge=10000,
-        le=200000000,
+        ge=1024 * 1024,
     )
 
     qserv_database_overflow: int = Field(
