@@ -70,26 +70,6 @@ class QueryStateStore:
         """
         return await self._storage.get(query_id)
 
-    async def mark_queued_query(self, query_id: str) -> None:
-        """Mark a query as queued.
-
-        Parameters
-        ----------
-        query_id
-            Backend query ID.
-
-        Notes
-        -----
-        This is currently highly inefficient since it rewrites the whole Redis
-        object, which for queries that may contain large numbers of result
-        fields can be fairly large. So far, it hasn't seemed to matter, but
-        look here if you are seeing Redis performance issues.
-        """
-        query = await self.get_query(query_id)
-        if query:
-            query.result_queued = True
-            await self.store_query(query)
-
     async def store_query(self, query: RunningQuery) -> None:
         """Add or update a record for an in-progress query.
 
