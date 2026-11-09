@@ -32,9 +32,6 @@ class QueryMonitor:
         Database backend client (Qserv, BigQuery, etc.).
     arq_queue_fast
         Client to dispatch fast jobs to arq workers.
-    arq_queue_slow
-        Client to dispatch slow jobs, such as result processing, to arq
-        workers.
     state_store
         Storage for query state.
     rate_limit_service
@@ -52,7 +49,6 @@ class QueryMonitor:
         query_service: QueryService,
         backend: DatabaseBackend,
         arq_queue_fast: ArqQueue,
-        arq_queue_slow: ArqQueue,
         state_store: QueryStateStore,
         rate_limit_service: RateLimitService,
         events: Events,
@@ -62,7 +58,6 @@ class QueryMonitor:
         self._query = query_service
         self._backend = backend
         self._arq_fast = arq_queue_fast
-        self._arq_slow = arq_queue_slow
         self._state = state_store
         self._rate_limit = rate_limit_service
         self._events = events
@@ -140,10 +135,9 @@ class QueryMonitor:
                 return
             if query.status.status != AsyncQueryPhase.EXECUTING:
                 query.completed = datetime.now(tz=UTC)
+                query.result_queued = True
             await self._state.store_query(query)
             if query.status.status == AsyncQueryPhase.EXECUTING:
                 await self._status.publish_executing(query)
                 return
-            await self._arq_slow.enqueue("finish_query", query.query_id)
-            await self._state.mark_queued_query(query.query_id)
-            logger.info("Dispatched finished query to worker")
+            await self._query.dispatch_finished_query(query)

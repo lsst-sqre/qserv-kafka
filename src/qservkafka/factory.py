@@ -560,7 +560,6 @@ class Factory(metaclass=ABCMeta):
             query_service=self.create_query_service(),
             backend=self.create_backend_client(),
             arq_queue_fast=self._context.arq_queue_fast,
-            arq_queue_slow=self._context.arq_queue_slow,
             state_store=self.create_query_state_store(),
             rate_limit_service=self.create_rate_limit_service(),
             events=self._context.events,

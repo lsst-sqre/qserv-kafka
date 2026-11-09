@@ -33,16 +33,26 @@ from ..support.qserv import MockQserv
 @pytest.mark.asyncio
 @pytest.mark.timeout(40)
 @pytest.mark.parametrize(
-    "mock_qserv", [False, True], ids=["good", "flaky"], indirect=True
+    ("mock_qserv", "fast"),
+    [(False, True), (True, True), (False, False)],
+    ids=["good", "flaky", "slow"],
+    indirect=["mock_qserv"],
 )
 async def test_success(
     *,
+    fast: bool,
     data: QservKafkaData,
     app: FastAPI,
     kafka_manager: KafkaTestManager,
     mock_qserv: MockQserv,
     redis: RedisContainer,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Result is 24 cells so lowering the limit below 24
+    # should push result processing to the slow queue.
+    if not fast:
+        monkeypatch.setattr(config, "arq_fast_max_result_cells", 23)
+
     async with LifespanManager(app):
         factory = context_dependency.create_factory()
         arq_workers = ArqWorkers(factory._context)
@@ -61,17 +71,22 @@ async def test_success(
         )
         await mock_qserv.update_status(1, qserv_status)
 
-        # Run the background task queue. The results processing should go into
-        # the slow queue, and then the cleanup job should run from the fast
-        # queue. The completion status message should be sent before cleanup
-        # is done.
-        assert await arq_workers.run_workers(1, only_slow=True) == 1
+        # Run the background task queue. Small results are processed by the
+        # fast queue, which then also runs the cleanup job it queues. Larger
+        # results are processed by the slow queue, and cleanup then runs
+        # from the fast queue. The completion status message should be
+        # sent before cleanup is done.
+        if fast:
+            assert await arq_workers.run_workers(2, only_fast=True) == 2
+        else:
+            assert await arq_workers.run_workers(1, only_slow=True) == 1
         status = await kafka_manager.wait_for_status("status/data-completed")
         assert status.query_info
         assert status.query_info.start_time == start_time
         assert status.query_info.end_time
         assert status.query_info.end_time >= start_time
-        assert await arq_workers.run_workers(1, only_fast=True) == 1
+        if not fast:
+            assert await arq_workers.run_workers(1, only_fast=True) == 1
 
     # Ensure all query state has been deleted.
     redis_client = redis.get_client()

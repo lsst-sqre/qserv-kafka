@@ -8,6 +8,7 @@ from safir.arq import RedisArqQueue
 from safir.metrics import MockEventPublisher
 from testcontainers.redis import RedisContainer
 
+from qservkafka.config import config
 from qservkafka.factory import Factory
 from qservkafka.models.kafka import JobRun
 
@@ -64,6 +65,54 @@ async def test_dispatch(
         assert query
         await monitor.check_query(query, status=None)
         assert mock.call_args_list == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("max_result_cells", "fast"), [(24, True), (23, False)]
+)
+async def test_dispatch_queue(
+    *,
+    max_result_cells: int,
+    fast: bool,
+    data: QservKafkaData,
+    factory: Factory,
+    mock_qserv: MockQserv,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config, "arq_fast_max_result_cells", max_result_cells)
+    query_service = factory.create_query_service()
+    state_store = factory.create_query_state_store()
+    monitor = factory.create_query_monitor()
+    job = data.read_pydantic(JobRun, "jobs/data")
+
+    await query_service.handle_query(job)
+    read_status_message(factory)
+
+    qserv_status = mock_qserv.get_status(1)
+    now = datetime.now(tz=UTC).replace(microsecond=0)
+    qserv_status = data.read_qserv_status(
+        "qserv/data-completed",
+        query_begin=qserv_status.query_begin,
+        last_update=now,
+    )
+    await mock_qserv.update_status(1, qserv_status)
+
+    query = await state_store.get_query("1")
+    assert query
+    with patch.object(RedisArqQueue, "enqueue", autospec=True) as mock:
+        await monitor.check_query(query, status=None)
+        assert mock.call_count == 1
+        queue, *args = mock.call_args.args
+        assert args == ["finish_query", "1"]
+        if fast:
+            assert queue.default_queue_name == config.arq_fast_queue
+        else:
+            assert queue.default_queue_name == config.arq_slow_queue
+
+    query = await state_store.get_query("1")
+    assert query
+    assert query.result_queued
 
 
 @pytest.mark.asyncio
