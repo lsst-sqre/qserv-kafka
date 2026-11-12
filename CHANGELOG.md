@@ -7,6 +7,13 @@ Find changes for the upcoming release in the project's [changelog.d directory](h
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-8.0.1'></a>
+## 8.0.1 (2026-11-12)
+
+### Bug fixes
+
+- Route small results of queries that finish after the initial status check to the fast workers.
+
 <a id='changelog-8.0.0'></a>
 ## 8.0.0 (2026-10-23)
 
